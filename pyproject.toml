@@ -1,0 +1,23 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "emoney-mcp"
+version = "0.1.0"
+description = "MCP server for Emoney Advisor financial planning"
+requires-python = ">=3.11"
+dependencies = [
+    "mcp>=1.0.0",
+    "python-dotenv>=1.0.0",
+    "curl_cffi>=0.7",
+    "beautifulsoup4>=4.12",
+    "nodriver>=0.34",
+    "pycryptodomex>=3.20",
+]
+
+[project.scripts]
+emoney-mcp = "emoney_mcp.server:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/emoney_mcp"]

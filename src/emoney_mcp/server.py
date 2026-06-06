@@ -42,6 +42,38 @@ async def list_tools() -> list[Tool]:
             inputSchema={"type": "object", "properties": {}, "required": []},
         ),
         Tool(
+            name="get_holdings",
+            description=(
+                "Returns all investment positions (holdings) across every brokerage, "
+                "retirement, and investment account — ticker, description, units, price, "
+                "current value, cost basis, and unrealized gain/loss."
+            ),
+            inputSchema={"type": "object", "properties": {}, "required": []},
+        ),
+        Tool(
+            name="get_transactions",
+            description=(
+                "Returns investment transactions (buys, sells, dividends, etc.) for a "
+                "date range. Optional parameters: days (default 30, max 365) and "
+                "account_id (Emoney account GUID to filter to one account)."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "days": {
+                        "type": "integer",
+                        "description": "Number of days back to fetch (default 30, max 365)",
+                        "default": 30,
+                    },
+                    "account_id": {
+                        "type": "string",
+                        "description": "Optional Emoney AccountID GUID to filter to one account",
+                    },
+                },
+                "required": [],
+            },
+        ),
+        Tool(
             name="sync_chrome_session",
             description=(
                 "Try to pull the current Emoney session from your running Chrome "
@@ -66,6 +98,12 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
         result = await _get_accounts()
     elif name == "get_net_worth":
         result = await _get_net_worth()
+    elif name == "get_holdings":
+        result = await _get_holdings()
+    elif name == "get_transactions":
+        days = int(arguments.get("days", 30))
+        account_id = arguments.get("account_id")
+        result = await _get_transactions(days=days, account_id=account_id)
     elif name == "sync_chrome_session":
         result = await _sync_chrome_session()
     elif name == "reset_session":
@@ -109,6 +147,20 @@ async def _get_net_worth() -> dict:
         "net_worth": result.get("net_worth"),
         "account_count": len(result.get("accounts", [])),
     }
+
+
+async def _get_holdings() -> dict:
+    sess, err = await _get_session_or_err()
+    if err:
+        return err
+    return await scraper.get_holdings(sess)
+
+
+async def _get_transactions(days: int = 30, account_id: str | None = None) -> dict:
+    sess, err = await _get_session_or_err()
+    if err:
+        return err
+    return await scraper.get_transactions(sess, days=days, account_id=account_id)
 
 
 async def _sync_chrome_session() -> dict:

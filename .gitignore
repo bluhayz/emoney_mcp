@@ -1,0 +1,19 @@
+# Session cookies — never commit real credentials
+.emoney_session.json
+.env
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+.venv/
+venv/
+
+# Test/debug scripts
+test_*.py
+
+# IDE
+.vscode/
+.idea/

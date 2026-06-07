@@ -1,0 +1,12 @@
+{
+  "sEcho": 0,
+  "aaData": [
+    [1749081600000, "Sell", "SNOW", "YOU SOLD SNOWFLAKE INC. COMMON STOCK (SNOW) (CASH)", 279213.48, "783641105", null, null, null, null, null, null, null, null, "tx-001", "acct-001"],
+    [1749081600000, "Sell", "SNOW", "YOU SOLD SNOWFLAKE INC. COMMON STOCK (SNOW) (CASH)", 14414.46, "783641105", null, null, null, null, null, null, null, null, "tx-002", "acct-001"],
+    [1748908800000, "Buy",  "VTSAX", "YOU BOUGHT VANGUARD TOTAL STOCK MKT IDX ADM (VTSAX)", -50000.0,  "922908769", null, null, null, null, null, null, null, null, "tx-003", "acct-001"],
+    [1748822400000, "Dividend", "VTSAX", "DIVIDEND RECEIVED VANGUARD TOTAL STOCK MKT IDX ADM", 1250.75, "922908769", null, null, null, null, null, null, null, null, "tx-004", "acct-001"],
+    [1748736000000, "Sell", "ESTC", "YOU SOLD ELASTIC N V COM EUR0.01 (ESTC) (CASH)", 33367.26, "29434830", null, null, null, null, null, null, null, null, "tx-005", "acct-001"],
+    [1747526400000, "Dividend", "VTWAX", "DIVIDEND RECEIVED VANGUARD TOTAL WORLD STOCK INDEX", 875.20, "921937835", null, null, null, null, null, null, null, null, "tx-006", "acct-002"]
+  ],
+  "Total": 6
+}

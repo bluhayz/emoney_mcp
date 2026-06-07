@@ -1,0 +1,22 @@
+{
+  "CardId": 8,
+  "NetWorth": 8470161.0,
+  "History": [
+    6020179.0,
+    7035470.0,
+    7309806.0,
+    8022584.0,
+    8470161.0
+  ],
+  "ChangeThisMonth": {
+    "ChangeType": 1,
+    "CurrentValue": 8470161.0,
+    "Change": 447577.0,
+    "ChangePercent": 0.05578963087204821,
+    "IsIntradayPricingEnabled": false,
+    "ItemStatus": 2
+  },
+  "ChangeThisYear": null,
+  "ItemStatus": 1,
+  "Title": "Net Worth"
+}

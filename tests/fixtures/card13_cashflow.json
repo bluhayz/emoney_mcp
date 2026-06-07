@@ -1,0 +1,66 @@
+{
+  "CardId": 13,
+  "CashFlow": {
+    "Income": 13673.7,
+    "Expenses": 15620.6,
+    "Net": -1946.9,
+    "ItemStatus": 0,
+    "DataSourceRoute": {
+      "Controller": "Spending",
+      "Area": null,
+      "Action": "Index",
+      "RouteValueDictionary": {
+        "view": 1,
+        "startDate": "05/07/2026",
+        "endDate": "06/06/2026"
+      }
+    }
+  },
+  "Budget": {
+    "Budgeted": 0.0,
+    "Spent": 0.0,
+    "Net": 0.0,
+    "ItemStatus": 0
+  },
+  "RecentTransactions": {
+    "Transactions": [
+      {
+        "TransactionID": "13174919814",
+        "Date": "2026-06-05T00:00:00",
+        "Description": "COSTCO WHSE #0218 STERLING US",
+        "Category": null,
+        "Amount": -249.46
+      },
+      {
+        "TransactionID": "13174728854",
+        "Date": "2026-06-04T00:00:00",
+        "Description": "ANTHROPIC* CLAUDE SUB, SAN FRANCISCO, CA",
+        "Category": null,
+        "Amount": -190.3
+      },
+      {
+        "TransactionID": "13168786579",
+        "Date": "2026-06-04T00:00:00",
+        "Description": "ZELLE PAYMENT TO ROSA BAIRES",
+        "Category": null,
+        "Amount": -180.0
+      },
+      {
+        "TransactionID": "13168121977",
+        "Date": "2026-06-04T00:00:00",
+        "Description": "WAYMO 8442613753 CA",
+        "Category": null,
+        "Amount": -14.61
+      },
+      {
+        "TransactionID": "13161124273",
+        "Date": "2026-06-03T00:00:00",
+        "Description": "VENMO PAYMENT",
+        "Category": null,
+        "Amount": -150.0
+      }
+    ],
+    "ItemStatus": 0
+  },
+  "ItemStatus": 0
+}

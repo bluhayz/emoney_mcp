@@ -1,0 +1,73 @@
+{
+  "CardId": 2,
+  "Goals": [
+    {
+      "Projection": {
+        "PercentFunded": 0.0,
+        "ProjectedFundingText": "— —",
+        "TotalCost": 0,
+        "TotalFunding": 0,
+        "YearsFunded": 0,
+        "TotalYears": 0,
+        "YearsFundedAsPercentage": 0.0
+      },
+      "FactId": "d584c330-84dc-468f-9963-785c0818eecb",
+      "CustomPictureUrl": null,
+      "StartYear": 2034,
+      "EndYear": 2084,
+      "Name": "Retirement",
+      "SubTypeName": null,
+      "ItemStatus": 7,
+      "ClientGoalInfoType": 1,
+      "HasNoCost": true,
+      "PercentFunded": 0,
+      "Duration": "2034 - 2084"
+    },
+    {
+      "Projection": {
+        "PercentFunded": 100.0,
+        "ProjectedFundingText": "$291,385 of $291,385",
+        "TotalCost": 291385,
+        "TotalFunding": 291385,
+        "YearsFunded": 0,
+        "TotalYears": 0,
+        "YearsFundedAsPercentage": 0.0
+      },
+      "FactId": "bdda9ace-194f-4fde-b365-e92718e01490",
+      "CustomPictureUrl": null,
+      "StartYear": 2026,
+      "EndYear": 2041,
+      "Name": "Parker Adventures",
+      "SubTypeName": "Other",
+      "ItemStatus": 2,
+      "ClientGoalInfoType": 2,
+      "HasNoCost": false,
+      "PercentFunded": 100,
+      "Duration": "2026 - 2041"
+    },
+    {
+      "Projection": {
+        "PercentFunded": 100.0,
+        "ProjectedFundingText": "$621,857 of $621,857",
+        "TotalCost": 621857,
+        "TotalFunding": 621857,
+        "YearsFunded": 0,
+        "TotalYears": 0,
+        "YearsFundedAsPercentage": 0.0
+      },
+      "FactId": "00e26f13-e598-494c-a54e-e004a9023d69",
+      "CustomPictureUrl": null,
+      "StartYear": 2026,
+      "EndYear": 2037,
+      "Name": "Private Education Expense",
+      "SubTypeName": "",
+      "ItemStatus": 2,
+      "ClientGoalInfoType": 0,
+      "HasNoCost": false,
+      "PercentFunded": 100,
+      "Duration": "2026 - 2037"
+    }
+  ],
+  "ItemStatus": 0,
+  "ShouldUseMonteCarloProjection": false
+}

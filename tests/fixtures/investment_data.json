@@ -1,0 +1,74 @@
+{
+  "Holdings": 7751984.0,
+  "Cash": 870926.3,
+  "AsOf": "2026-06-06T00:00:00",
+  "AssetAllocation": {},
+  "PortfolioHistory": null,
+  "Accounts": [
+    {
+      "Name": "Individual - TOD",
+      "InstitutionName": "Fidelity",
+      "CurrentValue": 4198537.0,
+      "Cash": 870926.3,
+      "HoldingsValue": 3327610.7,
+      "HasInvestmentTransactions": true,
+      "Holdings": [
+        {
+          "HoldingID": "h001",
+          "Ticker": "VTSAX",
+          "Description": "Vanguard Total Stock Market Index Fund;Admiral",
+          "Units": 17234.5,
+          "Price": 89.91,
+          "Value": 1549367.11,
+          "CostBasis": 900000.0
+        },
+        {
+          "HoldingID": "h002",
+          "Ticker": "SNOW",
+          "Description": "Snowflake Inc",
+          "Units": 6250.0,
+          "Price": 165.97,
+          "Value": 1037622.3,
+          "CostBasis": 750000.0
+        },
+        {
+          "HoldingID": "h003",
+          "Ticker": "SPAXX",
+          "Description": "Fidelity Government Money Market Fund",
+          "Units": 870926.3,
+          "Price": 1.0,
+          "Value": 870926.3,
+          "CostBasis": 870926.3
+        }
+      ]
+    },
+    {
+      "Name": "Roth IRA",
+      "InstitutionName": "Vanguard",
+      "CurrentValue": 350651.14,
+      "Cash": 0.0,
+      "HoldingsValue": 350651.14,
+      "HasInvestmentTransactions": true,
+      "Holdings": [
+        {
+          "HoldingID": "h004",
+          "Ticker": "VTWAX",
+          "Description": "Vanguard Total World Stock Index Fund;Admiral",
+          "Units": 8765.0,
+          "Price": 40.01,
+          "Value": 350651.14,
+          "CostBasis": 220000.0
+        }
+      ]
+    },
+    {
+      "Name": "Empty Account",
+      "InstitutionName": "Test Bank",
+      "CurrentValue": 0.0,
+      "Cash": 0.0,
+      "HoldingsValue": 0.0,
+      "HasInvestmentTransactions": false,
+      "Holdings": []
+    }
+  ]
+}

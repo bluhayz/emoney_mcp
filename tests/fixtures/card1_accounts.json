@@ -1,0 +1,100 @@
+{
+  "CardId": 1,
+  "AccountGroups": [
+    {
+      "Title": "Taxable",
+      "Accounts": [
+        {
+          "AccountID": "4f6bbea8-8551-4c77-b22f-bb8003e0ac80",
+          "AccountName": "Individual - TOD",
+          "Balance": 4198537.0,
+          "Institution": "Fidelity - via Direct Web API",
+          "MajorType": "InvestmentAsset",
+          "AsOfDate": "2026-06-05T00:00:00"
+        },
+        {
+          "AccountID": "abc12345-0000-0000-0000-000000000001",
+          "AccountName": "Ally Spending Account",
+          "Balance": 12500.0,
+          "Institution": "Ally Bank - via Direct Web API",
+          "MajorType": "BankAsset",
+          "AsOfDate": "2026-06-06T00:00:00"
+        }
+      ]
+    },
+    {
+      "Title": "Tax Advantaged",
+      "Accounts": [
+        {
+          "AccountID": "4af11378-0367-4b6f-9e7b-66536e42caa4",
+          "AccountName": "Drew Athene Agility 10 Trad",
+          "Balance": 1111408.0,
+          "Institution": "Athene Connect - Client Access - via Direct Web Access",
+          "MajorType": "AnnuityAsset",
+          "AsOfDate": "2026-06-06T00:00:00"
+        },
+        {
+          "AccountID": "67e8ed2f-8d69-4aed-a4d0-526e4d2e326d",
+          "AccountName": "Drew Athene Agility 10 Roth",
+          "Balance": 527398.0,
+          "Institution": "Athene Connect - Client Access - via Direct Web Access",
+          "MajorType": "AnnuityAsset",
+          "AsOfDate": "2026-06-06T00:00:00"
+        },
+        {
+          "AccountID": "vanguard-529-001",
+          "AccountName": "Parker K Hayes-Individual 529 College Savings Account",
+          "Balance": 304258.0,
+          "Institution": "Vanguard - via Direct Web API",
+          "MajorType": "TaxFree529SavingsAsset",
+          "AsOfDate": "2026-06-05T00:00:00"
+        },
+        {
+          "AccountID": "snowflake-401k-001",
+          "AccountName": "SNOWFLAKE INC. 401(K) PLAN",
+          "Balance": 50399.0,
+          "Institution": "Fidelity - via Direct Web API",
+          "MajorType": "PreTaxSavingsAsset",
+          "AsOfDate": "2026-06-05T00:00:00"
+        },
+        {
+          "AccountID": "oracle-401k-001",
+          "AccountName": "Oracle 401K",
+          "Balance": 92583.0,
+          "Institution": "Fidelity - via Direct Web API",
+          "MajorType": "InvestmentAsset",
+          "AsOfDate": "2026-06-05T00:00:00"
+        },
+        {
+          "AccountID": "roth-ira-001",
+          "AccountName": "Parker K Hayes, Drew R. Hayes Cust - Roth IRA Brokerage Account",
+          "Balance": 55558.0,
+          "Institution": "Vanguard - via Direct Web API",
+          "MajorType": "TaxFreeRothSavingsAsset",
+          "AsOfDate": "2026-06-05T00:00:00"
+        },
+        {
+          "AccountID": "hsa-001",
+          "AccountName": "Health Savings Account",
+          "Balance": 14717.0,
+          "Institution": "Fidelity - via Direct Web API",
+          "MajorType": "TaxFreeHealthSavingsAsset",
+          "AsOfDate": "2026-06-05T00:00:00"
+        }
+      ]
+    },
+    {
+      "Title": "Debt",
+      "Accounts": [
+        {
+          "AccountID": "mortgage-001",
+          "AccountName": "Truist Mortgage",
+          "Balance": -435000.0,
+          "Institution": "Truist Bank",
+          "MajorType": "MortgageLiability",
+          "AsOfDate": "2026-06-01T00:00:00"
+        }
+      ]
+    }
+  ]
+}

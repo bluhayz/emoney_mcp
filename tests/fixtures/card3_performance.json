@@ -1,0 +1,20 @@
+{
+  "CardId": 3,
+  "ValueChange": {
+    "ChangeType": 0,
+    "CurrentValue": 8266386.0,
+    "Change": -108578.7,
+    "ChangePercent": -0.013134966114575342,
+    "IsIntradayPricingEnabled": false,
+    "ItemStatus": 0
+  },
+  "History": [
+    5365702.0,
+    6361237.0,
+    7099451.0,
+    7825910.0,
+    8266386.0
+  ],
+  "CanAddAccounts": true,
+  "ItemStatus": 2
+}

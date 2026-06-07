@@ -16,8 +16,26 @@ dependencies = [
     "pycryptodomex>=3.20",
 ]
 
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.23",
+    "pytest-mock>=3.12",
+]
+
 [project.scripts]
 emoney-mcp = "emoney_mcp.server:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/emoney_mcp"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+
+[tool.hatch.build]
+exclude = [
+    "tests/",
+    ".github/",
+    "test_*.py",
+]

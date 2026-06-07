@@ -11,8 +11,8 @@ build/
 .venv/
 venv/
 
-# Test/debug scripts
-test_*.py
+# Root-level scratch/debug scripts (not the real test suite in tests/)
+/test_*.py
 
 # IDE
 .vscode/

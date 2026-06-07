@@ -2,7 +2,7 @@
 
 MCP server for [Emoney Advisor](https://wealth.emaplan.com) — exposes your complete financial picture as tools Claude Desktop can call.
 
-> **Ask Claude:** *"What's my net worth?"* · *"How is my portfolio performing?"* · *"Am I on track for retirement?"*
+> **Ask Claude:** *"What's my net worth?"* · *"How is my portfolio performing?"* · *"Am I on track for retirement?"* · *"What did I spend at Costco last month?"*
 
 ---
 
@@ -57,7 +57,7 @@ Adjust `cwd` to wherever you cloned the repo. Restart Claude Desktop after savin
 
 ---
 
-## Available tools (13 total)
+## Available tools (14 total)
 
 ### 💰 Balance Sheet
 
@@ -73,9 +73,9 @@ Adjust `cwd` to wherever you cloned the repo. Restart Claude Desktop after savin
 | Tool | Description |
 |------|-------------|
 | `get_holdings` | All investment positions across every account — ticker, units, price, value, cost basis, unrealized gain/loss |
-| `get_asset_allocation` | Top 10 holdings by portfolio weight for concentration risk analysis |
-| `get_performance` | Portfolio value change today + MTD net worth change + 1-month and 3-month computed returns |
-| `get_transactions` | Investment transactions (buys, sells, dividends). Parameters: `days` (default 30, max 365), `account_id` (optional) |
+| `get_asset_allocation` | Portfolio asset allocation by asset class (Equities, Fixed Income, Cash, etc.) plus top 10 holdings by weight |
+| `get_performance` | Portfolio value change today + MTD net worth change + computed returns from historical data |
+| `get_transactions` | Investment transactions (buys, sells, dividends). Parameters: `days` (default 30, max 365), `account_id` (optional GUID) |
 | `get_capital_gains` | Realized gains summary — sell proceeds, dividends, interest by tax year. Parameter: `year` (default current) |
 
 ### 🎯 Financial Planning
@@ -84,11 +84,12 @@ Adjust `cwd` to wherever you cloned the repo. Restart Claude Desktop after savin
 |------|-------------|
 | `get_goals` | Financial goals and funding status from Emoney's plan — retirement, education, and spending goals with percent funded |
 
-### 💳 Cash Flow
+### 💳 Cash Flow & Spending
 
 | Tool | Description |
 |------|-------------|
-| `get_spending` | Cash flow for last 30 days — income, expenses, net, savings rate, and 5 most recent transactions |
+| `get_spending` | Cash flow summary for recent months — income, expenses, net cash flow, savings rate, and 5 most recent transactions. Parameter: `months` (default 1) |
+| `get_spending_transactions` | Bank and credit card transactions with **category labels** (Groceries, Dining, Travel, etc.) and **top merchants**. Parameter: `days` (default 30, max 365) |
 
 ### 🔧 Session Management
 
@@ -99,6 +100,27 @@ Adjust `cwd` to wherever you cloned the repo. Restart Claude Desktop after savin
 
 ---
 
+## `get_spending_transactions` — merchant dedup
+
+The spending transactions tool normalizes raw bank descriptions before grouping by merchant, so visits to the same store at different locations are counted together:
+
+| Raw description | Normalized merchant |
+|----------------|---------------------|
+| `APLPAY FOOD LION VA` | `FOOD LION` |
+| `COSTCO WHSE STERLING US` | `COSTCO WHSE` |
+| `COSTCO WHSE RESTON VA` | `COSTCO WHSE` ← grouped |
+| `UNITED AIRLINES HOUSTON TX` | `UNITED AIRLINES` |
+| `TST AUSTIN GRILL VA` | `AUSTIN GRILL` |
+| `SQ *BLUE BOTTLE COFFEE` | `BLUE BOTTLE COFFEE` |
+
+**What gets stripped:** payment-network prefixes (`APLPAY`, `SQ *`, `TST`, `PP *`), trailing state abbreviations (from a fixed 50-state list), city names, country suffixes (`US`, `USA`), ZIP codes, and store numbers.
+
+**Protected words** (`MARKET`, `TIMES`, `GRILL`, `STORE`, etc.) are never stripped, preventing false positives like `WHOLE FOODS MARKET` → `WHOLE FOODS`.
+
+Internal financial flows (transfers, payroll, credit card payments, investment income) are excluded from the merchant list so it shows real spending only.
+
+---
+
 ## First-time login flow
 
 1. Ask Claude anything — e.g. *"What's my net worth?"*
@@ -106,6 +128,8 @@ Adjust `cwd` to wherever you cloned the repo. Restart Claude Desktop after savin
 3. Once the Emoney home page loads, the session is automatically saved.
 4. Call your tool again — it works instantly.
 5. Subsequent calls work without re-login until the session expires (typically a few hours).
+
+**Tip:** Use `sync_chrome_session` if you are already logged in to Emoney in Chrome — it imports your cookies without opening a new window.
 
 ---
 
@@ -122,6 +146,12 @@ What did I spend last month vs. what came in?
 What are my realized capital gains this year?
 Show me all my buy and sell transactions in the last 90 days.
 How concentrated am I in any single stock?
+
+What did I spend on groceries last month?
+What are my top spending categories over the last 60 days?
+Which merchants did I spend the most at?
+How much have I spent at Costco this year?
+Show me my dining and restaurant expenses.
 ```
 
 ---
@@ -132,7 +162,7 @@ How concentrated am I in any single stock?
 Claude Desktop
      │  MCP stdio
      ▼
-emoney_mcp/server.py       ← tool registration + dispatch
+emoney_mcp/server.py       ← tool registration + dispatch (14 tools)
 emoney_mcp/scraper.py      ← Emoney internal API calls (hot-reloaded)
 emoney_mcp/browser.py      ← session management + nodriver login
      │
@@ -144,21 +174,60 @@ emoney_mcp/browser.py      ← session management + nodriver login
 - `nodriver` runs in a separate OS thread with its own `asyncio` event loop to avoid conflicting with the MCP server's event loop
 - `importlib.reload(scraper)` on every tool call enables hot-reload — edit `scraper.py` and changes take effect immediately without restarting Claude Desktop
 - Session cookies are persisted to `.emoney_session.json` so login is only needed once per session
+- The SNB API JWT token is extracted from the Spending page HTML on each call — no separate auth flow required
 
 ---
 
 ## Internal API endpoints used
 
+### CardSwitcher (Emoney internal dashboard cards)
+
 | Endpoint | Data |
 |----------|------|
-| `CardSwitcher/GetCard/1` | Account groups with balances |
-| `CardSwitcher/GetCard/2` | Financial goals and funding status |
-| `CardSwitcher/GetCard/3` | Investment portfolio value + daily change |
-| `CardSwitcher/GetCard/8` | Net worth + monthly history |
-| `CardSwitcher/GetCard/11` | Net worth MTD and YTD change |
-| `CardSwitcher/GetCard/13` | Cash flow — income, expenses, recent transactions |
-| `Investments/GetInvestmentData` | Holdings, positions, cost basis |
-| `Investments/GetInvestmentTransactions` | Transaction history (POST, requires CSRF token) |
+| `CS/CardSwitcher/GetCard/1` | Account groups with balances |
+| `CS/CardSwitcher/GetCard/2` | Financial goals and funding status |
+| `CS/CardSwitcher/GetCard/3` | Investment portfolio value + daily change |
+| `CS/CardSwitcher/GetCard/4` | Asset allocation model summary |
+| `CS/CardSwitcher/GetCard/8` | Net worth + monthly history array |
+| `CS/CardSwitcher/GetCard/9` | Net worth, total assets, total liabilities |
+| `CS/CardSwitcher/GetCard/11` | Net worth MTD and YTD change |
+| `CS/CardSwitcher/GetCard/13` | Cash flow — income, expenses, recent transactions |
+
+### Investments
+
+| Endpoint | Data |
+|----------|------|
+| `CS/Investments/GetInvestmentData` | Holdings, positions, asset allocation, cost basis |
+| `CS/Investments/GetInvestmentTransactions` | Transaction history (POST, requires CSRF token) |
+
+### SNB API (`api.emoneyadvisor.com/snb-api`)
+
+The spending module uses a separate REST API authenticated with a short-lived JWT token embedded in the Spending page HTML.
+
+| Endpoint | Data |
+|----------|------|
+| `api/values/GetFilteredTransactions` | All bank/CC transactions with `categoryId` (up to 2,000 most recent) |
+| `api/values/GetCategories` | 114 spending category names mapped by ID |
+| `api/values/GetAccounts` | Linked bank and credit card accounts |
+
+---
+
+## Development & testing
+
+```bash
+# Install dev dependencies
+py -m pip install -e ".[dev]"
+
+# Run tests
+py -m pytest tests/ -v
+
+# Syntax check
+py -m py_compile src/emoney_mcp/scraper.py src/emoney_mcp/server.py
+```
+
+Tests use fixture JSON files in `tests/fixtures/` and mock HTTP sessions — no live Emoney connection needed.
+
+CI runs on GitHub Actions (Python 3.11, 3.12, 3.13) on every push and pull request.
 
 ---
 

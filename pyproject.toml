@@ -24,7 +24,7 @@ dev = [
 ]
 
 [project.scripts]
-emoney-mcp = "emoney_mcp.server:main"
+emoney-mcp = "emoney_mcp.server:run"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/emoney_mcp"]

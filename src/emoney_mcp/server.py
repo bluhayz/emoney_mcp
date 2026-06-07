@@ -421,6 +421,11 @@ async def main() -> None:
             await close_session()
 
 
-if __name__ == "__main__":
+def run() -> None:
+    """Sync entry point for `uvx` / `[project.scripts]`."""
     import asyncio
     asyncio.run(main())
+
+
+if __name__ == "__main__":
+    run()

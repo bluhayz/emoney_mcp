@@ -171,6 +171,27 @@ async def list_tools() -> list[Tool]:
                 "required": [],
             },
         ),
+        Tool(
+            name="get_spending_transactions",
+            description=(
+                "Returns bank and credit card transactions with category labels (Groceries, Dining, "
+                "Travel, Shopping, etc.) for the last N days. Unlike get_transactions (which covers "
+                "investment activity), this covers everyday spending from linked bank/CC accounts. "
+                "Optional parameter: days (default 30, max 365). "
+                "Useful for 'What did I spend on groceries last month?' or 'Show me my dining expenses.'"
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "days": {
+                        "type": "integer",
+                        "description": "Number of days back to fetch (default 30, max 365)",
+                        "default": 30,
+                    }
+                },
+                "required": [],
+            },
+        ),
         # ── Session management ────────────────────────────────────────────
         Tool(
             name="sync_chrome_session",
@@ -222,6 +243,9 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
     elif name == "get_spending":
         months = int(arguments.get("months", 1))
         result = await _get_spending(months=months)
+    elif name == "get_spending_transactions":
+        days = int(arguments.get("days", 30))
+        result = await _get_spending_transactions(days=days)
     elif name == "sync_chrome_session":
         result = await _sync_chrome_session()
     elif name == "reset_session":
@@ -335,6 +359,13 @@ async def _get_spending(months: int = 1) -> dict:
     if err:
         return err
     return await scraper.get_spending(sess, months=months)
+
+
+async def _get_spending_transactions(days: int = 30) -> dict:
+    sess, err = await _get_session_or_err()
+    if err:
+        return err
+    return await scraper.get_spending_transactions(sess, days=days)
 
 
 # ── Session management ─────────────────────────────────────────────────────

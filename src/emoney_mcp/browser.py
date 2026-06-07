@@ -31,7 +31,7 @@ LOGIN_URL = f"{BASE_URL}/ema/SignIn"
 HOME_URL  = f"{BASE_URL}/ema/CS/Home"
 
 MANUAL_LOGIN_REQUIRED = "MANUAL_LOGIN_REQUIRED"
-_DEFAULT_COOKIE_FILE = Path(__file__).parent.parent.parent / ".emoney_session.json"
+_DEFAULT_COOKIE_FILE = Path.home() / ".emoney_mcp" / "session.json"
 COOKIE_FILE = Path(os.getenv("EMONEY_SESSION_FILE", str(_DEFAULT_COOKIE_FILE)))
 
 _IMPERSONATE = "chrome120"
@@ -187,6 +187,7 @@ class EmoneyHttpSession:
         return {}
 
     def save_cookies(self, cookies: dict) -> None:
+        COOKIE_FILE.parent.mkdir(parents=True, exist_ok=True)
         COOKIE_FILE.write_text(json.dumps(cookies, indent=2))
         self._http = None  # force reload with fresh cookies
 

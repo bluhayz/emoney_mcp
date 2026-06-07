@@ -212,8 +212,28 @@ class EmoneyHttpSession:
         resp = await http.get(url, allow_redirects=True, timeout=30)
         return resp.text
 
+    async def get_csrf_token(self) -> str:
+        """
+        Fetch the Investments page and extract the ASP.NET anti-forgery token
+        from the hidden <input> field.  Result is cached for the session lifetime.
+        """
+        if getattr(self, "_csrf_token", None):
+            return self._csrf_token        # type: ignore[attr-defined]
+        import re
+        http = await self.get_http()
+        resp = await http.get(f"{BASE_URL}/ema/CS/Investments", timeout=20)
+        match = re.search(
+            r'<input[^>]+name=["\']__RequestVerificationToken["\'][^>]+value=["\']([^"\']+)["\']'
+            r'|<input[^>]+value=["\']([^"\']+)["\'][^>]+name=["\']__RequestVerificationToken["\']',
+            resp.text, re.IGNORECASE
+        )
+        token = (match.group(1) or match.group(2)) if match else ""
+        self._csrf_token = token          # type: ignore[attr-defined]
+        return token
+
     def close(self) -> None:
         self._http = None
+        self._csrf_token = None           # type: ignore[attr-defined]
 
 
 # ---------------------------------------------------------------------------

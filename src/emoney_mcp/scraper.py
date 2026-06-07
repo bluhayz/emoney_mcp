@@ -9,7 +9,10 @@ CardSwitcher/GetCard/4   → asset allocation model summary
 CardSwitcher/GetCard/8   → net worth history (monthly trend)
 Investments/GetInvestmentData          → per-account holdings + asset allocation + history
 Investments/GetInvestmentTransactions  → transaction history (POST, needs CSRF)
-CS/Spending/GetSpendingData            → spending by category
+CS/CardSwitcher/GetCard/13             → cash flow summary (income / expenses / net)
+SNB API (api.emoneyadvisor.com/snb-api)
+  api/values/GetFilteredTransactions   → bank/CC transactions with categoryId
+  api/values/GetCategories             → 114 category names (id → name)
 
 This module is hot-reloaded on every tool call so changes take
 effect without restarting the MCP server.
@@ -20,11 +23,14 @@ import os
 import time
 from datetime import datetime, timedelta
 
+import re as _re
+
 _SUBDOMAIN = os.getenv("EMONEY_SUBDOMAIN", "wealth")
 BASE_URL = f"https://{_SUBDOMAIN}.emaplan.com"
-_CARD_URL = f"{BASE_URL}/ema/CS/CardSwitcher/GetCard"
-_INV_URL  = f"{BASE_URL}/ema/CS/Investments"
+_CARD_URL  = f"{BASE_URL}/ema/CS/CardSwitcher/GetCard"
+_INV_URL   = f"{BASE_URL}/ema/CS/Investments"
 _SPEND_URL = f"{BASE_URL}/ema/CS/Spending"
+_SNB_API   = "https://api.emoneyadvisor.com/snb-api"
 
 
 # ---------------------------------------------------------------------------
@@ -738,5 +744,108 @@ async def get_transactions(http_session, days: int = 30, account_id: str | None 
         "start_date":        start_str,
         "end_date":          end_str,
         "transaction_count": len(transactions),
+        "transactions":      transactions,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Spending transactions with categories  (SNB API)
+# ---------------------------------------------------------------------------
+
+async def _get_snb_credentials(http_session) -> tuple[str, str]:
+    """Extract JWT token and API key from the Spending/Transactions page HTML."""
+    http = await http_session.get_http()
+    resp = await http.get(f"{BASE_URL}/ema/CS/Spending/Transactions", timeout=20)
+    html = resp.text
+    jwt_match = _re.search(r'"JwtToken"\s*:\s*"([^"]+)"', html)
+    key_match  = _re.search(r'apiKey["\']?\s*:\s*["\']([^"\']+)["\']', html)
+    jwt_token = jwt_match.group(1) if jwt_match else ""
+    api_key   = key_match.group(1)  if key_match  else ""
+    return jwt_token, api_key
+
+
+async def get_spending_transactions(http_session, days: int = 30) -> dict:
+    """
+    Return bank/credit card transactions with category labels for the last `days` days.
+
+    Source: SNB API (api.emoneyadvisor.com/snb-api)
+      GET api/values/GetFilteredTransactions  → transactions with categoryId
+      GET api/values/GetCategories            → 114 category names
+
+    The JWT token needed to call the SNB API is extracted from the
+    CS/Spending/Transactions page on each call.  Transactions with
+    isDeleted=true are excluded; pending transactions are included
+    with a flag.
+    """
+    days = min(max(days, 1), 365)
+    jwt_token, api_key = await _get_snb_credentials(http_session)
+
+    if not jwt_token:
+        return {"error": "Could not extract JWT token from Spending page. Try re-syncing Chrome session."}
+
+    http = await http_session.get_http()
+    snb_headers = {
+        "Accept":        "application/json, text/plain, */*",
+        "Authorization": f"Bearer {jwt_token}",
+        "apikey":        api_key,
+        "Origin":        BASE_URL,
+    }
+
+    # Fetch category map
+    cat_resp = await http.get(f"{_SNB_API}/api/values/GetCategories",
+                              headers=snb_headers, timeout=20)
+    categories: dict[str, str] = {}
+    if cat_resp.status_code == 200 and "json" in cat_resp.headers.get("content-type", ""):
+        for cat in cat_resp.json():
+            categories[str(cat.get("id", ""))] = cat.get("name", "")
+
+    # Fetch all transactions
+    txn_resp = await http.get(f"{_SNB_API}/api/values/GetFilteredTransactions",
+                              headers=snb_headers, timeout=30)
+    if txn_resp.status_code != 200 or "json" not in txn_resp.headers.get("content-type", ""):
+        return {"error": f"GetFilteredTransactions returned {txn_resp.status_code}."}
+
+    all_txns = txn_resp.json()
+
+    # Client-side date filter
+    cutoff = (datetime.now() - timedelta(days=days)).strftime("%Y-%m-%d")
+    filtered = [
+        t for t in all_txns
+        if (t.get("date") or "")[:10] >= cutoff and not t.get("isDeleted", False)
+    ]
+
+    # Sort newest first
+    filtered.sort(key=lambda t: t.get("date", ""), reverse=True)
+
+    transactions = []
+    for t in filtered:
+        desc = t.get("userDescription") or t.get("cleanDescription") or t.get("description", "")
+        cat_id = str(t.get("categoryId") or "")
+        cat_name = categories.get(cat_id, "Uncategorized") if cat_id else "Uncategorized"
+        transactions.append({
+            "date":        (t.get("date") or "")[:10],
+            "description": desc,
+            "category":    cat_name,
+            "amount":      t.get("value", 0),
+            "is_pending":  t.get("isPending", False),
+            "is_split":    t.get("isSplit", False),
+        })
+
+    # Summarize by category
+    cat_totals: dict[str, float] = {}
+    for t in transactions:
+        cat = t["category"]
+        cat_totals[cat] = round(cat_totals.get(cat, 0) + abs(t["amount"]), 2)
+
+    top_categories = sorted(cat_totals.items(), key=lambda x: x[1], reverse=True)[:10]
+
+    cutoff_display = (datetime.now() - timedelta(days=days)).strftime("%Y-%m-%d")
+
+    return {
+        "period_days":       days,
+        "start_date":        cutoff_display,
+        "end_date":          datetime.now().strftime("%Y-%m-%d"),
+        "transaction_count": len(transactions),
+        "top_categories":    [{"category": c, "total": v} for c, v in top_categories],
         "transactions":      transactions,
     }

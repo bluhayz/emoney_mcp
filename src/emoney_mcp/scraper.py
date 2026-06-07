@@ -273,90 +273,61 @@ async def get_net_worth_history(http_session, months: int = 12) -> dict:
     """
     Return monthly net worth trend for the last `months` months (default 12).
 
-    Tries CardSwitcher cards 8 and 11 (history cards), then falls back to
-    PortfolioHistory in GetInvestmentData.
+    Card 8 returns a bare History array of net worth values (newest last) plus
+    ChangeThisMonth.  We label each point "Month N" since the API does not
+    return dates alongside the values.
     """
     months = min(max(months, 1), 60)
     http = await http_session.get_http()
-    ts   = int(time.time() * 1000)
 
-    history_points = []
-    source = None
+    card8 = await _get_card(http, 8)
+    if not card8:
+        return {"error": "Could not retrieve net worth history (Card 8 unavailable)."}
 
-    # Try card 8 (net worth history)
-    for card_id in [8, 11, 10]:
-        card = await _get_card(http, card_id)
-        if not card:
-            continue
-        # Look for history arrays under various key names
-        for key in ["History", "NetWorthHistory", "HistoryData", "DataPoints", "Points"]:
-            raw = card.get(key)
-            if raw and isinstance(raw, list) and len(raw) > 0:
-                history_points = raw
-                source = f"CardSwitcher/GetCard/{card_id} → {key}"
-                break
-        if history_points:
-            break
+    raw_history = card8.get("History") or []
+    current_nw  = card8.get("NetWorth")
+    mtd         = card8.get("ChangeThisMonth") or {}
+    ytd         = card8.get("ChangeThisYear")  or {}
 
-    # Fallback: PortfolioHistory from GetInvestmentData
-    if not history_points:
-        resp = await http.get(f"{_INV_URL}/GetInvestmentData?_={ts}", timeout=30)
-        if resp.status_code == 200 and "json" in resp.headers.get("content-type", ""):
-            inv_data = resp.json()
-            raw = inv_data.get("PortfolioHistory") or inv_data.get("History")
-            if raw and isinstance(raw, list):
-                history_points = raw
-                source = "Investments/GetInvestmentData → PortfolioHistory"
-
-    if not history_points:
-        return {
-            "error": (
-                "Could not locate net worth history data. "
-                "Emoney may require additional permissions or a different endpoint."
-            )
-        }
-
-    # Normalize each point to {date, net_worth} regardless of field names
-    normalized = []
-    for pt in history_points:
-        if isinstance(pt, dict):
-            # Date field candidates
-            date_val = (
-                pt.get("Date") or pt.get("AsOf") or pt.get("Month")
-                or pt.get("PeriodDate") or pt.get("EndDate") or ""
-            )
-            # Value field candidates
-            nw_val = (
-                pt.get("NetWorth") or pt.get("Value") or pt.get("TotalValue")
-                or pt.get("Balance") or pt.get("Amount")
-            )
-            if date_val or nw_val is not None:
-                # Parse timestamp if numeric
-                if isinstance(date_val, (int, float)) and date_val > 1e9:
-                    date_val = datetime.fromtimestamp(date_val / 1000).strftime("%Y-%m")
-                normalized.append({"date": str(date_val)[:10], "net_worth": nw_val})
-        elif isinstance(pt, (int, float)):
-            normalized.append({"date": None, "net_worth": pt})
-
+    # The History array is bare floats, newest last
     # Trim to requested months
-    normalized = normalized[-months:]
+    raw_history = raw_history[-months:]
 
-    # Compute change stats
+    # Build labelled points — we know the last entry is current month
+    now = datetime.now()
+    points = []
+    total  = len(raw_history)
+    for i, val in enumerate(raw_history):
+        # Work backwards from current month
+        months_ago = total - 1 - i
+        dt = (now.replace(day=1) - timedelta(days=months_ago * 28)).replace(day=1)
+        points.append({
+            "month":     dt.strftime("%Y-%m"),
+            "net_worth": val,
+        })
+
     change_dollar = None
     change_pct    = None
-    if len(normalized) >= 2:
-        first = normalized[0].get("net_worth") or 0
-        last  = normalized[-1].get("net_worth") or 0
+    if len(points) >= 2:
+        first = points[0]["net_worth"] or 0
+        last  = points[-1]["net_worth"] or 0
         if first:
             change_dollar = round(last - first, 2)
             change_pct    = round((last - first) / first * 100, 2)
 
     return {
-        "months_shown":    len(normalized),
-        "change_dollar":   change_dollar,
-        "change_percent":  change_pct,
-        "history":         normalized,
-        "source":          source,
+        "current_net_worth":    current_nw,
+        "months_shown":         len(points),
+        "change_over_period":   {"dollar": change_dollar, "percent": change_pct},
+        "this_month":           {
+            "change_dollar":  mtd.get("Change"),
+            "change_percent": round((mtd.get("ChangePercent") or 0) * 100, 2),
+        },
+        "this_year":            {
+            "change_dollar":  ytd.get("Change"),
+            "change_percent": round((ytd.get("ChangePercent") or 0) * 100, 2) if ytd.get("ChangePercent") else None,
+        } if ytd else None,
+        "history":              points,
     }
 
 
@@ -366,72 +337,72 @@ async def get_net_worth_history(http_session, months: int = 12) -> dict:
 
 async def get_performance(http_session) -> dict:
     """
-    Return portfolio performance (value change) across standard time periods.
+    Return portfolio performance across available time periods.
 
-    Pulls CardSwitcher card 3 (ValueChange) which contains period-over-period
-    returns for the investment portfolio.
+    Card 3 → investment portfolio value + today's change (dollar + %)
+    Card 11 → net worth change this month (dollar + %)
+    Card 8 → net worth change this month + history for trend
     """
     http = await http_session.get_http()
 
-    perf_data = None
-    source = None
-    for card_id in [3, 5, 6]:
-        card = await _get_card(http, card_id)
-        if not card:
-            continue
-        # Card 3 often has a ValueChange or Periods array
-        for key in ["ValueChange", "Periods", "Performance", "Returns", "PerformanceData"]:
-            if card.get(key) is not None:
-                perf_data = card
-                source = f"CardSwitcher/GetCard/{card_id}"
-                break
-        if perf_data:
-            break
+    card3  = await _get_card(http, 3)
+    card11 = await _get_card(http, 11)
 
-    if not perf_data:
-        return {
-            "error": (
-                "Could not locate performance data from CardSwitcher. "
-                "Try get_holdings for unrealized gain/loss data."
-            )
+    if not card3 and not card11:
+        return {"error": "Could not retrieve performance data from Emoney."}
+
+    result: dict = {}
+
+    # --- Investment portfolio (Card 3) ---
+    if card3:
+        vc = card3.get("ValueChange") or {}
+        inv_history = card3.get("History") or []
+        current_inv = vc.get("CurrentValue")
+        result["investment_portfolio"] = {
+            "current_value":      current_inv,
+            "today_change_dollar":  round(vc.get("Change") or 0, 2),
+            "today_change_percent": round((vc.get("ChangePercent") or 0) * 100, 2),
         }
+        # Compute period returns from monthly history
+        if inv_history and current_inv:
+            periods = []
+            labels = [("1 month ago", -2), ("3 months ago", -4), ("5 months ago", -6)]
+            for label, idx in labels:
+                try:
+                    past_val = inv_history[idx]
+                    if past_val:
+                        chg = current_inv - past_val
+                        pct = round(chg / past_val * 100, 2)
+                        periods.append({
+                            "period":         label,
+                            "change_dollars": round(chg, 2),
+                            "change_percent": pct,
+                            "from_value":     past_val,
+                            "to_value":       current_inv,
+                        })
+                except IndexError:
+                    pass
+            result["investment_portfolio"]["history_periods"] = periods
 
-    # Normalize: extract period returns wherever they are stored
-    periods = []
-    raw_vc = perf_data.get("ValueChange") or {}
-    if isinstance(raw_vc, dict):
-        for label, sub in raw_vc.items():
-            if isinstance(sub, dict):
-                periods.append({
-                    "period":         label,
-                    "change_dollars": sub.get("Change") or sub.get("Dollar"),
-                    "change_percent": sub.get("Percent") or sub.get("Percentage"),
-                    "start_value":    sub.get("StartValue") or sub.get("BeginValue"),
-                    "end_value":      sub.get("EndValue") or sub.get("CurrentValue"),
-                })
+    # --- Net worth (Card 11) ---
+    if card11:
+        nw = card11.get("NetWorth")
+        mtd = card11.get("ChangeThisMonth") or {}
+        ytd = card11.get("ChangeThisYear")  or {}
+        result["net_worth"] = {
+            "current_value": nw,
+            "this_month": {
+                "change_dollar":  round(mtd.get("Change") or 0, 2),
+                "change_percent": round((mtd.get("ChangePercent") or 0) * 100, 2),
+            },
+        }
+        if ytd and ytd.get("Change") is not None:
+            result["net_worth"]["this_year"] = {
+                "change_dollar":  round(ytd.get("Change") or 0, 2),
+                "change_percent": round((ytd.get("ChangePercent") or 0) * 100, 2),
+            }
 
-    raw_periods = perf_data.get("Periods") or []
-    if not periods and isinstance(raw_periods, list):
-        for p in raw_periods:
-            periods.append({
-                "period":         p.get("Name") or p.get("Label") or p.get("Period"),
-                "change_dollars": p.get("Change") or p.get("Dollar"),
-                "change_percent": p.get("Percent") or p.get("Return"),
-                "start_value":    p.get("StartValue"),
-                "end_value":      p.get("EndValue"),
-            })
-
-    # Summary figures at top level
-    current_value    = perf_data.get("CurrentValue") or perf_data.get("TotalValue")
-    as_of            = (perf_data.get("AsOf") or perf_data.get("AsOfDate") or "")[:10]
-
-    return {
-        "current_portfolio_value": current_value,
-        "as_of":                   as_of,
-        "periods":                 periods,
-        "raw_card_keys":           list(perf_data.keys()),  # debugging aid
-        "source":                  source,
-    }
+    return result
 
 
 # ---------------------------------------------------------------------------
@@ -440,118 +411,111 @@ async def get_performance(http_session) -> dict:
 
 async def get_spending(http_session, months: int = 1) -> dict:
     """
-    Return spending by category for the last `months` months (default 1).
+    Return cash flow summary and recent transactions for the last 30 days.
 
-    Tries multiple Emoney spending endpoints.  The SPA uses CS/Spending routes
-    so this probes the most likely API paths.
+    Source: CardSwitcher/GetCard/13 — contains Income, Expenses, Net cash flow
+    and the 5 most recent spending transactions.
+
+    Note: Emoney's spending category breakdown is only available through the
+    SPA (JavaScript-rendered pages) and is not exposed as a JSON API endpoint.
     """
-    months = min(max(months, 1), 12)
-    end_dt   = datetime.now()
-    start_dt = end_dt.replace(day=1) if months == 1 else (end_dt - timedelta(days=months * 30)).replace(day=1)
-    start_str = start_dt.strftime("%m/%d/%Y")
-    end_str   = end_dt.strftime("%m/%d/%Y")
-
     http = await http_session.get_http()
 
-    # Try the CSRF token — spending POSTs often need it too
-    token = await http_session.get_csrf_token()
+    card13 = await _get_card(http, 13)
+    if not card13:
+        return {"error": "Could not retrieve spending data (Card 13 unavailable). Session may have expired."}
 
-    headers_base = {
-        "X-Requested-With": "XMLHttpRequest",
-        "Accept":            "application/json, text/javascript, */*; q=0.01",
-        "Content-Type":      "application/json",
-        "Referer":           f"{_SPEND_URL}",
-    }
-    if token:
-        headers_base["__RequestVerificationToken"] = token
+    cf  = card13.get("CashFlow")   or {}
+    bud = card13.get("Budget")     or {}
+    rt  = card13.get("RecentTransactions") or {}
 
-    body = {
-        "StartDate": start_str,
-        "EndDate":   end_str,
-    }
+    # Date range is embedded in DataSourceRoute
+    dr = cf.get("DataSourceRoute") or {}
+    rvd = dr.get("RouteValueDictionary") or {}
+    period_start = rvd.get("startDate", "")
+    period_end   = rvd.get("endDate",   "")
 
-    spending_data = None
-    endpoint_used = None
+    # Recent transactions
+    transactions = []
+    for tx in rt.get("Transactions") or []:
+        transactions.append({
+            "date":        (tx.get("Date") or "")[:10],
+            "description": tx.get("Description") or "",
+            "category":    tx.get("Category"),
+            "amount":      tx.get("Amount"),
+        })
 
-    # Probe candidate endpoints
-    candidates = [
-        ("POST", f"{_SPEND_URL}/GetSpendingData"),
-        ("POST", f"{_SPEND_URL}/GetCategorySpending"),
-        ("GET",  f"{_SPEND_URL}/GetSpendingData?startDate={start_str}&endDate={end_str}&_={int(time.time()*1000)}"),
-        ("GET",  f"{BASE_URL}/ema/CS/CashFlow/GetCashFlowData?_={int(time.time()*1000)}"),
-        ("POST", f"{BASE_URL}/ema/CS/CashFlow/GetCashFlowData"),
-        ("GET",  f"{_CARD_URL}/7?_={int(time.time()*1000)}"),   # card 7 sometimes = spending
-        ("GET",  f"{_CARD_URL}/6?_={int(time.time()*1000)}"),
-    ]
+    income   = cf.get("Income")
+    expenses = cf.get("Expenses")
+    net      = cf.get("Net")
 
-    for method, url in candidates:
-        try:
-            if method == "POST":
-                resp = await http.post(
-                    url, headers=headers_base,
-                    data=_json.dumps(body).encode(), timeout=20
-                )
-            else:
-                resp = await http.get(url, timeout=20)
-
-            ct = resp.headers.get("content-type", "")
-            if resp.status_code == 200 and "json" in ct:
-                parsed = resp.json()
-                # Check if there's meaningful data (not just an empty object)
-                if parsed and (
-                    parsed.get("Data") or parsed.get("Categories") or
-                    parsed.get("aaData") or parsed.get("Spending") or
-                    parsed.get("CashFlow") or parsed.get("TotalExpenses") is not None
-                ):
-                    spending_data = parsed
-                    endpoint_used = f"{method} {url.split('?')[0]}"
-                    break
-        except Exception:
-            continue
-
-    if not spending_data:
-        return {
-            "error": (
-                "Could not retrieve spending data. "
-                "Emoney's spending API endpoint could not be located automatically. "
-                "The Spending section may require a separate API discovery session."
-            ),
-            "start_date": start_str,
-            "end_date":   end_str,
-        }
-
-    # Parse whatever structure we got
-    raw = spending_data.get("Data") or spending_data
-
-    # Try to extract categories
-    categories = []
-    for cat_key in ["Categories", "Spending", "aaData", "Items"]:
-        cats = raw.get(cat_key) if isinstance(raw, dict) else None
-        if cats and isinstance(cats, list):
-            for c in cats:
-                if isinstance(c, dict):
-                    categories.append({
-                        "category": c.get("CategoryName") or c.get("Name") or c.get("Category"),
-                        "amount":   c.get("Amount") or c.get("Total") or c.get("Spending"),
-                        "budget":   c.get("Budget") or c.get("BudgetAmount"),
-                        "count":    c.get("TransactionCount") or c.get("Count"),
-                    })
-                elif isinstance(c, list) and len(c) >= 2:
-                    # DataTables array format
-                    categories.append({"category": c[0], "amount": c[1]})
-            break
-
-    categories.sort(key=lambda x: abs(x.get("amount") or 0), reverse=True)
+    # Calculate savings rate if both are available
+    savings_rate = None
+    if income and expenses and income > 0:
+        savings_rate = round((income - abs(expenses)) / income * 100, 1)
 
     return {
-        "start_date":      start_str,
-        "end_date":        end_str,
-        "total_expenses":  raw.get("TotalExpenses") or raw.get("Total") or raw.get("TotalSpending"),
-        "total_income":    raw.get("TotalIncome") or raw.get("Income"),
-        "net_cash_flow":   raw.get("NetCashFlow") or raw.get("CashFlow"),
-        "categories":      categories,
-        "endpoint_used":   endpoint_used,
+        "period":             f"{period_start} to {period_end}" if period_start else "last 30 days",
+        "income":             income,
+        "expenses":           expenses,
+        "net_cash_flow":      net,
+        "savings_rate_pct":   savings_rate,
+        "budget_set":         (bud.get("Budgeted") or 0) > 0,
+        "recent_transactions": transactions,
+        "note": (
+            "Income and expenses cover all linked bank and credit card accounts. "
+            "Category breakdown requires browsing the Emoney Spending page directly."
+        ),
     }
+
+
+# ---------------------------------------------------------------------------
+# Financial Goals
+# ---------------------------------------------------------------------------
+
+async def get_goals(http_session) -> dict:
+    """
+    Return financial goals and their funding status from Emoney's plan.
+
+    Source: CardSwitcher/GetCard/2 — contains Goals[] with PercentFunded,
+    TotalCost, TotalFunding, and projected dates for each goal.
+    """
+    http = await http_session.get_http()
+    card2 = await _get_card(http, 2)
+    if not card2:
+        return {"error": "Could not retrieve goals data (Card 2 unavailable). Session may have expired."}
+
+    goals_raw = card2.get("Goals") or []
+    goals = []
+    for g in goals_raw:
+        proj = g.get("Projection") or {}
+        goals.append({
+            "name":             g.get("Name"),
+            "type":             g.get("SubTypeName") or _goal_type_label(g.get("ClientGoalInfoType")),
+            "start_year":       g.get("StartYear"),
+            "end_year":         g.get("EndYear"),
+            "duration":         g.get("Duration"),
+            "percent_funded":   proj.get("PercentFunded"),
+            "total_cost":       proj.get("TotalCost"),
+            "total_funding":    proj.get("TotalFunding"),
+            "funding_summary":  proj.get("ProjectedFundingText"),
+            "on_track":         (proj.get("PercentFunded") or 0) >= 100,
+        })
+
+    # Separate retirement from spending goals
+    retirement = [g for g in goals if g["name"] == "Retirement" or g.get("type") == "Retirement"]
+    spending   = [g for g in goals if g not in retirement]
+
+    return {
+        "goal_count":       len(goals),
+        "all_on_track":     all(g["on_track"] for g in goals),
+        "retirement_goals": retirement,
+        "spending_goals":   spending,
+    }
+
+
+def _goal_type_label(type_int) -> str:
+    return {0: "Education", 1: "Retirement", 2: "Other Spending"}.get(type_int, "Unknown")
 
 
 # ---------------------------------------------------------------------------

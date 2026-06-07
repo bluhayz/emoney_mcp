@@ -140,6 +140,16 @@ async def list_tools() -> list[Tool]:
                 "required": [],
             },
         ),
+        Tool(
+            name="get_goals",
+            description=(
+                "Returns financial goals and their funding status from Emoney's financial plan. "
+                "Includes retirement goal (start year, funded %), education funding, and "
+                "other spending goals with projected cost vs. current funding. "
+                "Useful for 'Am I on track for retirement?' or 'How funded is Parker's education goal?'"
+            ),
+            inputSchema={"type": "object", "properties": {}, "required": []},
+        ),
         # ── Spending / Cash flow ──────────────────────────────────────────
         Tool(
             name="get_spending",
@@ -202,6 +212,8 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
         days = int(arguments.get("days", 30))
         account_id = arguments.get("account_id")
         result = await _get_transactions(days=days, account_id=account_id)
+    elif name == "get_goals":
+        result = await _get_goals()
     elif name == "get_capital_gains":
         year = arguments.get("year")
         if year is not None:
@@ -310,6 +322,13 @@ async def _get_capital_gains(year: int | None = None) -> dict:
 
 
 # ── Spending ───────────────────────────────────────────────────────────────
+
+async def _get_goals() -> dict:
+    sess, err = await _get_session_or_err()
+    if err:
+        return err
+    return await scraper.get_goals(sess)
+
 
 async def _get_spending(months: int = 1) -> dict:
     sess, err = await _get_session_or_err()

@@ -18,33 +18,45 @@ Emoney has no public API, so this uses browser automation for login and reverse-
 
 ## Prerequisites
 
-- Python 3.11+
+- [uv](https://docs.astral.sh/uv/getting-started/installation/) — fast Python package manager
 - Google Chrome installed at the default path
 - Claude Desktop
 
+> **Why uv?** `uvx` creates a temporary isolated environment and runs the server in a single command — no `pip install`, no virtual environment to manage, no local clone required.
+
 ---
 
-## Installation
+## Installation — one line
+
+**Install uv** (if you don't have it):
+
+```powershell
+# Windows (PowerShell)
+powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
+```
 
 ```bash
-git clone https://github.com/bluhayz/emoney_mcp.git
-cd emoney_mcp
-py -m pip install -e .
+# macOS / Linux
+curl -LsSf https://astral.sh/uv/install.sh | sh
 ```
+
+That's it. `uvx` will download and run `emoney-mcp` automatically the first time Claude Desktop starts it.
 
 ---
 
 ## Claude Desktop configuration
 
-Add to `%APPDATA%\Claude\claude_desktop_config.json`:
+Add to `%APPDATA%\Claude\claude_desktop_config.json` (Windows) or `~/Library/Application Support/Claude/claude_desktop_config.json` (macOS):
 
 ```json
 {
   "mcpServers": {
     "emoney": {
-      "command": "py",
-      "args": ["-m", "emoney_mcp.server"],
-      "cwd": "D:\\ClaudeCode\\emoney_mcp\\src",
+      "command": "uvx",
+      "args": [
+        "--from", "git+https://github.com/bluhayz/emoney_mcp",
+        "emoney-mcp"
+      ],
       "env": {
         "EMONEY_SUBDOMAIN": "wealth"
       }
@@ -53,7 +65,53 @@ Add to `%APPDATA%\Claude\claude_desktop_config.json`:
 }
 ```
 
-Adjust `cwd` to wherever you cloned the repo. Restart Claude Desktop after saving.
+Restart Claude Desktop after saving. The first startup takes ~30 seconds while `uvx` downloads dependencies; subsequent starts are instant (cached).
+
+---
+
+## Alternative: local development install
+
+If you want to edit the code:
+
+```bash
+git clone https://github.com/bluhayz/emoney_mcp.git
+cd emoney_mcp
+uv pip install -e .
+```
+
+Then point Claude Desktop at your local clone:
+
+```json
+{
+  "mcpServers": {
+    "emoney": {
+      "command": "uvx",
+      "args": [
+        "--from", "D:/ClaudeCode/emoney_mcp",
+        "emoney-mcp"
+      ],
+      "env": {
+        "EMONEY_SUBDOMAIN": "wealth"
+      }
+    }
+  }
+}
+```
+
+Or use the traditional `py -m` approach:
+
+```json
+{
+  "mcpServers": {
+    "emoney": {
+      "command": "py",
+      "args": ["-m", "emoney_mcp.server"],
+      "cwd": "D:\\ClaudeCode\\emoney_mcp\\src",
+      "env": { "EMONEY_SUBDOMAIN": "wealth" }
+    }
+  }
+}
+```
 
 ---
 
@@ -215,14 +273,17 @@ The spending module uses a separate REST API authenticated with a short-lived JW
 ## Development & testing
 
 ```bash
-# Install dev dependencies
-py -m pip install -e ".[dev]"
+git clone https://github.com/bluhayz/emoney_mcp.git
+cd emoney_mcp
+
+# Install with dev dependencies
+uv pip install -e ".[dev]"
 
 # Run tests
-py -m pytest tests/ -v
+uv run pytest tests/ -v
 
 # Syntax check
-py -m py_compile src/emoney_mcp/scraper.py src/emoney_mcp/server.py
+uv run python -m py_compile src/emoney_mcp/scraper.py src/emoney_mcp/server.py
 ```
 
 Tests use fixture JSON files in `tests/fixtures/` and mock HTTP sessions — no live Emoney connection needed.

@@ -752,6 +752,123 @@ async def get_transactions(http_session, days: int = 30, account_id: str | None 
 # Spending transactions with categories  (SNB API)
 # ---------------------------------------------------------------------------
 
+# Known US state + territory abbreviations — only these are stripped as trailing tokens
+_US_STATES = frozenset({
+    "AL","AK","AZ","AR","CA","CO","CT","DE","FL","GA","HI","ID","IL","IN",
+    "IA","KS","KY","LA","ME","MD","MA","MI","MN","MS","MO","MT","NE","NV",
+    "NH","NJ","NM","NY","NC","ND","OH","OK","OR","PA","RI","SC","SD","TN",
+    "TX","UT","VT","VA","WA","WV","WI","WY","DC","PR","GU","VI",
+})
+
+# Common POS / payment-system prefixes to strip from transaction descriptions
+_POS_PREFIXES = _re.compile(
+    r"^(?:APLPAY\s+|SQ\s*\*\s*|TST\*?\s+|PP\*\s*|PAYPAL\s*\*\s*|SP\s+|"
+    r"AMZN\s+MKTP\s+US\*?\s*|GOOGLE\s*\*\s*|APPLE\.COM/\s*)",
+    _re.IGNORECASE,
+)
+
+# Trailing asterisk transaction reference codes like  *XYZ123
+_ASTERISK_REF = _re.compile(r"\*[A-Z0-9]{4,}$")
+
+# Store / transaction reference numbers like  #1234  or  1234567
+_STORE_NUMBER = _re.compile(r"\s+\#?\d{4,}$")
+
+# ZIP codes at end: " 20166" or " 20166-1234"
+_ZIP_CODE = _re.compile(r"\s+\d{5}(?:-\d{4})?$")
+
+# Categories that represent internal financial flows, not real merchant spending
+_NON_MERCHANT_CATEGORIES = {
+    "Transfers", "Credit Card Payment", "Paycheck/Salary",
+    "Income", "ACH Transfer", "Internal Transfer", "Investment",
+    "Dividend & Cap Gains", "Interest Income",
+}
+
+
+def _normalize_merchant(raw: str) -> str:
+    """
+    Normalize a transaction description into a stable merchant key so that
+    location-suffix variants of the same merchant group together.
+
+    Strategy (safe only — avoids stripping actual merchant name words):
+      1. Strip known POS / payment-network prefixes (APLPAY, SQ *, TST, etc.)
+      2. Strip trailing asterisk ref codes (*XYZ123)
+      3. Strip trailing ZIP codes and store reference numbers
+      4. Strip trailing "US" / "USA" country suffix
+      5. Strip trailing KNOWN US state abbreviation (from a fixed set)
+         — after stripping the state, also strip the preceding word if it
+           looks like a city (all-caps, 3–12 letters, not at start of string)
+
+    Deliberately does NOT try to guess city names from a general pattern,
+    which caused false positives like "FOOD LION" → "FOOD".
+
+    Examples
+    --------
+    "APLPAY FOOD LION VA"                → "FOOD LION"
+    "COSTCO WHSE STERLING US"            → "COSTCO WHSE"
+    "COSTCO WHSE RESTON VA"              → "COSTCO WHSE"
+    "UNITED AIRLINES HOUSTON TX"         → "UNITED AIRLINES"
+    "TST AUSTIN GRILL VA"                → "AUSTIN GRILL"
+    "SQ *BLUE BOTTLE COFFEE"             → "BLUE BOTTLE COFFEE"
+    "ANTHROPIC CLAUDE SUB SAN FRANCISCO CA" → "ANTHROPIC CLAUDE SUB"
+    "WAYMO CA"                           → "WAYMO"
+    """
+    s = raw.strip().upper()
+
+    # 1. Strip POS / payment-network prefixes
+    s = _POS_PREFIXES.sub("", s).strip()
+
+    # 2. Strip asterisk ref codes
+    s = _ASTERISK_REF.sub("", s).strip()
+
+    # 3. Strip ZIP codes and store numbers (up to 2 passes)
+    for _ in range(2):
+        prev = s
+        s = _ZIP_CODE.sub("", s).strip()
+        s = _STORE_NUMBER.sub("", s).strip()
+        if s == prev:
+            break
+
+    # Business/merchant words that should NEVER be treated as city names
+    _NOT_CITY = frozenset({
+        "TIMES", "MARKET", "MARKETS", "STORE", "STORES", "SHOP", "SHOPS",
+        "PLACE", "PLAZA", "PARK", "SQUARE", "CENTER", "CENTRE", "POINT",
+        "GROUP", "CORP", "INC", "LLC", "LTD", "AUTO", "HOME", "CARE",
+        "HEALTH", "CLUB", "GYM", "CAFE", "GRILL", "BAR", "PUB",
+    })
+
+    def _strip_city_after_location(parts: list[str]) -> list[str]:
+        """
+        Strip one trailing city-name word after a state/country has been removed.
+        Keeps at least 2 words and never strips known business/merchant words.
+        """
+        if len(parts) >= 3:
+            candidate = parts[-1]
+            if (candidate.isalpha()
+                    and 3 <= len(candidate) <= 12
+                    and candidate not in _NOT_CITY):
+                parts = parts[:-1]
+        return parts
+
+    # 4. Strip trailing "US" or "USA" country suffix, then strip trailing city word(s)
+    if s.endswith(" US") or s.endswith(" USA"):
+        s = s.rsplit(" ", 1)[0].strip()
+        parts = _strip_city_after_location(s.split())
+        s = " ".join(parts)
+
+    # 5a. Strip trailing known US state abbreviation
+    parts = s.split()
+    if len(parts) >= 2 and parts[-1] in _US_STATES:
+        parts = parts[:-1]
+        # 5b. Strip trailing city word(s) after state removal
+        parts = _strip_city_after_location(parts)
+        s = " ".join(parts)
+
+    # Collapse multiple spaces
+    s = _re.sub(r"\s{2,}", " ", s)
+
+    return s or raw.upper()
+
+
 async def _get_snb_credentials(http_session) -> tuple[str, str]:
     """Extract JWT token and API key from the Spending/Transactions page HTML."""
     http = await http_session.get_http()
@@ -839,6 +956,24 @@ async def get_spending_transactions(http_session, days: int = 30) -> dict:
 
     top_categories = sorted(cat_totals.items(), key=lambda x: x[1], reverse=True)[:10]
 
+    # Summarize by merchant (normalized to dedup location variants).
+    # Exclude internal financial flows (transfers, payroll, credit card payments)
+    # so the list reflects actual spending merchants.
+    merchant_data: dict[str, dict] = {}
+    for t in transactions:
+        if t["category"] in _NON_MERCHANT_CATEGORIES:
+            continue
+        raw = t["description"]
+        key = _normalize_merchant(raw)
+        if key not in merchant_data:
+            # Use the normalized key as the display name (cleaned-up merchant name)
+            merchant_data[key] = {"display": key, "total": 0.0, "count": 0}
+        entry = merchant_data[key]
+        entry["total"] = round(entry["total"] + abs(t["amount"]), 2)
+        entry["count"] += 1
+
+    top_merchants = sorted(merchant_data.values(), key=lambda x: x["total"], reverse=True)[:15]
+
     cutoff_display = (datetime.now() - timedelta(days=days)).strftime("%Y-%m-%d")
 
     return {
@@ -847,5 +982,9 @@ async def get_spending_transactions(http_session, days: int = 30) -> dict:
         "end_date":          datetime.now().strftime("%Y-%m-%d"),
         "transaction_count": len(transactions),
         "top_categories":    [{"category": c, "total": v} for c, v in top_categories],
+        "top_merchants":     [
+            {"merchant": e["display"], "total": e["total"], "transactions": e["count"]}
+            for e in top_merchants
+        ],
         "transactions":      transactions,
     }

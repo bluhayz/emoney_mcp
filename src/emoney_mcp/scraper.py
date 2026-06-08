@@ -869,6 +869,18 @@ def _normalize_merchant(raw: str) -> str:
     return s or raw.upper()
 
 
+# Income-generating categories (credits into the account)
+_INCOME_CATEGORIES = frozenset({
+    "Paycheck/Salary", "Income", "Dividend & Cap Gains", "Interest Income",
+    "ACH Transfer",   # often direct deposit — treated as income
+})
+
+# Pure internal flows — exclude from both income and spending
+_EXCLUDE_CATEGORIES = frozenset({
+    "Transfers", "Credit Card Payment", "Internal Transfer",
+})
+
+
 async def _get_snb_credentials(http_session) -> tuple[str, str]:
     """Extract JWT token and API key from the Spending/Transactions page HTML."""
     http = await http_session.get_http()
@@ -987,4 +999,328 @@ async def get_spending_transactions(http_session, days: int = 30) -> dict:
             for e in top_merchants
         ],
         "transactions":      transactions,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Shared SNB fetch helper
+# ---------------------------------------------------------------------------
+
+async def _fetch_snb_data(http_session, days: int) -> tuple[list, bool]:
+    """
+    Fetch and normalize SNB transactions for the last `days` days.
+    Returns (transactions, success) where each transaction has:
+      date, description, category, amount, is_income, is_pending
+    Returns ([], False) on auth failure.
+    """
+    jwt_token, api_key = await _get_snb_credentials(http_session)
+    if not jwt_token:
+        return [], False
+
+    http = await http_session.get_http()
+    snb_headers = {
+        "Accept":        "application/json, text/plain, */*",
+        "Authorization": f"Bearer {jwt_token}",
+        "apikey":        api_key,
+        "Origin":        BASE_URL,
+    }
+
+    categories: dict[str, str] = {}
+    cat_resp = await http.get(f"{_SNB_API}/api/values/GetCategories",
+                              headers=snb_headers, timeout=20)
+    if cat_resp.status_code == 200 and "json" in cat_resp.headers.get("content-type", ""):
+        for cat in cat_resp.json():
+            categories[str(cat.get("id", ""))] = cat.get("name", "")
+
+    txn_resp = await http.get(f"{_SNB_API}/api/values/GetFilteredTransactions",
+                              headers=snb_headers, timeout=30)
+    if txn_resp.status_code != 200 or "json" not in txn_resp.headers.get("content-type", ""):
+        return [], False
+
+    cutoff = (datetime.now() - timedelta(days=days)).strftime("%Y-%m-%d")
+    result = []
+    for t in txn_resp.json():
+        date_str = (t.get("date") or "")[:10]
+        if date_str < cutoff or t.get("isDeleted", False):
+            continue
+        desc = t.get("userDescription") or t.get("cleanDescription") or t.get("description", "")
+        cat_id   = str(t.get("categoryId") or "")
+        category = categories.get(cat_id, "Uncategorized") if cat_id else "Uncategorized"
+        result.append({
+            "date":        date_str,
+            "description": desc,
+            "category":    category,
+            "amount":      abs(t.get("value", 0) or 0),
+            "is_income":   category in _INCOME_CATEGORIES,
+            "is_excluded": category in _EXCLUDE_CATEGORIES,
+            "is_pending":  t.get("isPending", False),
+        })
+
+    result.sort(key=lambda t: t["date"], reverse=True)
+    return result, True
+
+
+# ---------------------------------------------------------------------------
+# Spending trends  (month-over-month by category)
+# ---------------------------------------------------------------------------
+
+async def get_spending_trends(http_session, months: int = 3) -> dict:
+    """
+    Return month-over-month spending trends by category for the last `months` months.
+
+    For each spending category shows monthly totals and whether spending is
+    trending up, down, or stable vs. the prior month.  Also returns monthly
+    totals for income and expenses so savings rate is visible per month.
+    """
+    months = min(max(months, 2), 12)
+    days   = months * 31 + 5   # a little padding
+
+    txns, ok = await _fetch_snb_data(http_session, days=days)
+    if not ok:
+        return {"error": "Could not retrieve SNB transaction data. Try re-syncing Chrome session."}
+
+    # Build ordered month labels (oldest → newest)
+    now = datetime.now()
+    month_labels = []
+    for i in range(months - 1, -1, -1):
+        dt = (now.replace(day=1) - timedelta(days=i * 28)).replace(day=1)
+        month_labels.append(dt.strftime("%Y-%m"))
+
+    month_set = set(month_labels)
+
+    # Bucket transactions by month
+    monthly_income:   dict[str, float] = {m: 0.0 for m in month_labels}
+    monthly_spending: dict[str, float] = {m: 0.0 for m in month_labels}
+    # cat_monthly[category][month] = total
+    cat_monthly: dict[str, dict[str, float]] = {}
+
+    for t in txns:
+        month = t["date"][:7]
+        if month not in month_set:
+            continue
+        if t["is_excluded"]:
+            continue
+        if t["is_income"]:
+            monthly_income[month] = round(monthly_income[month] + t["amount"], 2)
+        else:
+            monthly_spending[month] = round(monthly_spending[month] + t["amount"], 2)
+            cat = t["category"]
+            if cat not in cat_monthly:
+                cat_monthly[cat] = {m: 0.0 for m in month_labels}
+            cat_monthly[cat][month] = round(cat_monthly[cat][month] + t["amount"], 2)
+
+    # Build monthly summary
+    monthly_summary = []
+    for m in month_labels:
+        income   = monthly_income[m]
+        spending = monthly_spending[m]
+        net      = round(income - spending, 2)
+        rate     = round(net / income * 100, 1) if income > 0 else None
+        monthly_summary.append({
+            "month":            m,
+            "income":           round(income, 2),
+            "spending":         round(spending, 2),
+            "net":              net,
+            "savings_rate_pct": rate,
+        })
+
+    # Build category trends
+    last_month = month_labels[-1]
+    prev_month = month_labels[-2] if len(month_labels) >= 2 else None
+
+    category_trends = []
+    for cat, by_month in cat_monthly.items():
+        total_all = sum(by_month.values())
+        if total_all < 1:
+            continue
+        last  = by_month.get(last_month, 0)
+        prev  = by_month.get(prev_month, 0) if prev_month else 0
+        if prev > 0:
+            pct_change = round((last - prev) / prev * 100, 1)
+        else:
+            pct_change = None
+        if pct_change is not None:
+            trend = "up" if pct_change > 10 else ("down" if pct_change < -10 else "stable")
+        else:
+            trend = "new" if last > 0 else "none"
+        category_trends.append({
+            "category":          cat,
+            "monthly_totals":    [{"month": m, "total": round(by_month[m], 2)} for m in month_labels],
+            "this_month":        round(last, 2),
+            "prior_month":       round(prev, 2),
+            "change_pct":        pct_change,
+            "trend":             trend,
+        })
+
+    # Sort by this month's spending descending
+    category_trends.sort(key=lambda x: x["this_month"], reverse=True)
+
+    biggest_increases = sorted(
+        [c for c in category_trends if c["trend"] == "up"],
+        key=lambda x: x["change_pct"] or 0, reverse=True
+    )[:5]
+    biggest_decreases = sorted(
+        [c for c in category_trends if c["trend"] == "down"],
+        key=lambda x: x["change_pct"] or 0
+    )[:5]
+
+    return {
+        "months_shown":      months,
+        "month_labels":      month_labels,
+        "monthly_summary":   monthly_summary,
+        "category_trends":   category_trends,
+        "biggest_increases": biggest_increases,
+        "biggest_decreases": biggest_decreases,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Income summary
+# ---------------------------------------------------------------------------
+
+async def get_income_summary(http_session, days: int = 90) -> dict:
+    """
+    Return income sources and monthly income trend for the last `days` days.
+
+    Identifies income transactions by category (Paycheck/Salary, Income,
+    ACH Transfer, Dividend & Cap Gains, Interest Income) and groups them
+    by normalized source description.
+    """
+    days = min(max(days, 7), 365)
+
+    txns, ok = await _fetch_snb_data(http_session, days=days)
+    if not ok:
+        return {"error": "Could not retrieve SNB transaction data. Try re-syncing Chrome session."}
+
+    income_txns = [t for t in txns if t["is_income"]]
+
+    if not income_txns:
+        return {
+            "period_days": days,
+            "total_income": 0,
+            "message": "No income transactions found in this period.",
+        }
+
+    total_income = round(sum(t["amount"] for t in income_txns), 2)
+
+    # Group by normalized source description
+    sources: dict[str, dict] = {}
+    for t in income_txns:
+        key = _normalize_merchant(t["description"])
+        if key not in sources:
+            sources[key] = {
+                "source":   key,
+                "category": t["category"],
+                "count":    0,
+                "total":    0.0,
+                "dates":    [],
+            }
+        sources[key]["count"] += 1
+        sources[key]["total"]  = round(sources[key]["total"] + t["amount"], 2)
+        sources[key]["dates"].append(t["date"])
+
+    # Compute average and most-recent date per source
+    source_list = []
+    for s in sources.values():
+        s["average"]     = round(s["total"] / s["count"], 2)
+        s["most_recent"] = max(s["dates"])
+        del s["dates"]
+        source_list.append(s)
+    source_list.sort(key=lambda x: x["total"], reverse=True)
+
+    # Monthly income trend
+    now = datetime.now()
+    months_back = max(1, days // 30)
+    month_labels = []
+    for i in range(months_back - 1, -1, -1):
+        dt = (now.replace(day=1) - timedelta(days=i * 28)).replace(day=1)
+        month_labels.append(dt.strftime("%Y-%m"))
+
+    monthly: dict[str, float] = {m: 0.0 for m in month_labels}
+    month_set = set(month_labels)
+    for t in income_txns:
+        m = t["date"][:7]
+        if m in month_set:
+            monthly[m] = round(monthly[m] + t["amount"], 2)
+
+    return {
+        "period_days":    days,
+        "start_date":     (datetime.now() - timedelta(days=days)).strftime("%Y-%m-%d"),
+        "end_date":       datetime.now().strftime("%Y-%m-%d"),
+        "total_income":   total_income,
+        "income_sources": source_list,
+        "monthly_income": [{"month": m, "total": monthly[m]} for m in month_labels],
+    }
+
+
+# ---------------------------------------------------------------------------
+# Savings rate
+# ---------------------------------------------------------------------------
+
+async def get_savings_rate(http_session, months: int = 6) -> dict:
+    """
+    Return month-by-month savings rate for the last `months` months.
+
+    Savings rate = (income - spending) / income * 100
+    Excludes internal transfers, credit card payments, and other non-cash-flow items.
+    """
+    months = min(max(months, 1), 12)
+    days   = months * 31 + 5
+
+    txns, ok = await _fetch_snb_data(http_session, days=days)
+    if not ok:
+        return {"error": "Could not retrieve SNB transaction data. Try re-syncing Chrome session."}
+
+    now = datetime.now()
+    month_labels = []
+    for i in range(months - 1, -1, -1):
+        dt = (now.replace(day=1) - timedelta(days=i * 28)).replace(day=1)
+        month_labels.append(dt.strftime("%Y-%m"))
+
+    month_set = set(month_labels)
+    monthly_income:   dict[str, float] = {m: 0.0 for m in month_labels}
+    monthly_spending: dict[str, float] = {m: 0.0 for m in month_labels}
+
+    for t in txns:
+        m = t["date"][:7]
+        if m not in month_set or t["is_excluded"]:
+            continue
+        if t["is_income"]:
+            monthly_income[m]   = round(monthly_income[m]   + t["amount"], 2)
+        else:
+            monthly_spending[m] = round(monthly_spending[m] + t["amount"], 2)
+
+    monthly_rows = []
+    total_income   = 0.0
+    total_spending = 0.0
+    for m in month_labels:
+        inc  = monthly_income[m]
+        exp  = monthly_spending[m]
+        net  = round(inc - exp, 2)
+        rate = round(net / inc * 100, 1) if inc > 0 else None
+        total_income   += inc
+        total_spending += exp
+        monthly_rows.append({
+            "month":            m,
+            "income":           round(inc, 2),
+            "spending":         round(exp, 2),
+            "net":              net,
+            "savings_rate_pct": rate,
+        })
+
+    avg_rate = None
+    if total_income > 0:
+        avg_rate = round((total_income - total_spending) / total_income * 100, 1)
+
+    return {
+        "months_shown":          months,
+        "average_savings_rate":  avg_rate,
+        "total_income":          round(total_income, 2),
+        "total_spending":        round(total_spending, 2),
+        "total_net":             round(total_income - total_spending, 2),
+        "monthly":               monthly_rows,
+        "note": (
+            "Income = Paycheck/Salary, Income, ACH Transfer, Dividends, Interest. "
+            "Transfers and credit card payments are excluded as internal flows."
+        ),
     }

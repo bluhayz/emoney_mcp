@@ -1,4 +1,46 @@
-"""Tax planning tools — loss harvesting, contribution room, Roth conversion, RMDs, etc."""
+"""
+Tax planning tools — loss harvesting, contribution limits, Roth conversion,
+capital gains exposure, and Required Minimum Distribution estimates.
+
+All calculations use 2025 IRS figures (see ``_TAX_YEAR``).  Update the
+constants section each year.  Every tool appends ``_IRS_CAVEAT`` reminding
+users to verify with a qualified tax professional.
+
+Public functions
+----------------
+get_tax_loss_harvesting(http_session)
+    Scans all investment holdings for unrealized losses.  Only positions in
+    taxable brokerage accounts are flagged as harvestable (losses in IRAs /
+    401ks have no immediate tax benefit).  Estimates tax savings at 15%, 20%,
+    and 23.8% (20% LTCG + 3.8% NIIT) rates.
+
+get_contribution_room(http_session, age, filing_status)
+    Displays 2025 IRS annual contribution limits for 401k/403b, IRA, HSA,
+    SIMPLE IRA, SEP IRA, and 529 alongside current account balances.  Adjusts
+    limits upward for catch-up eligibility at age 50, 55, and 60–63.
+
+get_roth_conversion_analysis(http_session, conversion_amount, current_income,
+                              filing_status, age)
+    Estimates the federal tax cost of converting a dollar amount from pre-tax
+    to Roth this year.  Shows bracket-by-bracket fill, effective rate on the
+    conversion, and projected tax-free growth at 6% over 10 and 20 years.
+
+get_capital_gains_exposure(http_session, filing_status, annual_income)
+    Identifies unrealized gains in taxable accounts and estimates the tax
+    liability if those positions were sold today.  Applies LTCG rates and
+    NIIT based on the supplied (or inferred) annual income.
+
+get_rmd_estimate(http_session, birth_year)
+    Estimates Required Minimum Distributions from pre-tax retirement accounts
+    using the IRS Uniform Lifetime Table.  Returns the current-year RMD (if
+    already required) and a 10-year projected RMD schedule.
+
+Internal math helpers
+---------------------
+_compute_tax(taxable_income, filing_status)  — Federal income tax via brackets
+_marginal_rate(taxable_income, filing_status) — Marginal bracket rate
+_ltcg_rate(taxable_income, filing_status)    — Long-term capital gains rate
+"""
 
 import time
 from datetime import datetime

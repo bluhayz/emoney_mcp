@@ -1,8 +1,37 @@
-"""Account and net-worth scraping functions."""
+"""
+Account and net-worth scraping.
+
+Public functions
+----------------
+get_accounts(http_session)
+    Fetches every account grouped by type (bank, investment, retirement, debt,
+    property) plus top-level net worth / total assets / total liabilities.
+    Uses CardSwitcher card 9 (net worth totals) + card 1 (account detail).
+
+get_retirement_accounts(http_session)
+    Filters get_accounts output to isolate tax-advantaged accounts (401k, IRA,
+    Roth, HSA, 529, annuities) and returns totals by sub-category.
+
+get_net_worth_breakdown(http_session)
+    Three-dimensional breakdown of net worth:
+      • By person  (account name keywords: Drew / Lacey / Joint)
+      • By liquidity (Liquid / Semi-liquid / Illiquid)
+      • By tax treatment (Taxable / Tax-Deferred / Tax-Free)
+
+Internal helpers (also exported for use by other modules)
+----------------------------------------------------------
+_TAX_BUCKET           — dict mapping Emoney MajorType strings to tax buckets
+_build_account_type_map(http_session) — {account_name_lower: tax_bucket}
+_match_tax_bucket(name, type_map)     — fuzzy lookup in type_map
+"""
 
 from ._helpers import _get_card, _CARD_URL
 
-# Account-type → tax bucket mapping (from Emoney MajorType strings)
+# ---------------------------------------------------------------------------
+# Tax-bucket classification map
+# ---------------------------------------------------------------------------
+# Maps Emoney's ``MajorType`` field (returned on each account) to one of three
+# tax treatment buckets used throughout the tax and portfolio tools.
 _TAX_BUCKET: dict[str, str] = {
     "InvestmentAsset":           "Taxable",
     "CashAsset":                 "Taxable",

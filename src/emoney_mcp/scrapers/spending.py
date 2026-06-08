@@ -1,14 +1,68 @@
-"""Spending, transaction, and cash-flow scraping (SNB API + Card 13)."""
+"""
+Spending, transaction, and cash-flow scraping.
+
+Data sources
+------------
+Card 13  — Simple cash-flow summary (income / expenses / net + 5 recent txns).
+            Used by get_spending().
+
+SNB API  — api.emoneyadvisor.com/snb-api.  Provides full transaction history
+            with category labels.  Requires a JWT token + API key extracted
+            from the Spending/Transactions page HTML on each call.  Used by
+            get_spending_transactions(), _fetch_snb_data(), and all analytics
+            built on top of it.
+
+Public functions
+----------------
+get_spending(http_session, months=1)
+    Quick cash-flow summary from card 13. Limited detail — use
+    get_spending_transactions for the full categorised list.
+
+get_spending_transactions(http_session, days=30)
+    Full transaction list from the SNB API with category labels, top-10
+    categories, and top-15 merchants (after normalizing merchant names).
+
+get_spending_trends(http_session, months=3)
+    Month-over-month spending by category — which categories are trending up,
+    down, or stable, plus monthly income vs. spending summary.
+
+get_income_summary(http_session, days=90)
+    Income sources (paychecks, dividends, interest, ACH deposits) grouped by
+    normalized payee name, with a monthly income trend.
+
+get_savings_rate(http_session, months=6)
+    Month-by-month savings rate: (income − spending) / income × 100.
+
+search_transactions(http_session, query, category, days, min_amount, max_amount)
+    Keyword / category / amount filter over SNB transaction history.
+
+get_recurring_charges(http_session)
+    Subscription and recurring charge detection over 120 days.  Groups
+    transactions by normalized merchant, computes inter-charge gaps, and
+    matches known cadences (weekly / biweekly / monthly / quarterly / annual).
+
+Internal helpers
+----------------
+_normalize_merchant(raw)   — Strips POS prefixes, location suffixes, and
+                             reference numbers to produce a stable merchant key.
+_get_snb_credentials(http_session) — Extracts the JWT and API key from the
+                                     Spending page HTML.
+_fetch_snb_data(http_session, days) — Shared SNB fetch/normalize used by all
+                                      analytics functions above.
+"""
 
 import re
 from datetime import datetime, timedelta
 
-from ._helpers import BASE_URL, _get_card, _CARD_URL
+from ._helpers import BASE_URL, _get_card
 
+# The SNB API lives on a separate host from the main Emoney portal
 _SNB_API = "https://api.emoneyadvisor.com/snb-api"
 
 # ---------------------------------------------------------------------------
-# US state abbreviations — used by _normalize_merchant
+# US state abbreviations — used by _normalize_merchant to strip trailing
+# "CITY STATE" suffixes that appear in bank transaction descriptions.
+# Only a fixed, known set is used to avoid accidentally stripping real words.
 # ---------------------------------------------------------------------------
 
 _US_STATES = frozenset({
@@ -18,41 +72,59 @@ _US_STATES = frozenset({
     "TX","UT","VT","VA","WA","WV","WI","WY","DC","PR","GU","VI",
 })
 
-# Common POS / payment-system prefixes to strip from transaction descriptions
+# ---------------------------------------------------------------------------
+# Regex patterns used by _normalize_merchant()
+# ---------------------------------------------------------------------------
+
+# Payment-network prefixes that appear before the real merchant name.
+# Examples: "APLPAY FOOD LION" → "FOOD LION", "SQ *BLUE BOTTLE COFFEE" → "BLUE BOTTLE COFFEE"
 _POS_PREFIXES = re.compile(
     r"^(?:APLPAY\s+|SQ\s*\*\s*|TST\*?\s+|PP\*\s*|PAYPAL\s*\*\s*|SP\s+|"
     r"AMZN\s+MKTP\s+US\*?\s*|GOOGLE\s*\*\s*|APPLE\.COM/\s*)",
     re.IGNORECASE,
 )
 
-# Trailing asterisk transaction reference codes like  *XYZ123
+# Trailing asterisk reference codes appended by some processors: *XYZ123
 _ASTERISK_REF = re.compile(r"\*[A-Z0-9]{4,}$")
 
-# Store / transaction reference numbers like  #1234  or  1234567
+# Store location/register numbers like " #1234" or " 123456" at the end
 _STORE_NUMBER = re.compile(r"\s+\#?\d{4,}$")
 
-# ZIP codes at end: " 20166" or " 20166-1234"
+# US ZIP codes at end of description: " 20166" or " 20166-1234"
 _ZIP_CODE = re.compile(r"\s+\d{5}(?:-\d{4})?$")
 
-# Categories that represent internal financial flows, not real merchant spending
+# ---------------------------------------------------------------------------
+# Category classification sets
+# ---------------------------------------------------------------------------
+
+# Categories that represent internal financial flows rather than real merchants.
+# Merchant-level rollups (top_merchants) skip these categories entirely.
 _NON_MERCHANT_CATEGORIES = {
     "Transfers", "Credit Card Payment", "Paycheck/Salary",
     "Income", "ACH Transfer", "Internal Transfer", "Investment",
     "Dividend & Cap Gains", "Interest Income",
 }
 
-# Income-generating categories (credits into the account)
+# Categories that count as income (credits into the account).
+# ACH Transfer is included because it usually represents direct deposit.
 _INCOME_CATEGORIES = frozenset({
     "Paycheck/Salary", "Income", "Dividend & Cap Gains", "Interest Income",
-    "ACH Transfer",   # often direct deposit — treated as income
+    "ACH Transfer",
 })
 
-# Pure internal flows — exclude from both income and spending
+# Pure internal flows excluded from both the income and spending totals.
+# Including these would double-count money moving between your own accounts.
 _EXCLUDE_CATEGORIES = frozenset({
     "Transfers", "Credit Card Payment", "Internal Transfer",
 })
 
-# Recurring cadence detection
+# ---------------------------------------------------------------------------
+# Recurring-charge detection constants
+# ---------------------------------------------------------------------------
+
+# Each tuple is (label, expected_gap_days, tolerance_days).
+# A merchant is assigned a cadence when its average inter-charge gap falls
+# within ±tolerance days of the expected gap.
 _CADENCES = [
     ("weekly",     7,   4),
     ("biweekly",   14,  4),
@@ -61,12 +133,13 @@ _CADENCES = [
     ("annual",    365, 20),
 ]
 
+# Multiplier to convert a per-occurrence amount to an estimated monthly cost.
 _CADENCE_TO_MONTHLY = {
-    "weekly":    30 / 7,
-    "biweekly":  30 / 14,
+    "weekly":    30 / 7,   # ~4.3 charges per month
+    "biweekly":  30 / 14,  # ~2.1 charges per month
     "monthly":   1.0,
-    "quarterly": 1 / 3,
-    "annual":    1 / 12,
+    "quarterly": 1 / 3,    # 1 charge covers 3 months
+    "annual":    1 / 12,   # 1 charge covers 12 months
 }
 
 

@@ -1,4 +1,39 @@
-"""Investment holdings, allocation, performance, and transaction scraping."""
+"""
+Investment holdings, allocation, performance, and transaction scraping.
+
+All functions in this module pull data from the ``/ema/CS/Investments``
+endpoint (``GetInvestmentData`` and ``GetInvestmentTransactions``), with a
+few supplementary card pulls from CardSwitcher.
+
+Public functions
+----------------
+get_holdings(http_session)
+    All investment positions across every account — ticker, units, price,
+    current value, cost basis, and unrealized gain/loss.
+
+get_asset_allocation(http_session)
+    Portfolio allocation by asset class (Equities, Fixed Income, Cash, etc.)
+    from GetInvestmentData's AssetAllocation object, supplemented by card 4
+    (target model).  Also returns top-10 holdings by size.
+
+get_net_worth_history(http_session, months=12)
+    Monthly net worth trend from CardSwitcher card 8.  Card 8 returns a bare
+    list of floats (no dates); we label each point by working backwards from
+    the current month.
+
+get_performance(http_session)
+    Portfolio value change today (card 3) and net-worth change MTD/YTD
+    (card 11), plus computed 1/3/5-month return periods from card 3 history.
+
+get_transactions(http_session, days=30, account_id=None)
+    Investment transactions (buys, sells, dividends) via a POST to
+    ``GetInvestmentTransactions``.  Requires a CSRF token fetched from the
+    Investments page.
+
+get_capital_gains(http_session, year=None)
+    Summarizes sell transactions for a given tax year by calling
+    get_transactions and filtering to sells/dividends/interest.
+"""
 
 import json
 import time

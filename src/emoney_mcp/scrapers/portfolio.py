@@ -1,12 +1,51 @@
-"""Portfolio analysis — asset location efficiency, rebalancing, card exploration."""
+"""
+Portfolio-level analysis — asset location efficiency, rebalancing targets,
+and a discovery tool for unexplored Emoney data cards.
+
+Public functions
+----------------
+get_asset_location_efficiency(http_session)
+    Grades how well each holding is positioned for tax efficiency using a
+    simple heuristic: high-efficiency assets (index funds, growth equities)
+    belong in taxable accounts; low-efficiency assets (bonds, REITs, TIPS)
+    belong in tax-deferred or tax-free accounts.
+    Returns an A–F letter grade, per-position ratings, and improvement suggestions.
+
+get_rebalancing_targets(http_session, target_equity_pct, target_bond_pct,
+                         target_cash_pct)
+    Classifies every holding into equity / bond / cash and computes the
+    dollar amount to buy or sell in each bucket to reach the target allocation.
+    Default target is 60/30/10 (equity / bond / cash).
+
+explore_emoney_cards(http_session, card_ids)
+    Developer/debug tool.  Probes a list of CardSwitcher card IDs and returns
+    the full payload of any that respond successfully.  Useful for discovering
+    new Emoney data sources not yet wrapped into dedicated tools.
+
+Internal helpers
+----------------
+_classify_asset(ticker, description)
+    Heuristically maps a ticker symbol + description to one of the asset
+    classes in ``_ASSET_EFFICIENCY`` using keyword matching.
+
+_ASSET_EFFICIENCY
+    Scores each asset class from 1 (most tax-inefficient — put in sheltered
+    accounts) to 9 (most tax-efficient — fine in taxable).
+"""
 
 import time
 
 from ._helpers import _get_card, _INV_URL
 from .accounts import _build_account_type_map, _match_tax_bucket
 
-# Tax-efficiency score for asset classes: higher = more tax-efficient
-# (best placed in taxable; low-efficiency = prefer tax-deferred)
+# ---------------------------------------------------------------------------
+# Asset class tax-efficiency scores
+# ---------------------------------------------------------------------------
+# Scale: 1 = very tax-inefficient (high income / short-term distributions)
+#        9 = very tax-efficient (low turnover, qualified dividends, no income)
+#
+# Assets scoring ≥ 6 are fine in taxable brokerage accounts.
+# Assets scoring ≤ 5 ideally belong in a tax-deferred or Roth account.
 _ASSET_EFFICIENCY: dict[str, int] = {
     # High efficiency (good in taxable)
     "domestic_equity_index": 9,

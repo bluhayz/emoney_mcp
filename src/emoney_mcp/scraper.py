@@ -1727,3 +1727,1385 @@ async def get_financial_summary(http_session) -> dict:
         "goals": goals_summary,
         "all_goals_on_track": all(g["on_track"] for g in goals_summary) if goals_summary else None,
     }
+
+
+# ===========================================================================
+# IRS CONSTANTS  (2025 — update annually)
+# ===========================================================================
+
+_TAX_YEAR = 2025
+_IRS_CAVEAT = (
+    "Figures use 2025 IRS limits and tax brackets. "
+    "Consult a qualified tax professional before acting on any estimates."
+)
+
+_CONTRIBUTION_LIMITS = {
+    "401k_403b":              23_500,
+    "401k_403b_catchup_50":   31_000,   # age 50-59 and 64+
+    "401k_403b_catchup_60":   34_750,   # SECURE 2.0 super catch-up age 60-63
+    "ira":                     7_000,
+    "ira_catchup":             8_000,   # age 50+
+    "hsa_individual":          4_300,
+    "hsa_family":              8_550,
+    "hsa_catchup":             1_000,   # age 55+
+    "simple_ira":             16_500,
+    "simple_ira_catchup":     20_000,   # age 50+
+    "sep_ira_pct":             0.25,
+    "sep_ira_max":            70_000,
+    "gift_tax_exclusion":     19_000,   # per beneficiary (529 / gifting)
+}
+
+_STD_DEDUCTION = {"single": 15_000, "mfj": 30_000, "hoh": 22_500}
+
+# Ordinary income brackets — (upper bound of bracket, rate)
+_BRACKETS: dict[str, list[tuple[float, float]]] = {
+    "single": [
+        (11_925,       0.10),
+        (48_475,       0.12),
+        (103_350,      0.22),
+        (197_300,      0.24),
+        (250_525,      0.32),
+        (626_350,      0.35),
+        (float("inf"), 0.37),
+    ],
+    "mfj": [
+        (23_850,       0.10),
+        (96_950,       0.12),
+        (206_700,      0.22),
+        (394_600,      0.24),
+        (501_050,      0.32),
+        (751_600,      0.35),
+        (float("inf"), 0.37),
+    ],
+    "hoh": [
+        (17_000,       0.10),
+        (64_850,       0.12),
+        (103_350,      0.22),
+        (197_300,      0.24),
+        (250_500,      0.32),
+        (626_350,      0.35),
+        (float("inf"), 0.37),
+    ],
+}
+
+# LTCG thresholds — (upper bound of 0% / 15% bracket, rate)
+_LTCG_THRESHOLDS: dict[str, list[tuple[float, float]]] = {
+    "single": [(48_350,  0.0), (533_400,  0.15), (float("inf"), 0.20)],
+    "mfj":    [(96_700,  0.0), (600_050,  0.15), (float("inf"), 0.20)],
+    "hoh":    [(64_750,  0.0), (566_700,  0.15), (float("inf"), 0.20)],
+}
+
+# NIIT (3.8%) kicks in above these thresholds
+_NIIT_THRESHOLD = {"single": 200_000, "mfj": 250_000, "hoh": 200_000}
+
+# IRS Uniform Lifetime Table — age → distribution period
+_RMD_TABLE: dict[int, float] = {
+    72: 27.4, 73: 26.5, 74: 25.5, 75: 24.6, 76: 23.7,
+    77: 22.9, 78: 22.0, 79: 21.1, 80: 20.2, 81: 19.4,
+    82: 18.5, 83: 17.7, 84: 16.8, 85: 16.0, 86: 15.2,
+    87: 14.4, 88: 13.7, 89: 12.9, 90: 12.2, 91: 11.5,
+    92: 10.8, 93: 10.1, 94:  9.5, 95:  8.9, 96:  8.4,
+    97:  7.8, 98:  7.3, 99:  6.8, 100: 6.4,
+}
+
+# Account-type → tax bucket mapping (from Emoney MajorType strings)
+_TAX_BUCKET: dict[str, str] = {
+    "InvestmentAsset":           "Taxable",
+    "CashAsset":                 "Taxable",
+    "RealEstateAsset":           "Taxable",
+    "OptionPlan":                "Taxable",
+    "OtherAsset":                "Taxable",
+    "PreTaxSavingsAsset":        "Tax-Deferred",
+    "AnnuityAsset":              "Tax-Deferred",
+    "TaxFreeRothSavingsAsset":   "Tax-Free",
+    "TaxFree529SavingsAsset":    "Tax-Free",
+    "TaxFreeHealthSavingsAsset": "Tax-Free",
+}
+
+# Tax-efficiency score for asset classes: higher = more tax-efficient
+# (best placed in taxable; low-efficiency = prefer tax-deferred)
+_ASSET_EFFICIENCY: dict[str, int] = {
+    # High efficiency (good in taxable)
+    "domestic_equity_index": 9,
+    "international_equity":  8,
+    "growth_equity":         7,
+    "muni_bond":             9,
+    # Medium
+    "dividend_equity":       5,
+    "balanced":              4,
+    # Low efficiency (prefer tax-deferred/free)
+    "reit":                  2,
+    "bond_fund":             2,
+    "tips":                  1,
+    "high_yield_bond":       1,
+    "money_market":          3,
+}
+
+
+# ---------------------------------------------------------------------------
+# Internal tax helpers
+# ---------------------------------------------------------------------------
+
+def _compute_tax(taxable_income: float, filing_status: str) -> float:
+    """Federal income tax on taxable income (post-deduction)."""
+    fs = filing_status if filing_status in _BRACKETS else "mfj"
+    tax = 0.0
+    prev = 0.0
+    for ceiling, rate in _BRACKETS[fs]:
+        if taxable_income <= prev:
+            break
+        tax += (min(taxable_income, ceiling) - prev) * rate
+        prev = ceiling
+    return round(tax, 2)
+
+
+def _marginal_rate(taxable_income: float, filing_status: str) -> float:
+    fs = filing_status if filing_status in _BRACKETS else "mfj"
+    prev = 0.0
+    for ceiling, rate in _BRACKETS[fs]:
+        if taxable_income <= ceiling:
+            return rate
+        prev = ceiling
+    return 0.37
+
+
+def _ltcg_rate(taxable_income: float, filing_status: str) -> float:
+    fs = filing_status if filing_status in _LTCG_THRESHOLDS else "mfj"
+    for ceiling, rate in _LTCG_THRESHOLDS[fs]:
+        if taxable_income <= ceiling:
+            return rate
+    return 0.20
+
+
+def _classify_asset(ticker: str, description: str) -> str:
+    """Heuristically classify a holding into an asset class."""
+    t = (ticker or "").upper()
+    d = (description or "").upper()
+    combined = t + " " + d
+
+    # Munis
+    if any(x in combined for x in ("MUNI", "TAX-EXEMPT", "TAX EXEMPT")):
+        return "muni_bond"
+    # TIPS / inflation
+    if any(x in combined for x in ("TIPS", "INFLATION", "INFL-PROT", "TREASURY INFLATION")):
+        return "tips"
+    # High-yield bonds
+    if any(x in combined for x in ("HIGH YIELD", "JUNK", "HYG", "JNK", "HYLD")):
+        return "high_yield_bond"
+    # REITs
+    if any(x in combined for x in ("REIT", "REAL ESTATE", "VNQ", "IYR", "SCHH")):
+        return "reit"
+    # Bond funds (broad)
+    if any(x in combined for x in (
+        "BOND", "FIXED INCOME", "INCOME FUND", "AGGREGATE", "TREASURY",
+        "GOVT", "CORPORATE BOND", "AGG", "BND", "VBTLX", "TLT", "IEF", "SHY",
+    )):
+        return "bond_fund"
+    # Money market / cash
+    if any(x in combined for x in ("MONEY MARKET", "MMKT", "CASH", "TREASURY BILL", "T-BILL")):
+        return "money_market"
+    # International equity
+    if any(x in combined for x in (
+        "INTERNATIONAL", "INTL", "FOREIGN", "EMERGING", "EUROPE", "PACIFIC",
+        "VXUS", "VEA", "VWO", "EFA", "EEM", "IXUS",
+    )):
+        return "international_equity"
+    # Dividend-focused
+    if any(x in combined for x in ("DIVIDEND", "INCOME EQUITY", "VALUE", "DVY", "VYM", "SCHD")):
+        return "dividend_equity"
+    # Index / passive domestic equity
+    if any(x in combined for x in (
+        "INDEX", "TOTAL MARKET", "S&P", "500", "VTSAX", "VTI", "SPY", "IVV", "SCHB", "FXAIX",
+    )):
+        return "domestic_equity_index"
+    # Broad equity catch-all
+    if any(x in combined for x in ("GROWTH", "EQUITY", "STOCK", "LARGE CAP", "SMALL CAP", "MID CAP")):
+        return "growth_equity"
+
+    return "domestic_equity_index"   # conservative default
+
+
+async def _build_account_type_map(http_session) -> dict[str, str]:
+    """Return {account_name_lower: tax_bucket} from card 1."""
+    accts = await get_accounts(http_session)
+    mapping: dict[str, str] = {}
+    for grp in accts.get("account_groups", []):
+        for a in grp.get("accounts", []):
+            name  = (a.get("name") or "").strip()
+            atype = a.get("type") or ""
+            bucket = _TAX_BUCKET.get(atype, "Unknown")
+            mapping[name.lower()] = bucket
+    return mapping
+
+
+def _match_tax_bucket(account_name: str, type_map: dict[str, str]) -> str:
+    """Fuzzy-match an account name from holdings to its tax bucket."""
+    key = account_name.lower()
+    if key in type_map:
+        return type_map[key]
+    # substring match
+    for mapped_name, bucket in type_map.items():
+        if mapped_name in key or key in mapped_name:
+            return bucket
+    return "Unknown"
+
+
+# ===========================================================================
+# NEW TOOL: Tax-Loss Harvesting
+# ===========================================================================
+
+async def get_tax_loss_harvesting(http_session) -> dict:
+    """
+    Identify positions with unrealized losses suitable for tax-loss harvesting.
+
+    Cross-references holdings against account type so only taxable-account
+    losses are flagged as harvestable (losses in IRAs / 401ks have no
+    immediate tax benefit).  Returns positions sorted by loss magnitude and
+    estimates potential tax savings at the 15% and 20% LTCG rates.
+    """
+    type_map = await _build_account_type_map(http_session)
+
+    ts = int(time.time() * 1000)
+    http = await http_session.get_http()
+    resp = await http.get(f"{_INV_URL}/GetInvestmentData?_={ts}", timeout=30)
+    if resp.status_code != 200 or "json" not in resp.headers.get("content-type", ""):
+        return {"error": f"GetInvestmentData returned {resp.status_code}."}
+
+    data = resp.json()
+
+    taxable_losses   = []
+    deferred_losses  = []
+    total_loss_taxable = 0.0
+    total_loss_all     = 0.0
+
+    for acct in data.get("Accounts", []):
+        acct_name   = acct.get("Name", "")
+        tax_bucket  = _match_tax_bucket(acct_name, type_map)
+
+        for h in acct.get("Holdings", []):
+            value      = h.get("Value") or 0.0
+            cost_basis = h.get("CostBasis")
+            if cost_basis is None or value >= cost_basis:
+                continue  # no loss
+
+            loss = round(value - cost_basis, 2)   # negative number
+            position = {
+                "ticker":       h.get("Ticker") or "",
+                "description":  (h.get("Description") or "")[:50],
+                "account":      acct_name,
+                "tax_treatment": tax_bucket,
+                "current_value": round(value, 2),
+                "cost_basis":   round(cost_basis, 2),
+                "unrealized_loss": loss,
+                "harvestable":  tax_bucket == "Taxable",
+            }
+
+            total_loss_all += loss
+            if tax_bucket == "Taxable":
+                total_loss_taxable += loss
+                taxable_losses.append(position)
+            else:
+                deferred_losses.append(position)
+
+    taxable_losses.sort(key=lambda x: x["unrealized_loss"])
+    deferred_losses.sort(key=lambda x: x["unrealized_loss"])
+
+    potential_savings_15 = round(abs(total_loss_taxable) * 0.15, 2)
+    potential_savings_20 = round(abs(total_loss_taxable) * 0.20, 2)
+    potential_savings_238 = round(abs(total_loss_taxable) * 0.238, 2)  # 20% + 3.8% NIIT
+
+    return {
+        "summary": {
+            "harvestable_loss_total":     round(total_loss_taxable, 2),
+            "non_harvestable_loss_total": round(total_loss_all - total_loss_taxable, 2),
+            "potential_tax_savings_15pct":  potential_savings_15,
+            "potential_tax_savings_20pct":  potential_savings_20,
+            "potential_tax_savings_238pct": potential_savings_238,
+        },
+        "harvestable_positions":     taxable_losses,
+        "non_harvestable_positions": deferred_losses,
+        "note": (
+            "Harvestable = taxable brokerage accounts only. "
+            "The wash-sale rule prohibits repurchasing substantially identical securities "
+            "within 30 days before or after the sale. "
+            "Savings estimates assume losses fully offset gains; consult a tax advisor."
+        ),
+        "caveat": _IRS_CAVEAT,
+    }
+
+
+# ===========================================================================
+# NEW TOOL: Contribution Room
+# ===========================================================================
+
+async def get_contribution_room(http_session, age: int | None = None,
+                                 filing_status: str = "mfj") -> dict:
+    """
+    Show remaining IRS contribution room across tax-advantaged accounts.
+
+    Uses current account balances as context and displays 2025 IRS annual
+    limits.  Because Emoney does not expose year-to-date contribution data,
+    this cannot calculate actual remaining room — it shows the annual limits
+    alongside current balances so you can cross-reference with your payroll
+    records.
+
+    Parameters
+    ----------
+    age           : your age (determines catch-up eligibility)
+    filing_status : 'single', 'mfj' (married filing jointly), or 'hoh'
+    """
+    retirement = await get_retirement_accounts(http_session)
+    if "error" in retirement:
+        return retirement
+
+    lim = _CONTRIBUTION_LIMITS
+    is_50_plus  = age is not None and age >= 50
+    is_55_plus  = age is not None and age >= 55
+    is_60_to_63 = age is not None and 60 <= age <= 63
+
+    # 401k limit
+    if is_60_to_63:
+        k401_limit = lim["401k_403b_catchup_60"]
+        k401_label = f"401k/403b (age {age} super catch-up)"
+    elif is_50_plus:
+        k401_limit = lim["401k_403b_catchup_50"]
+        k401_label = f"401k/403b (age {age} catch-up)"
+    else:
+        k401_limit = lim["401k_403b"]
+        k401_label = "401k/403b"
+
+    ira_limit = lim["ira_catchup"] if is_50_plus else lim["ira"]
+    hsa_limit = (lim["hsa_family"] if filing_status == "mfj" else lim["hsa_individual"])
+    if is_55_plus:
+        hsa_limit += lim["hsa_catchup"]
+
+    accounts_summary = {
+        "total_retirement_assets": retirement.get("total_retirement_assets"),
+        "breakdown": retirement.get("retirement_breakdown"),
+    }
+
+    return {
+        "age":          age,
+        "filing_status": filing_status,
+        "tax_year":     _TAX_YEAR,
+        "annual_limits": {
+            k401_label:           k401_limit,
+            "Traditional/Roth IRA": ira_limit,
+            "HSA":                hsa_limit,
+            "SIMPLE IRA":         lim["simple_ira_catchup"] if is_50_plus else lim["simple_ira"],
+            "SEP IRA (max)":      lim["sep_ira_max"],
+            "529 (gift exclusion per beneficiary)": lim["gift_tax_exclusion"],
+        },
+        "current_balances": accounts_summary,
+        "catch_up_eligible": {
+            "ira_401k_catchup":    is_50_plus,
+            "hsa_catchup":         is_55_plus,
+            "super_catchup_60_63": is_60_to_63,
+        },
+        "note": (
+            "Emoney does not expose year-to-date contribution amounts, so remaining "
+            "room must be calculated manually: (annual limit) − (amount contributed "
+            "so far this year from your payroll/brokerage statements)."
+        ),
+        "caveat": _IRS_CAVEAT,
+    }
+
+
+# ===========================================================================
+# NEW TOOL: Roth Conversion Analysis
+# ===========================================================================
+
+async def get_roth_conversion_analysis(
+    http_session,
+    conversion_amount: float,
+    current_income: float,
+    filing_status: str = "mfj",
+    age: int | None = None,
+) -> dict:
+    """
+    Estimate the federal tax cost and break-even of converting pre-tax dollars
+    to Roth.
+
+    Parameters
+    ----------
+    conversion_amount : dollar amount to convert this year
+    current_income    : estimated gross ordinary income BEFORE the conversion
+                        (wages, RMDs, Social Security, etc.)
+    filing_status     : 'single', 'mfj', or 'hoh'
+    age               : used to compute standard deduction and RMD context
+    """
+    fs = filing_status if filing_status in _BRACKETS else "mfj"
+    std_ded = _STD_DEDUCTION.get(fs, 30_000)
+
+    taxable_before = max(0.0, current_income - std_ded)
+    taxable_after  = max(0.0, current_income + conversion_amount - std_ded)
+
+    tax_before = _compute_tax(taxable_before, fs)
+    tax_after  = _compute_tax(taxable_after,  fs)
+    marginal   = _marginal_rate(taxable_before, fs)
+    effective_rate_on_conversion = (tax_after - tax_before) / conversion_amount if conversion_amount else 0
+
+    # Future tax-free growth estimate (simple)
+    future_value_10yr = round(conversion_amount * (1.06 ** 10), 2)
+    future_value_20yr = round(conversion_amount * (1.06 ** 20), 2)
+    tax_on_conversion = round(tax_after - tax_before, 2)
+
+    # Break-even: years until tax-free compounding saves more than the upfront tax
+    # After-Roth: grows tax-free; After-Traditional: grows tax-deferred, taxed on withdrawal
+    # Assume withdrawal marginal rate = marginal (simple assumption)
+    breakeven_years = None
+    if marginal > 0 and effective_rate_on_conversion > 0:
+        # Roth after-tax value after N years: (conversion_amount - tax) * 1.06^N
+        # Traditional after-tax after N years: conversion_amount * 1.06^N * (1 - marginal)
+        # Roth > Trad when: (1 - eff_rate) * 1.06^N > (1 - marginal) * 1.06^N
+        # i.e., (1 - eff_rate) > (1 - marginal) only if eff_rate < marginal
+        # If conversion rate < withdrawal rate → conversion always wins
+        # If conversion rate > withdrawal rate → traditional better
+        if effective_rate_on_conversion < marginal:
+            breakeven_years = 0   # conversion is immediately better
+        else:
+            breakeven_years = None   # traditional likely better
+
+    # Current retirement context
+    retirement = await get_retirement_accounts(http_session)
+    deferred_total = retirement.get("total_retirement_assets", 0) if "error" not in retirement else None
+
+    # Bracket analysis — show which brackets the conversion fills
+    bracket_fill = []
+    fs_brackets = _BRACKETS[fs]
+    remaining = conversion_amount
+    income_cursor = taxable_before
+    prev = 0.0
+    for ceiling, rate in fs_brackets:
+        if remaining <= 0:
+            break
+        if income_cursor < ceiling:
+            room = ceiling - max(income_cursor, prev)
+            used = min(remaining, room)
+            bracket_fill.append({
+                "bracket_rate_pct": int(rate * 100),
+                "dollars_in_bracket": round(used, 2),
+                "tax_in_bracket": round(used * rate, 2),
+            })
+            remaining -= used
+        prev = ceiling
+
+    return {
+        "conversion_amount":        round(conversion_amount, 2),
+        "current_income":           round(current_income, 2),
+        "filing_status":            fs,
+        "standard_deduction":       std_ded,
+        "taxable_income_before":    round(taxable_before, 2),
+        "taxable_income_after":     round(taxable_after, 2),
+        "federal_tax_before":       tax_before,
+        "federal_tax_after":        tax_after,
+        "tax_cost_of_conversion":   tax_on_conversion,
+        "effective_rate_on_conversion_pct": round(effective_rate_on_conversion * 100, 2),
+        "marginal_rate_entering_pct": int(marginal * 100),
+        "bracket_fill":             bracket_fill,
+        "projected_roth_value": {
+            "10_years_at_6pct":  future_value_10yr,
+            "20_years_at_6pct":  future_value_20yr,
+        },
+        "conversion_favored":       effective_rate_on_conversion <= marginal,
+        "breakeven_note": (
+            "Conversion is tax-favored when your effective rate on the converted amount "
+            "is lower than your expected marginal rate at withdrawal. "
+            "This is especially powerful if you expect higher income in retirement "
+            "or have significant pre-tax assets that will drive large RMDs."
+        ),
+        "current_pretax_balance":   deferred_total,
+        "caveat": _IRS_CAVEAT,
+    }
+
+
+# ===========================================================================
+# NEW TOOL: Capital Gains Exposure
+# ===========================================================================
+
+async def get_capital_gains_exposure(
+    http_session,
+    filing_status: str = "mfj",
+    annual_income: float | None = None,
+) -> dict:
+    """
+    Identify embedded (unrealized) capital gains in taxable accounts and
+    estimate the tax liability if those positions were sold today.
+
+    Parameters
+    ----------
+    filing_status : 'single', 'mfj', or 'hoh'
+    annual_income : estimated ordinary income (for LTCG rate calculation);
+                    if omitted, uses income from get_income_summary
+    """
+    type_map = await _build_account_type_map(http_session)
+
+    # Try to infer income if not provided
+    if annual_income is None:
+        inc_result = await get_income_summary(http_session, days=365)
+        annual_income = inc_result.get("total_income", 0) if "error" not in inc_result else 0
+
+    ts = int(time.time() * 1000)
+    http = await http_session.get_http()
+    resp = await http.get(f"{_INV_URL}/GetInvestmentData?_={ts}", timeout=30)
+    if resp.status_code != 200 or "json" not in resp.headers.get("content-type", ""):
+        return {"error": f"GetInvestmentData returned {resp.status_code}."}
+
+    data = resp.json()
+    fs = filing_status if filing_status in _LTCG_THRESHOLDS else "mfj"
+
+    taxable_gains:   list[dict] = []
+    deferred_gains:  list[dict] = []
+    total_gain_taxable = 0.0
+
+    for acct in data.get("Accounts", []):
+        acct_name  = acct.get("Name", "")
+        tax_bucket = _match_tax_bucket(acct_name, type_map)
+
+        for h in acct.get("Holdings", []):
+            value      = h.get("Value") or 0.0
+            cost_basis = h.get("CostBasis")
+            if cost_basis is None or value <= cost_basis:
+                continue
+
+            gain = round(value - cost_basis, 2)
+            rate = _ltcg_rate(annual_income, fs)
+            niit = 0.038 if annual_income > _NIIT_THRESHOLD.get(fs, 250_000) else 0.0
+            effective_rate = rate + niit
+            est_tax = round(gain * effective_rate, 2)
+
+            position = {
+                "ticker":        h.get("Ticker") or "",
+                "description":   (h.get("Description") or "")[:50],
+                "account":       acct_name,
+                "tax_treatment": tax_bucket,
+                "current_value": round(value, 2),
+                "cost_basis":    round(cost_basis, 2),
+                "unrealized_gain": gain,
+                "pct_gain":      round((gain / cost_basis) * 100, 1) if cost_basis else None,
+                "ltcg_rate_pct": round(effective_rate * 100, 1),
+                "estimated_tax_if_sold": est_tax,
+            }
+
+            if tax_bucket == "Taxable":
+                total_gain_taxable += gain
+                taxable_gains.append(position)
+            else:
+                deferred_gains.append(position)
+
+    taxable_gains.sort(key=lambda x: x["unrealized_gain"], reverse=True)
+
+    rate = _ltcg_rate(annual_income, fs)
+    niit = 0.038 if annual_income > _NIIT_THRESHOLD.get(fs, 250_000) else 0.0
+    effective_total_rate = rate + niit
+    total_tax_exposure = round(total_gain_taxable * effective_total_rate, 2)
+
+    niit_applies = annual_income > _NIIT_THRESHOLD.get(fs, 250_000)
+
+    return {
+        "filing_status":            fs,
+        "estimated_annual_income":  round(annual_income, 2),
+        "ltcg_rate_pct":            round(rate * 100, 1),
+        "niit_applies":             niit_applies,
+        "effective_rate_pct":       round(effective_total_rate * 100, 1),
+        "total_taxable_unrealized_gain": round(total_gain_taxable, 2),
+        "total_estimated_tax_exposure":  total_tax_exposure,
+        "taxable_account_positions": taxable_gains,
+        "deferred_account_positions": deferred_gains,
+        "note": (
+            "Only taxable brokerage account gains create an immediate tax event on sale. "
+            "Gains in IRAs and 401ks are taxed as ordinary income upon withdrawal. "
+            "Gains in Roth accounts are tax-free upon qualified withdrawal. "
+            "LTCG assumes all positions held > 1 year; short-term gains taxed as ordinary income."
+        ),
+        "caveat": _IRS_CAVEAT,
+    }
+
+
+# ===========================================================================
+# NEW TOOL: RMD Estimate
+# ===========================================================================
+
+async def get_rmd_estimate(http_session, birth_year: int) -> dict:
+    """
+    Estimate Required Minimum Distributions from pre-tax retirement accounts.
+
+    RMDs begin at age 73 (SECURE 2.0).  Uses the IRS Uniform Lifetime Table
+    applied to current traditional IRA / 401k balances.
+
+    Parameters
+    ----------
+    birth_year : your year of birth (e.g. 1955)
+    """
+    current_year = datetime.now().year
+    age = current_year - birth_year
+    rmd_start_age = 73   # SECURE 2.0
+
+    retirement = await get_retirement_accounts(http_session)
+    if "error" in retirement:
+        return retirement
+
+    breakdown = retirement.get("retirement_breakdown", {})
+    pretax_balance = (breakdown.get("401k_403b", 0) or 0) + (breakdown.get("ira_roth", 0) or 0)
+
+    # Separate Roth from traditional for IRA bucket (rough — Emoney lumps them)
+    # We flag this as approximate
+    roth_approx = 0.0
+    trad_balance = pretax_balance  # conservative: assume all is pre-tax for RMD
+
+    years_until_rmd = max(0, rmd_start_age - age)
+    rmd_age = max(age, rmd_start_age)
+
+    # Project balances at 6% for future years
+    future_balance_at_rmd = round(trad_balance * (1.06 ** years_until_rmd), 2) if years_until_rmd > 0 else trad_balance
+
+    # RMD schedule for next 10 years
+    rmd_schedule = []
+    balance = future_balance_at_rmd
+    for yr in range(10):
+        calc_age = rmd_age + yr
+        factor = _RMD_TABLE.get(calc_age) or _RMD_TABLE.get(min(calc_age, 100), 6.4)
+        rmd_amount = round(balance / factor, 2)
+        rmd_schedule.append({
+            "year":       current_year + years_until_rmd + yr,
+            "age":        calc_age,
+            "est_balance": round(balance, 2),
+            "factor":     factor,
+            "rmd_amount": rmd_amount,
+        })
+        # Reduce balance by RMD then grow by 6%
+        balance = round((balance - rmd_amount) * 1.06, 2)
+
+    current_rmd = None
+    if age >= rmd_start_age:
+        factor = _RMD_TABLE.get(age) or _RMD_TABLE.get(min(age, 100), 6.4)
+        current_rmd = round(trad_balance / factor, 2)
+
+    return {
+        "birth_year":            birth_year,
+        "current_age":           age,
+        "rmd_start_age":         rmd_start_age,
+        "years_until_rmd":       years_until_rmd,
+        "rmd_required_this_year": age >= rmd_start_age,
+        "current_pretax_balance": round(trad_balance, 2),
+        "current_rmd_estimate":   current_rmd,
+        "projected_rmd_schedule": rmd_schedule,
+        "roth_conversion_note": (
+            "Converting pre-tax balances to Roth before RMD age reduces future mandatory "
+            "distributions and creates tax-free growth. This is especially valuable in "
+            "low-income years between retirement and RMD start age."
+        ),
+        "note": (
+            "Balances projected at 6% annual growth. IRA and Roth IRA are grouped — "
+            "only traditional (pre-tax) balances are subject to RMDs; Roth IRAs have no "
+            "RMD requirement during the owner's lifetime. "
+            "RMD amounts shown are estimates; always verify with your custodian."
+        ),
+        "caveat": _IRS_CAVEAT,
+    }
+
+
+# ===========================================================================
+# NEW TOOL: Retirement Runway
+# ===========================================================================
+
+async def get_retirement_runway(
+    http_session,
+    annual_spending: float | None = None,
+    return_rate: float = 0.06,
+) -> dict:
+    """
+    Model how many years the current portfolio can sustain withdrawals.
+
+    If annual_spending is not provided, uses actual 12-month spending from
+    the SNB transaction data.  Models three scenarios: conservative (4%),
+    base (6%), and optimistic (8%) portfolio returns.
+
+    Parameters
+    ----------
+    annual_spending : override spending in dollars (default: actual 12-month spend)
+    return_rate     : base-case nominal annual return (default 0.06 = 6%)
+    """
+    # Get net worth / investable assets
+    accts = await get_accounts(http_session)
+    if "error" in accts:
+        return accts
+    total_assets     = accts.get("total_assets") or 0
+    total_liabilities = accts.get("total_liabilities") or 0
+    net_worth         = accts.get("net_worth") or 0
+
+    # Exclude illiquid assets (real estate) — estimate investable as net worth minus debt
+    investable = max(0.0, total_assets - total_liabilities)
+
+    # Get spending
+    if annual_spending is None:
+        txns, ok = await _fetch_snb_data(http_session, days=365)
+        if ok:
+            annual_spending = round(sum(
+                t["amount"] for t in txns
+                if not t["is_income"] and not t["is_excluded"]
+            ), 2)
+        else:
+            annual_spending = 0.0
+
+    if annual_spending <= 0:
+        return {"error": "Could not determine annual spending. Pass annual_spending explicitly."}
+
+    inflation = 0.03  # 3% inflation assumption
+
+    def _years_to_depletion(portfolio: float, withdrawal: float, ret: float, inf: float) -> float | None:
+        """Return years until portfolio hits zero. None if it never depletes."""
+        real_return = (1 + ret) / (1 + inf) - 1
+        if real_return <= 0:
+            if withdrawal <= 0:
+                return None
+            return portfolio / withdrawal
+        # Closed-form solution for years to depletion
+        ratio = withdrawal / (portfolio * real_return)
+        if ratio >= 1:
+            return portfolio / withdrawal   # depletes quickly
+        import math
+        try:
+            years = -math.log(1 - ratio) / math.log(1 + real_return)
+            return years if years > 0 else None
+        except Exception:
+            return None
+
+    scenarios = []
+    for label, ret in [("Conservative (4%)", 0.04), ("Base (6%)", 0.06), ("Optimistic (8%)", 0.08)]:
+        years = _years_to_depletion(investable, annual_spending, ret, inflation)
+        scenarios.append({
+            "scenario":          label,
+            "return_rate_pct":   int(ret * 100),
+            "years_to_depletion": round(years, 1) if years else None,
+            "sustainable":        years is None or years > 30,
+        })
+
+    # Sustainable withdrawal amounts (SWR) at 3.5%, 4%, 4.5%
+    swr = [
+        {"swr_pct": 3.5, "annual_amount": round(investable * 0.035, 2), "monthly": round(investable * 0.035 / 12, 2)},
+        {"swr_pct": 4.0, "annual_amount": round(investable * 0.040, 2), "monthly": round(investable * 0.040 / 12, 2)},
+        {"swr_pct": 4.5, "annual_amount": round(investable * 0.045, 2), "monthly": round(investable * 0.045 / 12, 2)},
+    ]
+
+    current_wr = round(annual_spending / investable * 100, 2) if investable > 0 else None
+
+    return {
+        "investable_assets":     round(investable, 2),
+        "annual_spending":       annual_spending,
+        "current_withdrawal_rate_pct": current_wr,
+        "spending_covered_by_4pct_rule": annual_spending <= investable * 0.04,
+        "inflation_assumption_pct": 3,
+        "scenarios":             scenarios,
+        "sustainable_withdrawal_amounts": swr,
+        "note": (
+            "Investable assets = total assets minus liabilities. "
+            "Inflation-adjusted real return used for depletion modeling. "
+            "'Sustainable' means portfolio survives 30+ years. "
+            "Social Security, pensions, and annuities are not factored in — "
+            "adding guaranteed income sources would extend runway significantly."
+        ),
+    }
+
+
+# ===========================================================================
+# NEW TOOL: Withdrawal Rate Analysis
+# ===========================================================================
+
+async def get_withdrawal_rate_analysis(http_session) -> dict:
+    """
+    Analyze safe withdrawal rate in the context of your Emoney financial plan.
+
+    Combines current portfolio value, retirement goal start year, and
+    estimated retirement duration to model what various withdrawal rates
+    produce in annual income.
+    """
+    accts = await get_accounts(http_session)
+    if "error" in accts:
+        return accts
+
+    goals_result = await get_goals(http_session)
+    retirement_goals = goals_result.get("retirement_goals", []) if "error" not in goals_result else []
+
+    net_worth   = accts.get("net_worth") or 0
+    total_assets = accts.get("total_assets") or 0
+    total_liab   = accts.get("total_liabilities") or 0
+    investable   = max(0.0, total_assets - total_liab)
+
+    current_year = datetime.now().year
+    retirement_start = None
+    retirement_end   = None
+    goal_name        = None
+
+    if retirement_goals:
+        g = retirement_goals[0]
+        retirement_start = g.get("start_year")
+        retirement_end   = g.get("end_year")
+        goal_name        = g.get("name")
+
+    years_to_retirement = (retirement_start - current_year) if retirement_start else None
+    retirement_duration = (retirement_end - retirement_start) if (retirement_start and retirement_end) else None
+
+    # Project portfolio growth to retirement
+    projected_at_retirement = None
+    if years_to_retirement and years_to_retirement > 0:
+        projected_at_retirement = round(investable * (1.06 ** years_to_retirement), 2)
+    else:
+        projected_at_retirement = investable
+
+    # Withdrawal rates analysis
+    wdl_analysis = []
+    for rate in [0.03, 0.035, 0.04, 0.045, 0.05]:
+        annual = round((projected_at_retirement or investable) * rate, 2)
+        monthly = round(annual / 12, 2)
+        # Rough years-to-depletion at this rate, 6% nominal return, 3% inflation
+        real_ret = (1.06 / 1.03) - 1
+        import math
+        ratio = rate / real_ret if real_ret > 0 else float("inf")
+        try:
+            years = -math.log(1 - min(ratio, 0.9999)) / math.log(1 + real_ret)
+        except Exception:
+            years = 999
+        wdl_analysis.append({
+            "rate_pct":           rate * 100,
+            "annual_income":      annual,
+            "monthly_income":     monthly,
+            "est_years_funded":   round(years, 1) if years < 999 else None,
+            "covers_30yr_plan":   years >= (retirement_duration or 30),
+        })
+
+    return {
+        "current_investable_assets": round(investable, 2),
+        "retirement_goal":           goal_name,
+        "retirement_start_year":     retirement_start,
+        "retirement_end_year":       retirement_end,
+        "retirement_duration_years": retirement_duration,
+        "years_to_retirement":       years_to_retirement,
+        "projected_portfolio_at_retirement": projected_at_retirement,
+        "projected_growth_assumption": "6% annual nominal return",
+        "withdrawal_rate_scenarios": wdl_analysis,
+        "rule_of_thumb": {
+            "4pct_rule_annual": round((projected_at_retirement or investable) * 0.04, 2),
+            "4pct_rule_monthly": round((projected_at_retirement or investable) * 0.04 / 12, 2),
+            "summary": (
+                "The 4% rule suggests a 30-year retirement is historically well-funded "
+                "at this withdrawal rate from a diversified equity/bond portfolio."
+            ),
+        },
+    }
+
+
+# ===========================================================================
+# NEW TOOL: Asset Location Efficiency
+# ===========================================================================
+
+async def get_asset_location_efficiency(http_session) -> dict:
+    """
+    Grade how well your assets are positioned across account types for
+    tax efficiency.
+
+    The principle: tax-inefficient assets (bonds, REITs, high-dividend stocks)
+    should be sheltered in tax-deferred or tax-free accounts; tax-efficient
+    assets (index funds, growth stocks) can sit in taxable accounts.
+
+    Returns a letter grade, position-by-position ratings, and specific
+    improvement suggestions.
+    """
+    type_map = await _build_account_type_map(http_session)
+
+    ts = int(time.time() * 1000)
+    http = await http_session.get_http()
+    resp = await http.get(f"{_INV_URL}/GetInvestmentData?_={ts}", timeout=30)
+    if resp.status_code != 200 or "json" not in resp.headers.get("content-type", ""):
+        return {"error": f"GetInvestmentData returned {resp.status_code}."}
+
+    data  = resp.json()
+    total = (data.get("Holdings") or 0) + (data.get("Cash") or 0)
+
+    scored_positions = []
+    suggestions = []
+    total_weighted_score = 0.0
+    total_weight = 0.0
+
+    for acct in data.get("Accounts", []):
+        acct_name  = acct.get("Name", "")
+        tax_bucket = _match_tax_bucket(acct_name, type_map)
+
+        for h in acct.get("Holdings", []):
+            value       = h.get("Value") or 0.0
+            if value <= 0:
+                continue
+            ticker      = h.get("Ticker") or ""
+            description = h.get("Description") or ""
+            asset_class = _classify_asset(ticker, description)
+            efficiency  = _ASSET_EFFICIENCY.get(asset_class, 5)
+
+            # Score the placement: high efficiency in taxable = good;
+            # low efficiency in deferred/free = good
+            if tax_bucket == "Taxable":
+                placement_score = efficiency           # good if efficient
+                well_placed     = efficiency >= 6
+            elif tax_bucket in ("Tax-Deferred", "Tax-Free"):
+                placement_score = 10 - efficiency      # good if inefficient
+                well_placed     = efficiency <= 5
+            else:
+                placement_score = 5
+                well_placed     = None
+
+            weight = value / total if total > 0 else 0
+            total_weighted_score += placement_score * weight
+            total_weight += weight
+
+            entry = {
+                "ticker":          ticker,
+                "description":     description[:40],
+                "account":         acct_name,
+                "tax_treatment":   tax_bucket,
+                "asset_class":     asset_class,
+                "efficiency_score": efficiency,
+                "value":           round(value, 2),
+                "well_placed":     well_placed,
+            }
+            scored_positions.append(entry)
+
+            if well_placed is False and value >= 10_000:
+                if tax_bucket == "Taxable" and efficiency < 6:
+                    suggestions.append(
+                        f"Consider moving '{ticker or description[:30]}' (${value:,.0f}, {asset_class}) "
+                        f"from taxable '{acct_name}' to a tax-deferred or tax-free account."
+                    )
+                elif tax_bucket in ("Tax-Deferred", "Tax-Free") and efficiency >= 7:
+                    suggestions.append(
+                        f"Consider moving '{ticker or description[:30]}' (${value:,.0f}, {asset_class}) "
+                        f"to a taxable account to free up tax-sheltered space for less-efficient assets."
+                    )
+
+    overall_score = round(total_weighted_score / total_weight, 1) if total_weight > 0 else 5.0
+    if overall_score >= 8:
+        grade = "A"
+    elif overall_score >= 6.5:
+        grade = "B"
+    elif overall_score >= 5:
+        grade = "C"
+    elif overall_score >= 3.5:
+        grade = "D"
+    else:
+        grade = "F"
+
+    well_placed_count   = sum(1 for p in scored_positions if p["well_placed"] is True)
+    poorly_placed_count = sum(1 for p in scored_positions if p["well_placed"] is False)
+
+    return {
+        "overall_grade":       grade,
+        "overall_score":       f"{overall_score}/10",
+        "well_placed_count":   well_placed_count,
+        "poorly_placed_count": poorly_placed_count,
+        "suggestions":         suggestions[:10],
+        "positions":           sorted(scored_positions, key=lambda x: x["well_placed"] is False, reverse=True),
+        "efficiency_guide": {
+            "best_in_taxable":   ["index funds", "ETFs", "growth stocks", "municipal bonds"],
+            "best_in_deferred":  ["bond funds", "REITs", "TIPS", "high-yield bonds", "high-dividend stocks"],
+            "best_in_tax_free":  ["highest-growth assets (Roth)", "bond funds if no deferred space"],
+        },
+    }
+
+
+# ===========================================================================
+# NEW TOOL: Rebalancing Targets
+# ===========================================================================
+
+async def get_rebalancing_targets(
+    http_session,
+    target_equity_pct: float = 60.0,
+    target_bond_pct:   float = 30.0,
+    target_cash_pct:   float = 10.0,
+) -> dict:
+    """
+    Compute buy/sell amounts needed to reach a target asset allocation.
+
+    Parameters
+    ----------
+    target_equity_pct : target percentage in equities (default 60)
+    target_bond_pct   : target percentage in bonds/fixed income (default 30)
+    target_cash_pct   : target percentage in cash/money market (default 10)
+    """
+    # Normalize targets to 100%
+    total_target = target_equity_pct + target_bond_pct + target_cash_pct
+    if abs(total_target - 100) > 0.1:
+        target_equity_pct = round(target_equity_pct / total_target * 100, 1)
+        target_bond_pct   = round(target_bond_pct   / total_target * 100, 1)
+        target_cash_pct   = round(100 - target_equity_pct - target_bond_pct, 1)
+
+    ts = int(time.time() * 1000)
+    http = await http_session.get_http()
+    resp = await http.get(f"{_INV_URL}/GetInvestmentData?_={ts}", timeout=30)
+    if resp.status_code != 200 or "json" not in resp.headers.get("content-type", ""):
+        return {"error": f"GetInvestmentData returned {resp.status_code}."}
+
+    data  = resp.json()
+    portfolio_total = (data.get("Holdings") or 0) + (data.get("Cash") or 0)
+
+    # Classify holdings
+    equity_value = 0.0
+    bond_value   = 0.0
+    cash_value   = data.get("Cash") or 0.0
+    other_value  = 0.0
+
+    position_details = []
+    for acct in data.get("Accounts", []):
+        for h in acct.get("Holdings", []):
+            value       = h.get("Value") or 0.0
+            ticker      = h.get("Ticker") or ""
+            description = h.get("Description") or ""
+            asset_class = _classify_asset(ticker, description)
+
+            if asset_class in ("domestic_equity_index", "international_equity",
+                               "growth_equity", "dividend_equity"):
+                bucket = "equity"
+                equity_value += value
+            elif asset_class in ("bond_fund", "tips", "high_yield_bond", "muni_bond"):
+                bucket = "bond"
+                bond_value += value
+            elif asset_class == "money_market":
+                bucket = "cash"
+                cash_value += value
+            else:
+                bucket = "equity"   # default: treat as equity
+                equity_value += value
+
+            position_details.append({
+                "ticker":      ticker,
+                "description": description[:40],
+                "asset_class": asset_class,
+                "bucket":      bucket,
+                "value":       round(value, 2),
+            })
+
+    if portfolio_total <= 0:
+        return {"error": "No portfolio data found."}
+
+    current_equity_pct = round(equity_value / portfolio_total * 100, 1)
+    current_bond_pct   = round(bond_value   / portfolio_total * 100, 1)
+    current_cash_pct   = round(cash_value   / portfolio_total * 100, 1)
+
+    target_equity_val = portfolio_total * target_equity_pct / 100
+    target_bond_val   = portfolio_total * target_bond_pct   / 100
+    target_cash_val   = portfolio_total * target_cash_pct   / 100
+
+    equity_delta = round(target_equity_val - equity_value, 2)
+    bond_delta   = round(target_bond_val   - bond_value,   2)
+    cash_delta   = round(target_cash_val   - cash_value,   2)
+
+    def _action(delta: float) -> str:
+        if delta > 500:
+            return f"BUY ${abs(delta):,.0f}"
+        elif delta < -500:
+            return f"SELL ${abs(delta):,.0f}"
+        return "ON TARGET"
+
+    return {
+        "portfolio_total": round(portfolio_total, 2),
+        "target_allocation": {
+            "equity_pct": target_equity_pct,
+            "bond_pct":   target_bond_pct,
+            "cash_pct":   target_cash_pct,
+        },
+        "current_allocation": {
+            "equity_pct": current_equity_pct,
+            "equity_value": round(equity_value, 2),
+            "bond_pct":   current_bond_pct,
+            "bond_value": round(bond_value, 2),
+            "cash_pct":   current_cash_pct,
+            "cash_value": round(cash_value, 2),
+        },
+        "rebalancing_actions": {
+            "equity": {"delta": equity_delta, "action": _action(equity_delta)},
+            "bonds":  {"delta": bond_delta,   "action": _action(bond_delta)},
+            "cash":   {"delta": cash_delta,   "action": _action(cash_delta)},
+        },
+        "drift_from_target": {
+            "equity_drift_pct": round(current_equity_pct - target_equity_pct, 1),
+            "bond_drift_pct":   round(current_bond_pct   - target_bond_pct,   1),
+            "cash_drift_pct":   round(current_cash_pct   - target_cash_pct,   1),
+        },
+        "rebalance_needed": any(
+            abs(d) >= 5 for d in [
+                current_equity_pct - target_equity_pct,
+                current_bond_pct   - target_bond_pct,
+                current_cash_pct   - target_cash_pct,
+            ]
+        ),
+        "position_breakdown": position_details,
+        "note": (
+            "Asset class assignment uses ticker/description heuristics. "
+            "Verify classification for any position labeled unexpectedly. "
+            "Consider executing sells first in tax-advantaged accounts to avoid taxable events."
+        ),
+    }
+
+
+# ===========================================================================
+# NEW TOOL: Financial Health Score
+# ===========================================================================
+
+async def get_financial_health_score(http_session) -> dict:
+    """
+    Return a single 0-100 composite financial health score with component
+    breakdown.  Combines six dimensions: savings rate, goal funding,
+    debt-to-asset ratio, emergency fund coverage, diversification, and
+    net worth trend.
+
+    Each component is scored 0-100 and weighted to produce the overall score.
+    """
+    errors = []
+
+    # --- Net worth ---
+    accts = await get_accounts(http_session)
+    if "error" in accts:
+        return accts
+    net_worth    = accts.get("net_worth") or 0
+    total_assets = accts.get("total_assets") or 0
+    total_liab   = accts.get("total_liabilities") or 0
+
+    # --- Savings rate (last 3 months) ---
+    savings_result = await get_savings_rate(http_session, months=3)
+    avg_savings_rate = savings_result.get("average_savings_rate") if "error" not in savings_result else None
+
+    # --- Goals ---
+    goals_result = await get_goals(http_session)
+    all_goals = []
+    if "error" not in goals_result:
+        all_goals = goals_result.get("retirement_goals", []) + goals_result.get("spending_goals", [])
+
+    # --- Net worth history (trend) ---
+    history_result = await get_net_worth_history(http_session, months=6)
+    nw_change_pct = None
+    if "error" not in history_result:
+        ch = history_result.get("change_over_period", {})
+        nw_change_pct = ch.get("percent")
+
+    # --- Spending for emergency fund ---
+    txns, snb_ok = await _fetch_snb_data(http_session, days=90)
+    monthly_spending = 0.0
+    if snb_ok:
+        monthly_spending = sum(
+            t["amount"] for t in txns
+            if not t["is_income"] and not t["is_excluded"]
+        ) / 3
+
+    # --- Holdings for diversification ---
+    holdings_result = await get_holdings(http_session)
+    position_count = holdings_result.get("position_count", 0) if "error" not in holdings_result else 0
+
+    # ── Scoring ────────────────────────────────────────────────────────────
+
+    # 1. Savings rate (weight 25)
+    if avg_savings_rate is not None:
+        if avg_savings_rate >= 20:
+            savings_score = 100
+        elif avg_savings_rate >= 15:
+            savings_score = 85
+        elif avg_savings_rate >= 10:
+            savings_score = 70
+        elif avg_savings_rate >= 5:
+            savings_score = 50
+        elif avg_savings_rate > 0:
+            savings_score = 30
+        else:
+            savings_score = 0
+    else:
+        savings_score = 50   # unknown → neutral
+        errors.append("savings_rate unavailable")
+
+    # 2. Goal funding (weight 25)
+    if all_goals:
+        funded_pcts = [g.get("percent_funded") or 0 for g in all_goals]
+        avg_funded  = sum(funded_pcts) / len(funded_pcts)
+        goal_score  = min(100, int(avg_funded))
+    else:
+        goal_score = 50
+        errors.append("goals unavailable")
+
+    # 3. Debt-to-asset ratio (weight 20)
+    if total_assets > 0:
+        dta = total_liab / total_assets
+        if dta <= 0.05:
+            debt_score = 100
+        elif dta <= 0.15:
+            debt_score = 85
+        elif dta <= 0.30:
+            debt_score = 65
+        elif dta <= 0.50:
+            debt_score = 40
+        else:
+            debt_score = 15
+    else:
+        debt_score = 50
+
+    # 4. Emergency fund (weight 15): liquid months of spending
+    liquid_group = next(
+        (g for g in accts.get("account_groups", []) if "cash" in g.get("group", "").lower()
+         or "bank" in g.get("group", "").lower()), None
+    )
+    liquid_assets = liquid_group["total"] if liquid_group else 0
+    if monthly_spending > 0:
+        months_covered = liquid_assets / monthly_spending
+        if months_covered >= 6:
+            emergency_score = 100
+        elif months_covered >= 3:
+            emergency_score = 70
+        elif months_covered >= 1:
+            emergency_score = 40
+        else:
+            emergency_score = 10
+    else:
+        emergency_score = 60
+
+    # 5. Diversification (weight 10)
+    if position_count >= 20:
+        diversification_score = 100
+    elif position_count >= 10:
+        diversification_score = 80
+    elif position_count >= 5:
+        diversification_score = 55
+    elif position_count >= 2:
+        diversification_score = 35
+    else:
+        diversification_score = 10
+
+    # 6. Net worth trend (weight 5)
+    if nw_change_pct is not None:
+        if nw_change_pct >= 10:
+            trend_score = 100
+        elif nw_change_pct >= 5:
+            trend_score = 80
+        elif nw_change_pct >= 0:
+            trend_score = 60
+        elif nw_change_pct >= -5:
+            trend_score = 35
+        else:
+            trend_score = 10
+    else:
+        trend_score = 50
+
+    # Weighted composite
+    weights = {
+        "savings_rate":    0.25,
+        "goal_funding":    0.25,
+        "debt_to_assets":  0.20,
+        "emergency_fund":  0.15,
+        "diversification": 0.10,
+        "nw_trend":        0.05,
+    }
+    scores = {
+        "savings_rate":    savings_score,
+        "goal_funding":    goal_score,
+        "debt_to_assets":  debt_score,
+        "emergency_fund":  emergency_score,
+        "diversification": diversification_score,
+        "nw_trend":        trend_score,
+    }
+    composite = round(sum(scores[k] * weights[k] for k in weights), 1)
+
+    if composite >= 85:
+        letter_grade, summary = "A", "Excellent — your finances are in great shape."
+    elif composite >= 70:
+        letter_grade, summary = "B", "Good — strong fundamentals with room to improve."
+    elif composite >= 55:
+        letter_grade, summary = "C", "Fair — some important areas need attention."
+    elif composite >= 40:
+        letter_grade, summary = "D", "Needs work — several key financial metrics are below target."
+    else:
+        letter_grade, summary = "F", "Urgent attention needed — multiple areas are at risk."
+
+    return {
+        "overall_score":  composite,
+        "letter_grade":   letter_grade,
+        "summary":        summary,
+        "components": [
+            {
+                "name":    k.replace("_", " ").title(),
+                "score":   scores[k],
+                "weight":  f"{int(weights[k]*100)}%",
+                "details": _score_detail(k, scores[k], {
+                    "savings_rate":    avg_savings_rate,
+                    "goal_funding":    sum(g.get("percent_funded") or 0 for g in all_goals) / max(len(all_goals), 1),
+                    "debt_to_assets":  round((total_liab / total_assets * 100) if total_assets else 0, 1),
+                    "emergency_fund":  round(liquid_assets / monthly_spending, 1) if monthly_spending > 0 else None,
+                    "diversification": position_count,
+                    "nw_trend":        nw_change_pct,
+                }),
+            }
+            for k in weights
+        ],
+        "data_errors": errors if errors else None,
+        "note": "Score reflects current snapshot. Improve savings rate and goal funding for the biggest impact.",
+    }
+
+
+def _score_detail(component: str, score: int, values: dict) -> str:
+    v = values.get(component)
+    if component == "savings_rate":
+        return f"{v:.1f}% average savings rate" if v is not None else "Data unavailable"
+    if component == "goal_funding":
+        return f"{v:.0f}% average goal funding" if v is not None else "No goals found"
+    if component == "debt_to_assets":
+        return f"{v:.1f}% debt-to-asset ratio" if v is not None else "Unknown"
+    if component == "emergency_fund":
+        return f"{v:.1f} months of expenses covered" if v is not None else "Unknown"
+    if component == "diversification":
+        return f"{v} investment positions"
+    if component == "nw_trend":
+        return f"{v:+.1f}% net worth change over 6 months" if v is not None else "Insufficient history"
+    return ""
+
+
+# ===========================================================================
+# NEW TOOL: Explore Emoney Cards
+# ===========================================================================
+
+async def explore_emoney_cards(
+    http_session,
+    card_ids: list[int] | None = None,
+) -> dict:
+    """
+    Probe unexplored Emoney CardSwitcher card endpoints to discover
+    what data is available.  Useful for finding insurance, tax projection,
+    estate, or other plan data not yet surfaced by the MCP.
+
+    Parameters
+    ----------
+    card_ids : list of card IDs to probe (default: [5, 6, 7, 10, 12, 14, 15, 16])
+    """
+    http = await http_session.get_http()
+
+    if card_ids is None:
+        card_ids = [5, 6, 7, 10, 12, 14, 15, 16]
+
+    results = {}
+    for cid in card_ids:
+        data = await _get_card(http, cid)
+        if data is None:
+            results[f"card_{cid}"] = {"status": "unavailable_or_error"}
+        else:
+            # Return the top-level keys and a sample so callers can see what's there
+            keys = list(data.keys()) if isinstance(data, dict) else []
+            results[f"card_{cid}"] = {
+                "status":    "available",
+                "top_keys":  keys,
+                "card_id":   cid,
+                "data":      data,   # full payload — useful for discovery
+            }
+
+    available = [k for k, v in results.items() if v.get("status") == "available"]
+    return {
+        "probed_cards":     card_ids,
+        "available_cards":  available,
+        "unavailable_count": len(card_ids) - len(available),
+        "results":          results,
+        "note": (
+            "Use this tool to discover new Emoney data sources. "
+            "If a card returns useful financial data, it can be wrapped into a "
+            "dedicated tool in a future update."
+        ),
+    }

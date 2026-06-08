@@ -1,4 +1,24 @@
-"""Retirement runway and withdrawal rate analysis."""
+"""
+Retirement sustainability modeling.
+
+Public functions
+----------------
+get_retirement_runway(http_session, annual_spending, return_rate)
+    Projects how many years the current portfolio can sustain withdrawals.
+    If annual_spending is not provided it pulls the actual 12-month spend from
+    the SNB API.  Models three return scenarios (4%, 6%, 8%) and shows
+    sustainable withdrawal amounts at 3.5%, 4%, and 4.5% SWR.
+
+    The depletion math uses an inflation-adjusted real return so the model
+    accounts for purchasing-power erosion over time (assumes 3% inflation).
+
+get_withdrawal_rate_analysis(http_session)
+    Projects the portfolio value to the Emoney retirement goal start year
+    (at 6% annual return), then shows annual/monthly income at 3%, 3.5%,
+    4%, 4.5%, and 5% withdrawal rates along with estimated years funded.
+    Pulls the retirement goal start/end year directly from card 2 via
+    get_goals(), so no parameters are needed.
+"""
 
 import math
 from datetime import datetime

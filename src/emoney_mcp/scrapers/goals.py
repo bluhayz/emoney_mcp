@@ -1,4 +1,30 @@
-"""Goals, financial summary, and financial health score."""
+"""
+Goal tracking, executive financial summary, and composite health scoring.
+
+Public functions
+----------------
+get_goals(http_session)
+    Returns all financial goals from CardSwitcher card 2 — retirement goal
+    (start year, end year, % funded), education goals, and any spending goals.
+    Goals are split into ``retirement_goals`` and ``spending_goals`` lists.
+
+get_financial_summary(http_session)
+    Single-call executive dashboard combining:
+      • Net worth and month/year change (cards 9, 11)
+      • Investment portfolio value and today's change (card 3)
+      • This month's income vs. spending and top-5 categories (SNB API)
+      • Goal funding status at a glance (card 2)
+    Designed to be the first tool called for broad "how am I doing?" questions.
+
+get_financial_health_score(http_session)
+    Composite 0–100 score (A–F letter grade) built from six dimensions:
+      1. Savings rate       (25% weight) — from get_savings_rate
+      2. Goal funding       (25% weight) — avg % funded across all goals
+      3. Debt-to-assets     (20% weight) — total liabilities / total assets
+      4. Emergency fund     (15% weight) — months of liquid assets vs. spending
+      5. Diversification    (10% weight) — number of investment positions
+      6. Net worth trend    (5% weight)  — 6-month net worth % change
+"""
 
 import time
 from datetime import datetime

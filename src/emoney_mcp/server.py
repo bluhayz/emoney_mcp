@@ -489,6 +489,16 @@ async def list_tools() -> list[Tool]:
                 "required": [],
             },
         ),
+        # ── Help ──────────────────────────────────────────────────────────
+        Tool(
+            name="get_features",
+            description=(
+                "Lists all available emoney-mcp tools grouped by category, with a short "
+                "description and example questions for each. Call this to discover what "
+                "you can ask — no parameters required."
+            ),
+            inputSchema={"type": "object", "properties": {}, "required": []},
+        ),
         # ── Debug ─────────────────────────────────────────────────────────
         Tool(
             name="get_version",
@@ -520,7 +530,9 @@ async def list_tools() -> list[Tool]:
 async def call_tool(name: str, arguments: dict) -> list[TextContent]:
     importlib.reload(scraper)
 
-    if name == "get_financial_summary":
+    if name == "get_features":
+        result = _get_features()
+    elif name == "get_financial_summary":
         result = await _get_financial_summary()
     elif name == "get_accounts":
         result = await _get_accounts()
@@ -804,6 +816,219 @@ async def _get_spending_transactions(days: int = 30) -> dict:
     if err:
         return err
     return await scraper.get_spending_transactions(sess, days=days)
+
+
+# ── Help ──────────────────────────────────────────────────────────────────
+
+def _get_features() -> dict:
+    return {
+        "version": "0.3.0",
+        "total_tools": 30,
+        "categories": {
+            "Overview & Dashboard": {
+                "tools": {
+                    "get_financial_summary": {
+                        "description": "Executive dashboard — net worth, performance, income vs. spending, top 5 spending categories, goal status.",
+                        "examples": ["How are my finances?", "Give me a financial overview."],
+                        "parameters": "none",
+                    },
+                    "get_financial_health_score": {
+                        "description": "Composite 0–100 financial health score (A–F) across savings rate, goal funding, debt ratio, emergency fund, diversification, and net worth trend.",
+                        "examples": ["How healthy are my finances?", "What should I focus on improving?"],
+                        "parameters": "none",
+                    },
+                    "get_features": {
+                        "description": "Lists all available tools grouped by category (this tool).",
+                        "examples": ["What can you do?", "What features are available?"],
+                        "parameters": "none",
+                    },
+                },
+            },
+            "Balance Sheet & Net Worth": {
+                "tools": {
+                    "get_accounts": {
+                        "description": "All financial accounts grouped by type (investments, bank, retirement, debt, property) with balances.",
+                        "examples": ["Show all my accounts.", "What are my account balances?"],
+                        "parameters": "none",
+                    },
+                    "get_net_worth": {
+                        "description": "Current net worth (total assets minus total liabilities).",
+                        "examples": ["What is my net worth?"],
+                        "parameters": "none",
+                    },
+                    "get_net_worth_history": {
+                        "description": "Monthly net worth trend over time.",
+                        "examples": ["How has my net worth grown this year?"],
+                        "parameters": "months (default 12, max 60)",
+                    },
+                    "get_net_worth_breakdown": {
+                        "description": "Net worth split by person, by liquidity, and by tax treatment.",
+                        "examples": ["How much of our wealth is in tax-advantaged accounts?", "How much is illiquid?"],
+                        "parameters": "none",
+                    },
+                    "get_retirement_accounts": {
+                        "description": "Aggregates all tax-advantaged retirement and savings accounts (401k, IRA, Roth, HSA, 529).",
+                        "examples": ["How much do I have saved for retirement?"],
+                        "parameters": "none",
+                    },
+                },
+            },
+            "Investments & Portfolio": {
+                "tools": {
+                    "get_holdings": {
+                        "description": "All investment positions — ticker, units, price, value, cost basis, unrealized gain/loss.",
+                        "examples": ["What positions do I hold?", "Show my unrealized gains."],
+                        "parameters": "none",
+                    },
+                    "get_asset_allocation": {
+                        "description": "Portfolio allocation by asset class (equities, bonds, cash) with top 10 holdings.",
+                        "examples": ["Am I properly diversified?", "How much am I in equities vs bonds?"],
+                        "parameters": "none",
+                    },
+                    "get_performance": {
+                        "description": "Portfolio value change across MTD, YTD, 1-year, and longer periods.",
+                        "examples": ["How is my portfolio performing this year?"],
+                        "parameters": "none",
+                    },
+                    "get_transactions": {
+                        "description": "Investment transactions (buys, sells, dividends) for a date range.",
+                        "examples": ["What investment transactions happened last month?"],
+                        "parameters": "days (default 30, max 365), account_id (optional)",
+                    },
+                    "get_capital_gains": {
+                        "description": "Realized capital gains summary for a given tax year.",
+                        "examples": ["What are my realized gains this year?"],
+                        "parameters": "year (default: current year)",
+                    },
+                    "get_rebalancing_targets": {
+                        "description": "Exact buy/sell amounts to reach a target equity/bond/cash allocation.",
+                        "examples": ["How do I rebalance to 60/40?", "How far off target is my portfolio?"],
+                        "parameters": "target_equity_pct (default 60), target_bond_pct (default 30), target_cash_pct (default 10)",
+                    },
+                    "get_asset_location_efficiency": {
+                        "description": "Grades how well assets are positioned across account types for tax efficiency (A–F) with swap suggestions.",
+                        "examples": ["Are my assets in the right accounts?", "How tax-efficient is my portfolio?"],
+                        "parameters": "none",
+                    },
+                },
+            },
+            "Spending & Cash Flow": {
+                "tools": {
+                    "get_spending": {
+                        "description": "Spending by category for recent months from all linked bank and credit card accounts.",
+                        "examples": ["How much did I spend on dining last month?", "What are my biggest spending categories?"],
+                        "parameters": "months (default 1, max 12)",
+                    },
+                    "get_spending_transactions": {
+                        "description": "Bank and credit card transactions with category labels for everyday spending.",
+                        "examples": ["Show me my dining expenses.", "What did I spend on groceries last month?"],
+                        "parameters": "days (default 30, max 365)",
+                    },
+                    "get_spending_trends": {
+                        "description": "Month-over-month spending trends by category — which are trending up, down, or stable.",
+                        "examples": ["Is my dining spending going up?", "Compare my last 3 months of spending."],
+                        "parameters": "months (default 3, max 12)",
+                    },
+                    "search_transactions": {
+                        "description": "Search spending transactions by keyword, category, and/or amount range.",
+                        "examples": ["How much did I spend at Costco this year?", "Show me all Amazon charges."],
+                        "parameters": "query, category, days (default 365), min_amount, max_amount",
+                    },
+                    "get_recurring_charges": {
+                        "description": "Detects recurring/subscription charges from 120-day transaction patterns.",
+                        "examples": ["What subscriptions am I paying for?", "What are my recurring bills?"],
+                        "parameters": "none",
+                    },
+                    "get_income_summary": {
+                        "description": "Income sources and monthly income trend; identifies paychecks, dividends, and interest grouped by source.",
+                        "examples": ["How much did I earn last month?", "What are my income sources?"],
+                        "parameters": "days (default 90, max 365)",
+                    },
+                    "get_savings_rate": {
+                        "description": "Month-by-month savings rate — income minus spending divided by income.",
+                        "examples": ["What is my savings rate?", "Am I saving more than last month?"],
+                        "parameters": "months (default 6, max 12)",
+                    },
+                },
+            },
+            "Goals": {
+                "tools": {
+                    "get_goals": {
+                        "description": "Financial goals and funding status from the Emoney plan (retirement, education, spending goals).",
+                        "examples": ["Am I on track for retirement?", "How funded is the education goal?"],
+                        "parameters": "none",
+                    },
+                },
+            },
+            "Tax Planning": {
+                "tools": {
+                    "get_tax_loss_harvesting": {
+                        "description": "Identifies taxable positions with unrealized losses, ranked by size with estimated tax savings.",
+                        "examples": ["Where can I harvest losses?", "What's my tax-loss harvesting opportunity?"],
+                        "parameters": "none",
+                    },
+                    "get_capital_gains_exposure": {
+                        "description": "Identifies taxable positions with large unrealized gains and estimates tax liability if sold today.",
+                        "examples": ["What's my capital gains tax exposure?", "Which positions would trigger the biggest tax bill?"],
+                        "parameters": "filing_status ('mfj', 'single', 'hoh'), annual_income (optional)",
+                    },
+                    "get_contribution_room": {
+                        "description": "Shows 2025 IRS contribution limits for all tax-advantaged accounts alongside current balances.",
+                        "examples": ["How much can I still contribute to my IRA?", "Am I maxing out my HSA?"],
+                        "parameters": "age (optional), filing_status (default 'mfj')",
+                    },
+                    "get_roth_conversion_analysis": {
+                        "description": "Estimates tax cost and long-term benefit of a Roth conversion with bracket-by-bracket detail.",
+                        "examples": ["Should I do a Roth conversion?", "What does it cost to convert $100k to Roth?"],
+                        "parameters": "conversion_amount (required), current_income (required), filing_status, age",
+                    },
+                    "get_rmd_estimate": {
+                        "description": "Estimates Required Minimum Distributions using the IRS Uniform Lifetime Table with 10-year projection.",
+                        "examples": ["When do I have to start taking RMDs?", "How much will my RMD be at 75?"],
+                        "parameters": "birth_year (required)",
+                    },
+                },
+            },
+            "Retirement Planning": {
+                "tools": {
+                    "get_retirement_runway": {
+                        "description": "Models how many years the portfolio sustains withdrawals under conservative, base, and optimistic return scenarios.",
+                        "examples": ["Can I afford to retire now?", "How long will my money last?"],
+                        "parameters": "annual_spending (optional), return_rate (default 0.06)",
+                    },
+                    "get_withdrawal_rate_analysis": {
+                        "description": "Projects portfolio to retirement year and shows annual/monthly income at 3–5% withdrawal rates.",
+                        "examples": ["How much can I spend in retirement?", "What does a 4% withdrawal rate give me?"],
+                        "parameters": "none",
+                    },
+                },
+            },
+            "Session & Debug": {
+                "tools": {
+                    "sync_chrome_session": {
+                        "description": "Pulls the active Emoney session from your running Chrome browser — no re-login needed if already logged in.",
+                        "examples": ["Sync my Chrome session."],
+                        "parameters": "none",
+                    },
+                    "reset_session": {
+                        "description": "Clears the saved session and forces a fresh login on the next call.",
+                        "examples": ["Reset my session.", "Log me out."],
+                        "parameters": "none",
+                    },
+                    "get_version": {
+                        "description": "Returns installed version, cookie file path, and session status for debugging.",
+                        "examples": ["What version is emoney-mcp?"],
+                        "parameters": "none",
+                    },
+                    "explore_emoney_cards": {
+                        "description": "Probes unexplored Emoney CardSwitcher endpoints to discover additional data.",
+                        "examples": ["What other Emoney data can we access?"],
+                        "parameters": "card_ids (optional list of integers)",
+                    },
+                },
+            },
+        },
+    }
 
 
 # ── Session management ─────────────────────────────────────────────────────

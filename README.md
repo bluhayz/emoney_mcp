@@ -83,7 +83,7 @@ Then point Claude Desktop at your local clone:
   "mcpServers": {
     "emoney": {
       "command": "uvx",
-      "args": ["--from", "D:/ClaudeCode/emoney_mcp", "emoney-mcp"],
+      "args": ["--from", "/path/to/emoney_mcp", "emoney-mcp"],
       "env": {
         "EMONEY_SUBDOMAIN": "wealth"
       }
@@ -109,7 +109,7 @@ Then point Claude Desktop at your local clone:
 | `get_accounts` | All financial accounts grouped by type (investments, bank, retirement, debt, property) with balances and full net worth summary |
 | `get_net_worth` | Current net worth — total assets minus total liabilities |
 | `get_net_worth_history` | Monthly net worth trend. Parameter: `months` (default 12, max 60) |
-| `get_net_worth_breakdown` | Net worth broken down three ways: by **person** (Drew/Lacey/Joint), by **liquidity** (Liquid/Semi-liquid/Illiquid), and by **tax treatment** (Taxable/Tax-Deferred/Tax-Free) |
+| `get_net_worth_breakdown` | Net worth broken down three ways: by **person** (per household member/joint), by **liquidity** (Liquid/Semi-liquid/Illiquid), and by **tax treatment** (Taxable/Tax-Deferred/Tax-Free) |
 | `get_retirement_accounts` | Aggregates all tax-advantaged accounts — 401k, IRA, Roth IRA, annuities, HSA, 529 — with subtotals by category |
 
 ### 📈 Investments
@@ -157,8 +157,8 @@ All spending tools normalize raw bank descriptions before grouping, so visits to
 | Raw description | Normalized |
 |----------------|------------|
 | `APLPAY FOOD LION VA` | `FOOD LION` |
-| `COSTCO WHSE STERLING US` | `COSTCO WHSE` |
-| `COSTCO WHSE RESTON VA` | `COSTCO WHSE` ← grouped |
+| `COSTCO WHSE PHOENIX US` | `COSTCO WHSE` |
+| `COSTCO WHSE TUCSON AZ` | `COSTCO WHSE` ← grouped |
 | `UNITED AIRLINES HOUSTON TX` | `UNITED AIRLINES` |
 | `TST AUSTIN GRILL VA` | `AUSTIN GRILL` |
 | `SQ *BLUE BOTTLE COFFEE` | `BLUE BOTTLE COFFEE` |
@@ -193,7 +193,7 @@ Give me a complete financial summary.
 ```
 What's my current net worth?
 How has my net worth changed over the last 6 months?
-How is our wealth split between Drew and Lacey?
+How is our wealth split between my spouse and me?
 How much of my assets are liquid vs. illiquid?
 How much do I have in tax-free vs. tax-deferred accounts?
 ```
@@ -211,7 +211,7 @@ How much do I have in retirement accounts?
 ### Goals & Planning
 ```
 Am I on track for retirement?
-How funded is Parker's 529 education account?
+How funded is my child's 529 education account?
 ```
 
 ### Spending & Cash Flow
@@ -226,7 +226,7 @@ Compare my spending this month vs. last month by category.
 ### Income & Savings
 ```
 What are all my income sources?
-How much did Snowflake pay me in the last 90 days?
+How much has my employer paid me in the last 90 days?
 What is my savings rate over the last 6 months?
 Am I saving more or less than last month?
 ```

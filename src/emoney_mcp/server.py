@@ -192,6 +192,15 @@ async def list_tools() -> list[Tool]:
                 "required": [],
             },
         ),
+        # ── Debug ─────────────────────────────────────────────────────────
+        Tool(
+            name="get_version",
+            description=(
+                "Returns the installed version of emoney-mcp, the cookie file path, "
+                "and whether a saved session file exists. Useful for debugging."
+            ),
+            inputSchema={"type": "object", "properties": {}, "required": []},
+        ),
         # ── Session management ────────────────────────────────────────────
         Tool(
             name="sync_chrome_session",
@@ -246,6 +255,8 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
     elif name == "get_spending_transactions":
         days = int(arguments.get("days", 30))
         result = await _get_spending_transactions(days=days)
+    elif name == "get_version":
+        result = _get_version()
     elif name == "sync_chrome_session":
         result = await _sync_chrome_session()
     elif name == "reset_session":
@@ -369,6 +380,19 @@ async def _get_spending_transactions(days: int = 30) -> dict:
 
 
 # ── Session management ─────────────────────────────────────────────────────
+
+def _get_version() -> dict:
+    from importlib.metadata import version, PackageNotFoundError
+    try:
+        ver = version("emoney-mcp")
+    except PackageNotFoundError:
+        ver = "unknown (dev install)"
+    return {
+        "version": ver,
+        "cookie_file": str(COOKIE_FILE),
+        "session_exists": COOKIE_FILE.exists(),
+    }
+
 
 async def _sync_chrome_session() -> dict:
     """Explicitly try to pull cookies from the user's running Chrome."""

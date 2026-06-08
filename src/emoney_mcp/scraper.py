@@ -1324,3 +1324,406 @@ async def get_savings_rate(http_session, months: int = 6) -> dict:
             "Transfers and credit card payments are excluded as internal flows."
         ),
     }
+
+
+# ---------------------------------------------------------------------------
+# Transaction search
+# ---------------------------------------------------------------------------
+
+async def search_transactions(
+    http_session,
+    query: str = "",
+    category: str = "",
+    days: int = 365,
+    min_amount: float = 0.0,
+    max_amount: float | None = None,
+) -> dict:
+    """
+    Search spending transactions by keyword, category, and/or amount range.
+
+    Parameters
+    ----------
+    query       : substring match against transaction description (case-insensitive)
+    category    : substring match against category name (e.g. "Grocer", "Dining")
+    days        : how far back to search (default 365, max 365)
+    min_amount  : only include transactions >= this amount
+    max_amount  : only include transactions <= this amount (omit for no upper limit)
+    """
+    days = min(max(days, 1), 365)
+    txns, ok = await _fetch_snb_data(http_session, days=days)
+    if not ok:
+        return {"error": "Could not retrieve SNB transaction data. Try re-syncing Chrome session."}
+
+    q          = query.strip().upper()
+    cat_filter = category.strip().lower()
+
+    results = []
+    for t in txns:
+        if t["is_excluded"]:
+            continue
+        if q and q not in t["description"].upper():
+            continue
+        if cat_filter and cat_filter not in t["category"].lower():
+            continue
+        if t["amount"] < min_amount:
+            continue
+        if max_amount is not None and t["amount"] > max_amount:
+            continue
+        results.append(t)
+
+    total = round(sum(t["amount"] for t in results), 2)
+
+    # Merchant rollup (spending only)
+    by_merchant: dict[str, dict] = {}
+    for t in results:
+        if t["is_income"]:
+            continue
+        key = _normalize_merchant(t["description"])
+        if key not in by_merchant:
+            by_merchant[key] = {"merchant": key, "total": 0.0, "count": 0}
+        by_merchant[key]["total"] = round(by_merchant[key]["total"] + t["amount"], 2)
+        by_merchant[key]["count"] += 1
+
+    merchant_summary = sorted(by_merchant.values(), key=lambda x: x["total"], reverse=True)[:10]
+
+    # Category rollup
+    by_cat: dict[str, float] = {}
+    for t in results:
+        by_cat[t["category"]] = round(by_cat.get(t["category"], 0) + t["amount"], 2)
+    category_summary = sorted(
+        [{"category": k, "total": v} for k, v in by_cat.items()],
+        key=lambda x: x["total"], reverse=True,
+    )
+
+    return {
+        "query":            query or "(all)",
+        "category_filter":  category or "(all)",
+        "period_days":      days,
+        "start_date":       (datetime.now() - timedelta(days=days)).strftime("%Y-%m-%d"),
+        "end_date":         datetime.now().strftime("%Y-%m-%d"),
+        "match_count":      len(results),
+        "total_amount":     total,
+        "merchant_summary": merchant_summary,
+        "category_summary": category_summary,
+        "transactions":     results,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Recurring charges / subscription detection
+# ---------------------------------------------------------------------------
+
+_CADENCES = [
+    ("weekly",     7,   4),
+    ("biweekly",   14,  4),
+    ("monthly",    30,  6),
+    ("quarterly",  91, 10),
+    ("annual",    365, 20),
+]
+
+_CADENCE_TO_MONTHLY = {
+    "weekly":    30 / 7,
+    "biweekly":  30 / 14,
+    "monthly":   1.0,
+    "quarterly": 1 / 3,
+    "annual":    1 / 12,
+}
+
+
+async def get_recurring_charges(http_session) -> dict:
+    """
+    Detect recurring and subscription charges from the last 120 days.
+
+    Groups transactions by normalized merchant name, computes gaps between
+    consecutive charges, and identifies those matching known cadences:
+    weekly, biweekly, monthly, quarterly, or annual.
+
+    Returns a list of detected recurring charges sorted by monthly cost,
+    plus a total estimated monthly recurring spend.
+    """
+    txns, ok = await _fetch_snb_data(http_session, days=120)
+    if not ok:
+        return {"error": "Could not retrieve SNB transaction data. Try re-syncing Chrome session."}
+
+    # Group spending transactions by normalized merchant
+    merchant_records: dict[str, list[dict]] = {}
+    for t in txns:
+        if t["is_excluded"] or t["is_income"] or t["is_pending"]:
+            continue
+        key = _normalize_merchant(t["description"])
+        if key not in merchant_records:
+            merchant_records[key] = []
+        merchant_records[key].append(t)
+
+    recurring = []
+    for merchant, records in merchant_records.items():
+        if len(records) < 2:
+            continue
+
+        records_sorted = sorted(records, key=lambda r: r["date"])
+        dates = [r["date"] for r in records_sorted]
+        amounts = [r["amount"] for r in records_sorted]
+
+        # Compute day-gaps between consecutive transactions
+        gaps = []
+        for i in range(1, len(dates)):
+            d1 = datetime.strptime(dates[i - 1], "%Y-%m-%d")
+            d2 = datetime.strptime(dates[i],     "%Y-%m-%d")
+            gaps.append((d2 - d1).days)
+
+        avg_gap = sum(gaps) / len(gaps)
+        avg_amount = sum(amounts) / len(amounts)
+        # Consistency: how much do gaps vary from the average?
+        gap_variance = sum(abs(g - avg_gap) for g in gaps) / len(gaps)
+
+        for cadence_name, cadence_days, tolerance in _CADENCES:
+            if abs(avg_gap - cadence_days) <= tolerance:
+                monthly_cost = round(avg_amount * _CADENCE_TO_MONTHLY[cadence_name], 2)
+                recurring.append({
+                    "merchant":          merchant,
+                    "cadence":           cadence_name,
+                    "avg_amount":        round(avg_amount, 2),
+                    "monthly_cost_est":  monthly_cost,
+                    "occurrences":       len(records),
+                    "last_charge":       dates[-1],
+                    "consistent":        gap_variance < tolerance,
+                    "avg_gap_days":      round(avg_gap, 1),
+                })
+                break
+
+    recurring.sort(key=lambda x: x["monthly_cost_est"], reverse=True)
+
+    total_monthly_est = round(sum(r["monthly_cost_est"] for r in recurring), 2)
+    total_annual_est  = round(total_monthly_est * 12, 2)
+
+    by_cadence: dict[str, list] = {}
+    for r in recurring:
+        by_cadence.setdefault(r["cadence"], []).append(r)
+
+    return {
+        "detection_window_days":  120,
+        "recurring_count":        len(recurring),
+        "total_monthly_est":      total_monthly_est,
+        "total_annual_est":       total_annual_est,
+        "by_cadence":             {k: v for k, v in by_cadence.items()},
+        "all_recurring":          recurring,
+        "note": (
+            "Detection looks for merchants with 2+ charges at consistent intervals "
+            "over the last 120 days. Annual subscriptions may not appear if charged "
+            "only once in this window."
+        ),
+    }
+
+
+# ---------------------------------------------------------------------------
+# Net worth breakdown  (by person / liquidity / tax treatment)
+# ---------------------------------------------------------------------------
+
+async def get_net_worth_breakdown(http_session) -> dict:
+    """
+    Break down net worth by three lenses:
+      1. By person   — Drew, Lacey, Joint, or Other
+      2. By liquidity — Liquid (cash/checking/savings), Semi-liquid (brokerage),
+                        Illiquid (real estate, annuities, options/RSU)
+      3. By tax treatment — Taxable, Tax-Deferred (traditional 401k/IRA/annuity),
+                            Tax-Free (Roth, HSA, 529)
+
+    Source: get_accounts (CardSwitcher cards 9 + 1)
+    """
+    accounts_result = await get_accounts(http_session)
+    if "error" in accounts_result:
+        return accounts_result
+
+    net_worth    = accounts_result["net_worth"]
+    total_assets = accounts_result["total_assets"]
+
+    # Flatten all accounts
+    all_accts = []
+    for group in accounts_result.get("account_groups", []):
+        for acct in group["accounts"]:
+            all_accts.append({**acct, "group": group["group"]})
+
+    # ── 1. By person ──────────────────────────────────────────────────────
+    def _person(name: str) -> str:
+        n = (name or "").lower()
+        has_drew  = "drew" in n
+        has_lacey = "lacey" in n
+        has_joint = "joint" in n or "parker" in n  # joint includes kid accounts
+        if has_drew and not has_lacey:
+            return "Drew"
+        if has_lacey and not has_drew:
+            return "Lacey"
+        if has_joint or (has_drew and has_lacey):
+            return "Joint / Family"
+        return "Other"
+
+    by_person: dict[str, float] = {}
+    for a in all_accts:
+        bal = a.get("balance") or 0
+        if bal <= 0:
+            continue
+        p = _person(a["name"])
+        by_person[p] = round(by_person.get(p, 0) + bal, 2)
+
+    # ── 2. By liquidity ───────────────────────────────────────────────────
+    _LIQUID_TYPES = {"CashAsset"}
+    _SEMI_LIQUID_TYPES = {"InvestmentAsset", "TaxFreeRothSavingsAsset",
+                           "TaxFree529SavingsAsset", "TaxFreeHealthSavingsAsset",
+                           "PreTaxSavingsAsset"}
+    _ILLIQUID_TYPES = {"AnnuityAsset", "RealEstateAsset", "OptionPlan",
+                        "OtherAsset", "Mortgage"}
+
+    by_liquidity: dict[str, float] = {"Liquid": 0.0, "Semi-liquid": 0.0, "Illiquid": 0.0}
+    for a in all_accts:
+        bal  = a.get("balance") or 0
+        atyp = a.get("type") or ""
+        if bal <= 0:
+            continue
+        if atyp in _LIQUID_TYPES:
+            by_liquidity["Liquid"] = round(by_liquidity["Liquid"] + bal, 2)
+        elif atyp in _SEMI_LIQUID_TYPES:
+            by_liquidity["Semi-liquid"] = round(by_liquidity["Semi-liquid"] + bal, 2)
+        else:
+            by_liquidity["Illiquid"] = round(by_liquidity["Illiquid"] + bal, 2)
+
+    # ── 3. By tax treatment ───────────────────────────────────────────────
+    _TAX_FREE_TYPES = {"TaxFreeRothSavingsAsset", "TaxFree529SavingsAsset",
+                        "TaxFreeHealthSavingsAsset"}
+    _TAX_DEFERRED_TYPES = {"PreTaxSavingsAsset", "AnnuityAsset"}
+    _TAXABLE_TYPES = {"InvestmentAsset", "CashAsset", "RealEstateAsset",
+                       "OptionPlan", "OtherAsset"}
+
+    by_tax: dict[str, float] = {"Taxable": 0.0, "Tax-Deferred": 0.0, "Tax-Free": 0.0}
+    for a in all_accts:
+        bal  = a.get("balance") or 0
+        atyp = a.get("type") or ""
+        if bal <= 0:
+            continue
+        if atyp in _TAX_FREE_TYPES:
+            by_tax["Tax-Free"] = round(by_tax["Tax-Free"] + bal, 2)
+        elif atyp in _TAX_DEFERRED_TYPES:
+            by_tax["Tax-Deferred"] = round(by_tax["Tax-Deferred"] + bal, 2)
+        else:
+            by_tax["Taxable"] = round(by_tax["Taxable"] + bal, 2)
+
+    def _pct(val):
+        return round(val / total_assets * 100, 1) if total_assets else 0
+
+    return {
+        "net_worth":    net_worth,
+        "total_assets": total_assets,
+        "by_person": [
+            {"person": k, "value": v, "percent": _pct(v)}
+            for k, v in sorted(by_person.items(), key=lambda x: x[1], reverse=True)
+        ],
+        "by_liquidity": [
+            {"bucket": k, "value": v, "percent": _pct(v)}
+            for k, v in by_liquidity.items()
+        ],
+        "by_tax_treatment": [
+            {"bucket": k, "value": v, "percent": _pct(v)}
+            for k, v in sorted(by_tax.items(), key=lambda x: x[1], reverse=True)
+        ],
+        "note": (
+            "Person attribution based on account name keywords (Drew/Lacey/Joint). "
+            "Liabilities (mortgage, credit cards) excluded from asset breakdowns."
+        ),
+    }
+
+
+# ---------------------------------------------------------------------------
+# Financial summary  (executive dashboard — single call)
+# ---------------------------------------------------------------------------
+
+async def get_financial_summary(http_session) -> dict:
+    """
+    Return a compact executive summary of the complete financial picture.
+
+    Combines net worth, portfolio performance, this month's cash flow,
+    top spending categories, and goal status into a single response.
+    Designed as the first tool to call for broad questions like
+    'How are my finances looking?' or 'Give me a financial overview.'
+    """
+    http = await http_session.get_http()
+
+    # ── Net worth + portfolio (Cards 9, 11, 3) ────────────────────────────
+    ts = int(time.time() * 1000)
+    card9  = await _get_card(http, 9)
+    card11 = await _get_card(http, 11)
+    card3  = await _get_card(http, 3)
+    card2  = await _get_card(http, 2)
+
+    net_worth = (card9 or {}).get("NetWorth")
+    assets    = (card9 or {}).get("Assets")
+    liab      = (card9 or {}).get("Liabilities")
+
+    nw_mtd = (card11 or {}).get("ChangeThisMonth") or {}
+    nw_ytd = (card11 or {}).get("ChangeThisYear")  or {}
+
+    inv_vc     = (card3 or {}).get("ValueChange") or {}
+    inv_value  = inv_vc.get("CurrentValue")
+    inv_today  = inv_vc.get("Change")
+    inv_pct    = inv_vc.get("ChangePercent")
+
+    # ── Goals summary ─────────────────────────────────────────────────────
+    goals_raw = (card2 or {}).get("Goals") or []
+    goals_summary = []
+    for g in goals_raw:
+        proj = g.get("Projection") or {}
+        pct  = proj.get("PercentFunded")
+        goals_summary.append({
+            "name":           g.get("Name"),
+            "percent_funded": pct,
+            "on_track":       (pct or 0) >= 100,
+        })
+
+    # ── This month's cash flow (SNB — last 35 days) ───────────────────────
+    txns, snb_ok = await _fetch_snb_data(http_session, days=35)
+    this_month = datetime.now().strftime("%Y-%m")
+
+    month_income   = 0.0
+    month_spending = 0.0
+    cat_totals: dict[str, float] = {}
+
+    if snb_ok:
+        for t in txns:
+            if t["date"][:7] != this_month or t["is_excluded"]:
+                continue
+            if t["is_income"]:
+                month_income = round(month_income + t["amount"], 2)
+            else:
+                month_spending = round(month_spending + t["amount"], 2)
+                cat = t["category"]
+                cat_totals[cat] = round(cat_totals.get(cat, 0) + t["amount"], 2)
+
+    savings_rate = None
+    if month_income > 0:
+        savings_rate = round((month_income - month_spending) / month_income * 100, 1)
+
+    top_cats = sorted(cat_totals.items(), key=lambda x: x[1], reverse=True)[:5]
+
+    return {
+        "as_of": datetime.now().strftime("%Y-%m-%d"),
+        "net_worth": {
+            "current":             net_worth,
+            "total_assets":        assets,
+            "total_liabilities":   liab,
+            "change_this_month":   nw_mtd.get("Change"),
+            "change_this_month_pct": round((nw_mtd.get("ChangePercent") or 0) * 100, 2),
+            "change_this_year":    nw_ytd.get("Change") if nw_ytd else None,
+        },
+        "investment_portfolio": {
+            "current_value":     inv_value,
+            "today_change":      round(inv_today or 0, 2),
+            "today_change_pct":  round((inv_pct or 0) * 100, 2),
+        },
+        "this_month_cash_flow": {
+            "income":           round(month_income, 2),
+            "spending":         round(month_spending, 2),
+            "net":              round(month_income - month_spending, 2),
+            "savings_rate_pct": savings_rate,
+            "top_categories":   [{"category": c, "total": round(v, 2)} for c, v in top_cats],
+        },
+        "goals": goals_summary,
+        "all_goals_on_track": all(g["on_track"] for g in goals_summary) if goals_summary else None,
+    }

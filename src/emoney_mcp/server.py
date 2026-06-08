@@ -172,6 +172,56 @@ async def list_tools() -> list[Tool]:
             },
         ),
         Tool(
+            name="get_financial_summary",
+            description=(
+                "Returns a compact executive dashboard — net worth, portfolio performance, "
+                "this month's income vs. spending, top 5 spending categories, and goal status. "
+                "Best first tool to call for broad questions like 'How are my finances?' or "
+                "'Give me a financial overview.' No parameters required."
+            ),
+            inputSchema={"type": "object", "properties": {}, "required": []},
+        ),
+        Tool(
+            name="search_transactions",
+            description=(
+                "Search spending transactions by keyword, category, or amount. "
+                "Parameters: query (text to match in description), category (e.g. 'Groceries'), "
+                "days (default 365), min_amount, max_amount. "
+                "Useful for 'How much did I spend at Costco this year?' or 'Show me all Amazon charges.'"
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "query":      {"type": "string",  "description": "Text to search in transaction description"},
+                    "category":   {"type": "string",  "description": "Category name to filter by (partial match)"},
+                    "days":       {"type": "integer", "description": "Days back to search (default 365)", "default": 365},
+                    "min_amount": {"type": "number",  "description": "Minimum transaction amount"},
+                    "max_amount": {"type": "number",  "description": "Maximum transaction amount"},
+                },
+                "required": [],
+            },
+        ),
+        Tool(
+            name="get_recurring_charges",
+            description=(
+                "Detects recurring and subscription charges by analyzing transaction patterns "
+                "over the last 120 days. Identifies weekly, biweekly, monthly, and quarterly "
+                "charges and estimates total monthly recurring spend. "
+                "Useful for 'What subscriptions am I paying for?' or 'What are my recurring bills?'"
+            ),
+            inputSchema={"type": "object", "properties": {}, "required": []},
+        ),
+        Tool(
+            name="get_net_worth_breakdown",
+            description=(
+                "Breaks down net worth by three lenses: (1) by person — Drew, Lacey, Joint/Family; "
+                "(2) by liquidity — Liquid, Semi-liquid, Illiquid; "
+                "(3) by tax treatment — Taxable, Tax-Deferred, Tax-Free. "
+                "Useful for 'How much of our wealth is Lacey's?' or 'How much is in tax-advantaged accounts?'"
+            ),
+            inputSchema={"type": "object", "properties": {}, "required": []},
+        ),
+        Tool(
             name="get_spending_trends",
             description=(
                 "Returns month-over-month spending trends by category — which categories "
@@ -283,7 +333,9 @@ async def list_tools() -> list[Tool]:
 async def call_tool(name: str, arguments: dict) -> list[TextContent]:
     importlib.reload(scraper)
 
-    if name == "get_accounts":
+    if name == "get_financial_summary":
+        result = await _get_financial_summary()
+    elif name == "get_accounts":
         result = await _get_accounts()
     elif name == "get_net_worth":
         result = await _get_net_worth()
@@ -312,6 +364,18 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
     elif name == "get_spending":
         months = int(arguments.get("months", 1))
         result = await _get_spending(months=months)
+    elif name == "search_transactions":
+        result = await _search_transactions(
+            query=arguments.get("query", ""),
+            category=arguments.get("category", ""),
+            days=int(arguments.get("days", 365)),
+            min_amount=float(arguments.get("min_amount", 0)),
+            max_amount=float(arguments["max_amount"]) if "max_amount" in arguments else None,
+        )
+    elif name == "get_recurring_charges":
+        result = await _get_recurring_charges()
+    elif name == "get_net_worth_breakdown":
+        result = await _get_net_worth_breakdown()
     elif name == "get_spending_trends":
         months = int(arguments.get("months", 3))
         result = await _get_spending_trends(months=months)
@@ -439,6 +503,43 @@ async def _get_spending(months: int = 1) -> dict:
     if err:
         return err
     return await scraper.get_spending(sess, months=months)
+
+
+async def _get_financial_summary() -> dict:
+    sess, err = await _get_session_or_err()
+    if err:
+        return err
+    return await scraper.get_financial_summary(sess)
+
+
+async def _search_transactions(
+    query: str = "",
+    category: str = "",
+    days: int = 365,
+    min_amount: float = 0.0,
+    max_amount: float | None = None,
+) -> dict:
+    sess, err = await _get_session_or_err()
+    if err:
+        return err
+    return await scraper.search_transactions(
+        sess, query=query, category=category,
+        days=days, min_amount=min_amount, max_amount=max_amount,
+    )
+
+
+async def _get_recurring_charges() -> dict:
+    sess, err = await _get_session_or_err()
+    if err:
+        return err
+    return await scraper.get_recurring_charges(sess)
+
+
+async def _get_net_worth_breakdown() -> dict:
+    sess, err = await _get_session_or_err()
+    if err:
+        return err
+    return await scraper.get_net_worth_breakdown(sess)
 
 
 async def _get_spending_trends(months: int = 3) -> dict:

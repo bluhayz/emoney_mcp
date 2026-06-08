@@ -2,7 +2,7 @@
 
 MCP server for [Emoney Advisor](https://wealth.emaplan.com) — exposes your complete financial picture as tools Claude Desktop can call.
 
-> **Ask Claude:** *"How are my finances looking?"* · *"What subscriptions am I paying for?"* · *"What's my savings rate?"* · *"How much have I spent at Costco this year?"* · *"Am I on track for retirement?"*
+> **Ask Claude:** *"How are my finances looking?"* · *"What subscriptions am I paying for?"* · *"Should I do a Roth conversion this year?"* · *"How long will my money last?"* · *"Am I on track for retirement?"*
 
 ---
 
@@ -94,13 +94,14 @@ Then point Claude Desktop at your local clone:
 
 ---
 
-## Available tools (21 total)
+## Available tools (32 total)
 
 ### 🏠 Overview
 
 | Tool | Description |
 |------|-------------|
 | `get_financial_summary` | **Start here.** Single-call executive dashboard — net worth, portfolio performance, this month's income vs. spending, top 5 categories, and goal status. Best for broad questions like *"How are my finances?"* |
+| `get_financial_health_score` | **0–100 composite score** with A–F letter grade across six dimensions: savings rate, goal funding, debt-to-asset ratio, emergency fund coverage, diversification, and net worth trend. Each component is scored and explained. |
 
 ### 💰 Balance Sheet
 
@@ -128,6 +129,30 @@ Then point Claude Desktop at your local clone:
 |------|-------------|
 | `get_goals` | Financial goals and funding status from Emoney's plan — retirement, education, and spending goals with percent funded |
 
+### 💸 Tax Planning
+
+| Tool | Description |
+|------|-------------|
+| `get_tax_loss_harvesting` | Identifies positions with unrealized losses in **taxable accounts** suitable for harvesting. Excludes IRAs/401ks where harvesting has no immediate benefit. Returns losses sorted by magnitude with estimated tax savings at 15%, 20%, and 23.8% (LTCG + NIIT) rates. |
+| `get_contribution_room` | Shows 2025 IRS annual limits for all tax-advantaged accounts (401k, IRA, HSA, SIMPLE IRA, SEP IRA, 529). Adjusts for catch-up contributions by age including the SECURE 2.0 super catch-up (ages 60–63). Parameters: `age`, `filing_status` |
+| `get_roth_conversion_analysis` | Estimates the federal tax cost and long-term benefit of converting pre-tax dollars to Roth. Shows bracket-by-bracket impact, effective rate on conversion, projected tax-free growth, and whether conversion is tax-favored vs. leaving funds in traditional. Required: `conversion_amount`, `current_income`. Optional: `filing_status`, `age` |
+| `get_capital_gains_exposure` | Identifies embedded unrealized gains in taxable accounts and estimates the tax bill if positions were sold today. Applies LTCG rates and NIIT based on income. Optional: `filing_status`, `annual_income` |
+| `get_rmd_estimate` | Estimates Required Minimum Distributions from pre-tax retirement accounts using the IRS Uniform Lifetime Table. RMDs begin at age 73 (SECURE 2.0). Returns current-year RMD and a 10-year projected schedule. Required: `birth_year` |
+
+### 🏖️ Retirement Planning
+
+| Tool | Description |
+|------|-------------|
+| `get_retirement_runway` | Models how many years the current portfolio can sustain withdrawals under conservative (4%), base (6%), and optimistic (8%) return scenarios. Also shows sustainable withdrawal amounts at 3.5%, 4%, and 4.5% SWR. Optional: `annual_spending`, `return_rate` |
+| `get_withdrawal_rate_analysis` | Projects portfolio to your Emoney retirement goal date, then shows annual and monthly income at 3%–5% withdrawal rates with estimated years funded. Uses retirement start/end year from Emoney goals. |
+
+### ⚖️ Portfolio Analysis
+
+| Tool | Description |
+|------|-------------|
+| `get_asset_location_efficiency` | Grades how well assets are positioned for tax efficiency across account types. Tax-inefficient assets (bonds, REITs, TIPS) should be in tax-deferred/free accounts; tax-efficient assets (index funds) can be in taxable. Returns A–F letter grade, per-position ratings, and specific swap suggestions. |
+| `get_rebalancing_targets` | Computes exact dollar amounts to buy/sell to reach a target allocation. Classifies holdings into equity, bond, and cash buckets and shows drift from target. Parameters: `target_equity_pct` (default 60), `target_bond_pct` (default 30), `target_cash_pct` (default 10) |
+
 ### 💳 Cash Flow & Spending
 
 | Tool | Description |
@@ -147,46 +172,18 @@ Then point Claude Desktop at your local clone:
 | `sync_chrome_session` | Pull active Emoney session from a running Chrome browser (no re-login if already logged in) |
 | `reset_session` | Clear saved session and force a fresh login on next call |
 | `get_version` | Returns installed version, cookie file path, and session status — useful for debugging |
-
----
-
-## Merchant normalization
-
-All spending tools normalize raw bank descriptions before grouping, so visits to the same merchant at different locations are counted together:
-
-| Raw description | Normalized |
-|----------------|------------|
-| `APLPAY FOOD LION VA` | `FOOD LION` |
-| `COSTCO WHSE PHOENIX US` | `COSTCO WHSE` |
-| `COSTCO WHSE TUCSON AZ` | `COSTCO WHSE` ← grouped |
-| `UNITED AIRLINES HOUSTON TX` | `UNITED AIRLINES` |
-| `TST AUSTIN GRILL VA` | `AUSTIN GRILL` |
-| `SQ *BLUE BOTTLE COFFEE` | `BLUE BOTTLE COFFEE` |
-
-**Stripped:** payment-network prefixes (`APLPAY`, `SQ *`, `TST`, `PP *`), trailing state abbreviations, city names, country suffixes, ZIP codes, store numbers.
-
-**Protected words** (`MARKET`, `TIMES`, `GRILL`, `STORE`, etc.) are never stripped — preventing false positives like `WHOLE FOODS MARKET` → `WHOLE FOODS`.
-
----
-
-## First-time login flow
-
-1. Ask Claude anything — e.g. *"What's my net worth?"*
-2. A Chrome window opens — log in: username → password → SMS verification code.
-3. Once the Emoney home page loads, the session is automatically saved to `~/.emoney_mcp/session.json`.
-4. Call your tool again — it works instantly.
-5. Subsequent calls work without re-login until the session expires (typically a few hours).
-
-**Tip:** Use `sync_chrome_session` if you are already logged in to Emoney in Chrome — it imports your cookies without opening a new window.
+| `explore_emoney_cards` | Probes unexplored Emoney CardSwitcher endpoints (cards 5, 6, 7, 10, 12, 14–16) to discover additional data (insurance, tax projection, estate, etc.). Optional: `card_ids` list |
 
 ---
 
 ## Example questions to ask Claude
 
-### Overview
+### Overview & Health
 ```
 How are my finances looking?
 Give me a complete financial summary.
+What's my financial health score?
+What should I focus on improving financially?
 ```
 
 ### Net Worth & Wealth
@@ -198,20 +195,38 @@ How much of my assets are liquid vs. illiquid?
 How much do I have in tax-free vs. tax-deferred accounts?
 ```
 
+### Tax Planning
+```
+Where can I harvest tax losses this year?
+What are my tax-loss harvesting opportunities?
+What would it cost to convert $150,000 to Roth this year?
+Should I do a Roth conversion given my income?
+What's my capital gains tax exposure if I sell my concentrated positions?
+How much can I still contribute to my IRA and HSA this year?
+When do I have to start taking RMDs, and how much will they be?
+```
+
+### Retirement Planning
+```
+Can I afford to retire now?
+How long will my money last at different withdrawal rates?
+What does a 4% withdrawal rate give me each month?
+Am I on track for retirement?
+How funded is my child's 529 education account?
+```
+
 ### Investments
 ```
 What are my biggest investment holdings?
 How is my portfolio performing this month?
+Are my assets in the right accounts for tax efficiency?
+Which positions are in the wrong account types?
+How do I rebalance to a 60/40 allocation?
+How much do I need to buy or sell to rebalance?
 How concentrated am I in any single stock?
 What are my realized capital gains this year?
 Show me all my buy and sell transactions in the last 90 days.
 How much do I have in retirement accounts?
-```
-
-### Goals & Planning
-```
-Am I on track for retirement?
-How funded is my child's 529 education account?
 ```
 
 ### Spending & Cash Flow
@@ -242,14 +257,57 @@ What is my total monthly recurring spend?
 
 ---
 
+## Merchant normalization
+
+All spending tools normalize raw bank descriptions before grouping, so visits to the same merchant at different locations are counted together:
+
+| Raw description | Normalized |
+|----------------|------------|
+| `APLPAY FOOD LION VA` | `FOOD LION` |
+| `COSTCO WHSE PHOENIX US` | `COSTCO WHSE` |
+| `COSTCO WHSE TUCSON AZ` | `COSTCO WHSE` ← grouped |
+| `UNITED AIRLINES HOUSTON TX` | `UNITED AIRLINES` |
+| `TST AUSTIN GRILL VA` | `AUSTIN GRILL` |
+| `SQ *BLUE BOTTLE COFFEE` | `BLUE BOTTLE COFFEE` |
+
+**Stripped:** payment-network prefixes (`APLPAY`, `SQ *`, `TST`, `PP *`), trailing state abbreviations, city names, country suffixes, ZIP codes, store numbers.
+
+**Protected words** (`MARKET`, `TIMES`, `GRILL`, `STORE`, etc.) are never stripped — preventing false positives like `WHOLE FOODS MARKET` → `WHOLE FOODS`.
+
+---
+
+## Tax planning notes
+
+Tax calculations use **2025 IRS figures** (brackets, contribution limits, LTCG thresholds). All estimates assume federal tax only and do not include state income tax. Always consult a qualified tax professional before making tax decisions.
+
+Key assumptions:
+- LTCG rates: 0% / 15% / 20% based on taxable income
+- NIIT (3.8%) applies above $200k single / $250k MFJ
+- RMD start age: 73 (SECURE 2.0)
+- Roth conversion analysis uses standard deduction; itemizers should adjust current_income to taxable income
+
+---
+
+## First-time login flow
+
+1. Ask Claude anything — e.g. *"What's my net worth?"*
+2. A Chrome window opens — log in: username → password → SMS verification code.
+3. Once the Emoney home page loads, the session is automatically saved to `~/.emoney_mcp/session.json`.
+4. Call your tool again — it works instantly.
+5. Subsequent calls work without re-login until the session expires (typically a few hours).
+
+**Tip:** Use `sync_chrome_session` if you are already logged in to Emoney in Chrome — it imports your cookies without opening a new window.
+
+---
+
 ## Architecture
 
 ```
 Claude Desktop
      │  MCP stdio
      ▼
-emoney_mcp/server.py       ← tool registration + dispatch (21 tools)
-emoney_mcp/scraper.py      ← Emoney internal API calls (hot-reloaded)
+emoney_mcp/server.py       ← tool registration + dispatch (32 tools)
+emoney_mcp/scraper.py      ← Emoney internal API calls + tax/planning calculations (hot-reloaded)
 emoney_mcp/browser.py      ← session management + nodriver login
      │
      ├── curl_cffi AsyncSession  ← Chrome TLS fingerprint for API calls
@@ -261,6 +319,7 @@ emoney_mcp/browser.py      ← session management + nodriver login
 - `importlib.reload(scraper)` on every tool call enables hot-reload — edit `scraper.py` and changes take effect immediately without restarting Claude Desktop
 - Session cookies are persisted to `~/.emoney_mcp/session.json` — a stable path that works whether running via `uvx`, PyPI, or local clone
 - The SNB API JWT token is extracted from the Spending page HTML on each call — no separate auth flow required
+- Tax and planning calculations are pure Python — no external API calls, using hardcoded 2025 IRS tables
 
 ---
 
@@ -338,3 +397,16 @@ Delete the file to force a fresh login.
 | `pycryptodomex` | AES-GCM decryption for Chrome cookie extraction |
 | `beautifulsoup4` | HTML parsing (fallback) |
 | `python-dotenv` | Environment variable support |
+
+## Changelog
+
+### 0.2.0
+- Added 11 new tools for tax planning, retirement planning, and portfolio analysis
+- **Tax planning:** `get_tax_loss_harvesting`, `get_contribution_room`, `get_roth_conversion_analysis`, `get_capital_gains_exposure`, `get_rmd_estimate`
+- **Retirement planning:** `get_retirement_runway`, `get_withdrawal_rate_analysis`
+- **Portfolio analysis:** `get_asset_location_efficiency`, `get_rebalancing_targets`, `get_financial_health_score`
+- **Discovery:** `explore_emoney_cards` to probe unexplored Emoney endpoints
+- IRS 2025 tax brackets, LTCG thresholds, contribution limits, and RMD Uniform Lifetime Table built in
+
+### 0.1.5 and earlier
+- Initial release with 21 tools covering net worth, holdings, spending, income, goals, and session management

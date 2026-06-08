@@ -302,6 +302,193 @@ async def list_tools() -> list[Tool]:
                 "required": [],
             },
         ),
+        # ── Tax planning ──────────────────────────────────────────────────
+        Tool(
+            name="get_tax_loss_harvesting",
+            description=(
+                "Identifies investment positions with unrealized losses in taxable accounts "
+                "that are candidates for tax-loss harvesting. Cross-references account type so "
+                "only losses in taxable brokerage accounts (not IRAs or 401ks) are flagged as "
+                "harvestable. Returns positions sorted by loss size plus estimated tax savings "
+                "at 15%, 20%, and 23.8% LTCG+NIIT rates. "
+                "Useful for 'Where can I harvest losses?' or 'What's my tax-loss harvesting opportunity?'"
+            ),
+            inputSchema={"type": "object", "properties": {}, "required": []},
+        ),
+        Tool(
+            name="get_contribution_room",
+            description=(
+                "Shows 2025 IRS annual contribution limits for all tax-advantaged accounts "
+                "(401k, IRA, HSA, SIMPLE IRA, SEP IRA, 529) alongside your current balances. "
+                "Adjusts for catch-up contributions based on age. "
+                "Parameters: age (integer, optional), filing_status ('single', 'mfj', 'hoh', default 'mfj'). "
+                "Useful for 'How much can I still contribute to my IRA this year?' or "
+                "'Am I maxing out my HSA?'"
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "age":          {"type": "integer", "description": "Your age (determines catch-up eligibility)"},
+                    "filing_status": {"type": "string",  "description": "'single', 'mfj', or 'hoh' (default 'mfj')"},
+                },
+                "required": [],
+            },
+        ),
+        Tool(
+            name="get_roth_conversion_analysis",
+            description=(
+                "Estimates the federal tax cost and long-term benefit of converting a specified "
+                "dollar amount from pre-tax (traditional IRA/401k) to Roth this year. "
+                "Shows bracket-by-bracket tax impact, effective rate on the conversion, "
+                "projected tax-free growth, and whether the conversion is tax-favored given "
+                "your current vs. expected future marginal rate. "
+                "Required parameters: conversion_amount (dollars), current_income (annual gross income). "
+                "Optional: filing_status ('mfj', 'single', 'hoh'), age. "
+                "Useful for 'Should I do a Roth conversion?' or 'What does it cost to convert $100k to Roth?'"
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "conversion_amount": {"type": "number",  "description": "Dollar amount to convert to Roth"},
+                    "current_income":    {"type": "number",  "description": "Annual gross income before conversion (wages, RMDs, SS, etc.)"},
+                    "filing_status":     {"type": "string",  "description": "'single', 'mfj', or 'hoh' (default 'mfj')"},
+                    "age":               {"type": "integer", "description": "Your age (optional, used for context)"},
+                },
+                "required": ["conversion_amount", "current_income"],
+            },
+        ),
+        Tool(
+            name="get_capital_gains_exposure",
+            description=(
+                "Identifies all investment positions with large unrealized gains in taxable accounts "
+                "and estimates the federal tax liability if those positions were sold today. "
+                "Distinguishes taxable vs. tax-deferred/free accounts, applies LTCG rates and NIIT "
+                "based on income level. "
+                "Parameters: filing_status ('mfj', 'single', 'hoh'), annual_income (optional — inferred from transactions if omitted). "
+                "Useful for 'What's my capital gains tax exposure?' or 'Which positions would trigger the biggest tax bill if sold?'"
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "filing_status": {"type": "string", "description": "'single', 'mfj', or 'hoh' (default 'mfj')"},
+                    "annual_income": {"type": "number", "description": "Annual income override (inferred from transactions if omitted)"},
+                },
+                "required": [],
+            },
+        ),
+        Tool(
+            name="get_rmd_estimate",
+            description=(
+                "Estimates Required Minimum Distributions (RMDs) from pre-tax retirement accounts "
+                "(traditional IRA, 401k) using the IRS Uniform Lifetime Table. "
+                "RMDs start at age 73 under SECURE 2.0. Returns current-year RMD (if applicable) "
+                "and a 10-year projected RMD schedule with estimated account balances. "
+                "Required parameter: birth_year (e.g. 1955). "
+                "Useful for 'When do I have to start taking RMDs?' or 'How much will my RMD be at 75?'"
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "birth_year": {"type": "integer", "description": "Your year of birth (e.g. 1955)"},
+                },
+                "required": ["birth_year"],
+            },
+        ),
+        # ── Retirement planning ───────────────────────────────────────────
+        Tool(
+            name="get_retirement_runway",
+            description=(
+                "Models how many years the current portfolio can sustain withdrawals under "
+                "conservative (4%), base (6%), and optimistic (8%) return scenarios. "
+                "Also shows sustainable withdrawal amounts at 3.5%, 4%, and 4.5% SWR. "
+                "If annual_spending is not provided, uses actual 12-month spending from linked accounts. "
+                "Parameters: annual_spending (optional dollars), return_rate (optional, default 0.06). "
+                "Useful for 'Can I afford to retire now?' or 'How long will my money last?'"
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "annual_spending": {"type": "number", "description": "Annual spending override in dollars (default: actual 12-month spend)"},
+                    "return_rate":     {"type": "number", "description": "Base-case annual return assumption (default 0.06)"},
+                },
+                "required": [],
+            },
+        ),
+        Tool(
+            name="get_withdrawal_rate_analysis",
+            description=(
+                "Analyzes safe withdrawal rates in the context of your Emoney retirement goal. "
+                "Projects portfolio value to retirement start year, then shows annual and monthly "
+                "income at 3%, 3.5%, 4%, 4.5%, and 5% withdrawal rates with estimated years funded. "
+                "No parameters required — uses retirement goal start/end year from Emoney. "
+                "Useful for 'How much can I spend in retirement?' or 'What does a 4% withdrawal rate give me?'"
+            ),
+            inputSchema={"type": "object", "properties": {}, "required": []},
+        ),
+        # ── Portfolio analysis ─────────────────────────────────────────────
+        Tool(
+            name="get_asset_location_efficiency",
+            description=(
+                "Grades how well assets are positioned across account types for tax efficiency. "
+                "Tax-inefficient assets (bonds, REITs, TIPS) should be in tax-deferred/free accounts; "
+                "tax-efficient assets (index funds, growth stocks) can be in taxable accounts. "
+                "Returns an A-F letter grade, per-position ratings, and specific swap suggestions. "
+                "Useful for 'Are my assets in the right accounts?' or 'How tax-efficient is my portfolio?'"
+            ),
+            inputSchema={"type": "object", "properties": {}, "required": []},
+        ),
+        Tool(
+            name="get_rebalancing_targets",
+            description=(
+                "Computes the exact dollar amounts to buy and sell in each asset class to reach "
+                "a target allocation. Classifies current holdings into equity, bond, and cash buckets "
+                "and shows the drift from target. "
+                "Parameters: target_equity_pct (default 60), target_bond_pct (default 30), "
+                "target_cash_pct (default 10). "
+                "Useful for 'How do I rebalance to 60/40?' or 'How far off target is my portfolio?'"
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "target_equity_pct": {"type": "number", "description": "Target equity percentage (default 60)"},
+                    "target_bond_pct":   {"type": "number", "description": "Target bond percentage (default 30)"},
+                    "target_cash_pct":   {"type": "number", "description": "Target cash percentage (default 10)"},
+                },
+                "required": [],
+            },
+        ),
+        Tool(
+            name="get_financial_health_score",
+            description=(
+                "Returns a 0-100 composite financial health score with an A-F letter grade. "
+                "Combines six dimensions: savings rate (25%), goal funding (25%), debt-to-asset ratio (20%), "
+                "emergency fund coverage (15%), portfolio diversification (10%), and net worth trend (5%). "
+                "Each component is scored and explained. "
+                "Useful for 'How healthy are my finances overall?' or 'What should I focus on improving?'"
+            ),
+            inputSchema={"type": "object", "properties": {}, "required": []},
+        ),
+        Tool(
+            name="explore_emoney_cards",
+            description=(
+                "Probes unexplored Emoney CardSwitcher endpoints (cards 5, 6, 7, 10, 12, 14–16) "
+                "to discover what additional data is available (insurance, tax projection, estate, etc.). "
+                "Returns the full payload of any available cards. "
+                "Optional parameter: card_ids (list of integers to probe). "
+                "Useful for 'What other Emoney data can we access?' or debugging new endpoints."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "card_ids": {
+                        "type": "array",
+                        "items": {"type": "integer"},
+                        "description": "Card IDs to probe (default: [5,6,7,10,12,14,15,16])",
+                    },
+                },
+                "required": [],
+            },
+        ),
         # ── Debug ─────────────────────────────────────────────────────────
         Tool(
             name="get_version",
@@ -394,6 +581,55 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
         result = await _sync_chrome_session()
     elif name == "reset_session":
         result = await _reset()
+    # ── Tax planning ──────────────────────────────────────────────────────
+    elif name == "get_tax_loss_harvesting":
+        result = await _get_tax_loss_harvesting()
+    elif name == "get_contribution_room":
+        age = arguments.get("age")
+        if age is not None:
+            age = int(age)
+        result = await _get_contribution_room(
+            age=age,
+            filing_status=arguments.get("filing_status", "mfj"),
+        )
+    elif name == "get_roth_conversion_analysis":
+        result = await _get_roth_conversion_analysis(
+            conversion_amount=float(arguments["conversion_amount"]),
+            current_income=float(arguments["current_income"]),
+            filing_status=arguments.get("filing_status", "mfj"),
+            age=int(arguments["age"]) if "age" in arguments else None,
+        )
+    elif name == "get_capital_gains_exposure":
+        result = await _get_capital_gains_exposure(
+            filing_status=arguments.get("filing_status", "mfj"),
+            annual_income=float(arguments["annual_income"]) if "annual_income" in arguments else None,
+        )
+    elif name == "get_rmd_estimate":
+        result = await _get_rmd_estimate(birth_year=int(arguments["birth_year"]))
+    # ── Retirement planning ───────────────────────────────────────────────
+    elif name == "get_retirement_runway":
+        result = await _get_retirement_runway(
+            annual_spending=float(arguments["annual_spending"]) if "annual_spending" in arguments else None,
+            return_rate=float(arguments.get("return_rate", 0.06)),
+        )
+    elif name == "get_withdrawal_rate_analysis":
+        result = await _get_withdrawal_rate_analysis()
+    # ── Portfolio analysis ────────────────────────────────────────────────
+    elif name == "get_asset_location_efficiency":
+        result = await _get_asset_location_efficiency()
+    elif name == "get_rebalancing_targets":
+        result = await _get_rebalancing_targets(
+            target_equity_pct=float(arguments.get("target_equity_pct", 60)),
+            target_bond_pct=float(arguments.get("target_bond_pct", 30)),
+            target_cash_pct=float(arguments.get("target_cash_pct", 10)),
+        )
+    elif name == "get_financial_health_score":
+        result = await _get_financial_health_score()
+    elif name == "explore_emoney_cards":
+        card_ids = arguments.get("card_ids")
+        if card_ids is not None:
+            card_ids = [int(c) for c in card_ids]
+        result = await _explore_emoney_cards(card_ids=card_ids)
     else:
         raise ValueError(f"Unknown tool: {name}")
 
@@ -626,6 +862,119 @@ async def _reset() -> dict:
         return {"success": True, "message": "Session cleared. Call get_accounts to log in again."}
     except Exception as e:
         return {"error": str(e)}
+
+
+# ── Tax planning ───────────────────────────────────────────────────────────
+
+async def _get_tax_loss_harvesting() -> dict:
+    sess, err = await _get_session_or_err()
+    if err:
+        return err
+    return await scraper.get_tax_loss_harvesting(sess)
+
+
+async def _get_contribution_room(age: int | None = None, filing_status: str = "mfj") -> dict:
+    sess, err = await _get_session_or_err()
+    if err:
+        return err
+    return await scraper.get_contribution_room(sess, age=age, filing_status=filing_status)
+
+
+async def _get_roth_conversion_analysis(
+    conversion_amount: float,
+    current_income: float,
+    filing_status: str = "mfj",
+    age: int | None = None,
+) -> dict:
+    sess, err = await _get_session_or_err()
+    if err:
+        return err
+    return await scraper.get_roth_conversion_analysis(
+        sess,
+        conversion_amount=conversion_amount,
+        current_income=current_income,
+        filing_status=filing_status,
+        age=age,
+    )
+
+
+async def _get_capital_gains_exposure(
+    filing_status: str = "mfj",
+    annual_income: float | None = None,
+) -> dict:
+    sess, err = await _get_session_or_err()
+    if err:
+        return err
+    return await scraper.get_capital_gains_exposure(
+        sess, filing_status=filing_status, annual_income=annual_income
+    )
+
+
+async def _get_rmd_estimate(birth_year: int) -> dict:
+    sess, err = await _get_session_or_err()
+    if err:
+        return err
+    return await scraper.get_rmd_estimate(sess, birth_year=birth_year)
+
+
+# ── Retirement planning ────────────────────────────────────────────────────
+
+async def _get_retirement_runway(
+    annual_spending: float | None = None,
+    return_rate: float = 0.06,
+) -> dict:
+    sess, err = await _get_session_or_err()
+    if err:
+        return err
+    return await scraper.get_retirement_runway(
+        sess, annual_spending=annual_spending, return_rate=return_rate
+    )
+
+
+async def _get_withdrawal_rate_analysis() -> dict:
+    sess, err = await _get_session_or_err()
+    if err:
+        return err
+    return await scraper.get_withdrawal_rate_analysis(sess)
+
+
+# ── Portfolio analysis ─────────────────────────────────────────────────────
+
+async def _get_asset_location_efficiency() -> dict:
+    sess, err = await _get_session_or_err()
+    if err:
+        return err
+    return await scraper.get_asset_location_efficiency(sess)
+
+
+async def _get_rebalancing_targets(
+    target_equity_pct: float = 60.0,
+    target_bond_pct:   float = 30.0,
+    target_cash_pct:   float = 10.0,
+) -> dict:
+    sess, err = await _get_session_or_err()
+    if err:
+        return err
+    return await scraper.get_rebalancing_targets(
+        sess,
+        target_equity_pct=target_equity_pct,
+        target_bond_pct=target_bond_pct,
+        target_cash_pct=target_cash_pct,
+    )
+
+
+async def _get_financial_health_score() -> dict:
+    sess, err = await _get_session_or_err()
+    if err:
+        return err
+    return await scraper.get_financial_health_score(sess)
+
+
+async def _explore_emoney_cards(card_ids: list[int] | None = None) -> dict:
+    sess, err = await _get_session_or_err()
+    if err:
+        return err
+    return await scraper.explore_emoney_cards(sess, card_ids=card_ids)
 
 
 async def main() -> None:

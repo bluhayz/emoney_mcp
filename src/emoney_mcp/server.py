@@ -172,6 +172,66 @@ async def list_tools() -> list[Tool]:
             },
         ),
         Tool(
+            name="get_spending_trends",
+            description=(
+                "Returns month-over-month spending trends by category — which categories "
+                "are going up, down, or stable, plus monthly income vs. spending summary. "
+                "Optional parameter: months (default 3, max 12). "
+                "Useful for 'Is my dining spending going up?' or 'Compare my last 3 months of spending.'"
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "months": {
+                        "type": "integer",
+                        "description": "Number of months to compare (default 3, max 12)",
+                        "default": 3,
+                    }
+                },
+                "required": [],
+            },
+        ),
+        Tool(
+            name="get_income_summary",
+            description=(
+                "Returns income sources and monthly income trend for the last N days. "
+                "Identifies paychecks, direct deposits, dividends, and interest income "
+                "grouped by source. Optional parameter: days (default 90, max 365). "
+                "Useful for 'How much did I earn last month?' or 'What are my income sources?'"
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "days": {
+                        "type": "integer",
+                        "description": "Number of days back to include (default 90, max 365)",
+                        "default": 90,
+                    }
+                },
+                "required": [],
+            },
+        ),
+        Tool(
+            name="get_savings_rate",
+            description=(
+                "Returns month-by-month savings rate — income minus spending divided by income. "
+                "Shows how much of your income you are actually saving each month. "
+                "Optional parameter: months (default 6, max 12). "
+                "Useful for 'What is my savings rate?' or 'Am I saving more or less than last month?'"
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "months": {
+                        "type": "integer",
+                        "description": "Number of months to include (default 6, max 12)",
+                        "default": 6,
+                    }
+                },
+                "required": [],
+            },
+        ),
+        Tool(
             name="get_spending_transactions",
             description=(
                 "Returns bank and credit card transactions with category labels (Groceries, Dining, "
@@ -252,6 +312,15 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
     elif name == "get_spending":
         months = int(arguments.get("months", 1))
         result = await _get_spending(months=months)
+    elif name == "get_spending_trends":
+        months = int(arguments.get("months", 3))
+        result = await _get_spending_trends(months=months)
+    elif name == "get_income_summary":
+        days = int(arguments.get("days", 90))
+        result = await _get_income_summary(days=days)
+    elif name == "get_savings_rate":
+        months = int(arguments.get("months", 6))
+        result = await _get_savings_rate(months=months)
     elif name == "get_spending_transactions":
         days = int(arguments.get("days", 30))
         result = await _get_spending_transactions(days=days)
@@ -370,6 +439,27 @@ async def _get_spending(months: int = 1) -> dict:
     if err:
         return err
     return await scraper.get_spending(sess, months=months)
+
+
+async def _get_spending_trends(months: int = 3) -> dict:
+    sess, err = await _get_session_or_err()
+    if err:
+        return err
+    return await scraper.get_spending_trends(sess, months=months)
+
+
+async def _get_income_summary(days: int = 90) -> dict:
+    sess, err = await _get_session_or_err()
+    if err:
+        return err
+    return await scraper.get_income_summary(sess, days=days)
+
+
+async def _get_savings_rate(months: int = 6) -> dict:
+    sess, err = await _get_session_or_err()
+    if err:
+        return err
+    return await scraper.get_savings_rate(sess, months=months)
 
 
 async def _get_spending_transactions(days: int = 30) -> dict:

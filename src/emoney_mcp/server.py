@@ -822,7 +822,7 @@ async def _get_spending_transactions(days: int = 30) -> dict:
 
 def _get_features() -> dict:
     return {
-        "version": "0.3.0",
+        "version": "0.4.0",
         "total_tools": 30,
         "categories": {
             "Overview & Dashboard": {

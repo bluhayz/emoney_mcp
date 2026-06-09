@@ -581,3 +581,128 @@ async def get_rmd_estimate(http_session, birth_year: int) -> dict:
         ),
         "caveat": _IRS_CAVEAT,
     }
+
+
+# ---------------------------------------------------------------------------
+# get_tax_bracket_headroom  (Sprint 2)
+# ---------------------------------------------------------------------------
+
+async def get_tax_bracket_headroom(
+    http_session,
+    current_income: float | None = None,
+    filing_status: str = "mfj",
+) -> dict:
+    """
+    Show how much additional income can be earned before crossing into the
+    next federal tax bracket.
+
+    If ``current_income`` is not supplied, it is inferred from 12 months of
+    SNB transaction data (income categories only).
+
+    This is especially useful for:
+      • Sizing a Roth conversion without crossing a bracket
+      • Deciding whether to accelerate freelance income into this year
+      • Timing a large capital gain realisation
+      • Estimating how much bonus income can be taken tax-efficiently
+
+    Parameters
+    ----------
+    current_income : estimated gross annual income in dollars
+                     (default: inferred from 12-month transaction history)
+    filing_status  : 'single', 'mfj' (married filing jointly), or 'hoh'
+    """
+    fs = filing_status if filing_status in _BRACKETS else "mfj"
+    std_ded = _STD_DEDUCTION.get(fs, 30_000)
+
+    # Infer income from transactions if not supplied
+    inferred = False
+    if current_income is None:
+        inc_result = await get_income_summary(http_session, days=365)
+        if "error" not in inc_result:
+            current_income = inc_result.get("total_income", 0)
+            inferred = True
+        else:
+            current_income = 0.0
+
+    taxable_income = max(0.0, current_income - std_ded)
+
+    # Find the current bracket and the headroom to the next bracket ceiling
+    brackets = _BRACKETS[fs]
+    current_bracket_rate = None
+    next_bracket_rate    = None
+    headroom_to_next     = None
+    dollars_into_bracket = None
+    bracket_ceiling      = None
+    prev_ceiling         = 0.0
+
+    for i, (ceiling, rate) in enumerate(brackets):
+        if taxable_income <= ceiling:
+            current_bracket_rate  = rate
+            bracket_ceiling       = ceiling
+            dollars_into_bracket  = round(taxable_income - prev_ceiling, 2)
+            if ceiling < float("inf"):
+                headroom_to_next  = round(ceiling - taxable_income, 2)
+                if i + 1 < len(brackets):
+                    next_bracket_rate = brackets[i + 1][1]
+            else:
+                headroom_to_next  = None   # already in top bracket
+                next_bracket_rate = None
+            break
+        prev_ceiling = ceiling
+
+    # Show full bracket ladder with position indicator
+    bracket_ladder = []
+    prev = 0.0
+    for ceiling, rate in brackets:
+        bracket_ladder.append({
+            "bracket_floor":  prev,
+            "bracket_ceiling": ceiling if ceiling < float("inf") else None,
+            "rate_pct":        int(rate * 100),
+            "current":         current_bracket_rate == rate and taxable_income > prev,
+        })
+        prev = ceiling
+
+    # LTCG bracket headroom (bonus insight — useful for harvest/conversion planning)
+    ltcg_current_rate    = _ltcg_rate(taxable_income, fs)
+    ltcg_brackets        = _LTCG_THRESHOLDS[fs]
+    ltcg_headroom        = None
+    ltcg_next_rate       = None
+    ltcg_prev            = 0.0
+    for ceiling, rate in ltcg_brackets:
+        if taxable_income <= ceiling:
+            if ceiling < float("inf"):
+                ltcg_headroom  = round(ceiling - taxable_income, 2)
+                idx = ltcg_brackets.index((ceiling, rate))
+                if idx + 1 < len(ltcg_brackets):
+                    ltcg_next_rate = ltcg_brackets[idx + 1][1]
+            break
+        ltcg_prev = ceiling
+
+    return {
+        "filing_status":             fs,
+        "estimated_annual_income":   round(current_income, 2),
+        "income_inferred":           inferred,
+        "standard_deduction":        std_ded,
+        "taxable_income":            round(taxable_income, 2),
+        "current_bracket_rate_pct":  int((current_bracket_rate or 0) * 100),
+        "dollars_into_current_bracket": dollars_into_bracket,
+        "headroom_to_next_bracket":  headroom_to_next,
+        "next_bracket_rate_pct":     int((next_bracket_rate or 0) * 100) if next_bracket_rate else None,
+        "already_in_top_bracket":    headroom_to_next is None and current_bracket_rate is not None,
+        "ltcg": {
+            "current_ltcg_rate_pct":     int(ltcg_current_rate * 100),
+            "headroom_to_next_ltcg_bracket": ltcg_headroom,
+            "next_ltcg_rate_pct":        int((ltcg_next_rate or 0) * 100) if ltcg_next_rate else None,
+        },
+        "bracket_ladder":            bracket_ladder,
+        "tax_year":                  _TAX_YEAR,
+        "practical_uses": [
+            f"You can earn ${headroom_to_next:,.0f} more before crossing into the "
+            f"{int((next_bracket_rate or 0)*100)}% bracket."
+            if headroom_to_next and next_bracket_rate else
+            "You are already in the top bracket.",
+            "Roth conversions, capital gain realisations, or freelance income "
+            "within this headroom incur no additional bracket penalty.",
+        ],
+        "caveat": _IRS_CAVEAT,
+    }

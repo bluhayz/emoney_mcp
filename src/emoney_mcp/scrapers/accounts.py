@@ -282,6 +282,183 @@ async def get_net_worth_breakdown(http_session) -> dict:
     }
 
 
+async def get_debt_payoff_plan(
+    http_session,
+    extra_monthly_payment: float = 0.0,
+    assumed_credit_card_apr: float = 0.22,
+    assumed_loan_apr: float = 0.07,
+) -> dict:
+    """
+    Model debt payoff using the avalanche (highest rate first) and snowball
+    (smallest balance first) strategies.
+
+    Emoney does not expose interest rates on debt accounts, so APRs are
+    assumed by account type:
+      • Accounts with 'credit', 'card', or 'visa/mc/amex/discover' in the
+        name → ``assumed_credit_card_apr``
+      • All other debt accounts (mortgages, loans) → ``assumed_loan_apr``
+
+    Mortgages (keywords: 'mortgage', 'home loan') are included in the
+    summary but excluded from the payoff plan because accelerating a
+    low-rate mortgage is rarely optimal vs. investing.
+
+    Parameters
+    ----------
+    extra_monthly_payment    : additional payment above minimums each month
+    assumed_credit_card_apr  : default APR for credit cards (default 22%)
+    assumed_loan_apr         : default APR for other loans (default 7%)
+    """
+    import math
+
+    result = await get_accounts(http_session)
+    if "error" in result:
+        return result
+
+    # Identify debt accounts (negative balance)
+    _MORTGAGE_KEYWORDS = {"mortgage", "home loan", "heloc"}
+    _CC_KEYWORDS       = {"credit", "card", "visa", "mastercard", "mc", "amex",
+                          "discover", "citi", "chase", "capital one"}
+
+    all_debts    = []
+    mortgages    = []
+
+    for grp in result.get("account_groups", []):
+        for a in grp.get("accounts", []):
+            bal = a.get("balance") or 0
+            if bal >= 0:
+                continue  # not a debt
+            name_lower = (a.get("name") or "").lower()
+
+            if any(kw in name_lower for kw in _MORTGAGE_KEYWORDS):
+                mortgages.append({
+                    "name":    a.get("name"),
+                    "balance": round(abs(bal), 2),
+                    "type":    "mortgage",
+                })
+                continue
+
+            is_cc = any(kw in name_lower for kw in _CC_KEYWORDS)
+            apr   = assumed_credit_card_apr if is_cc else assumed_loan_apr
+            debt_type = "credit_card" if is_cc else "loan"
+
+            # Standard minimum payment: 2% of balance for CC, $50 floor for loans
+            min_payment = round(max(abs(bal) * 0.02, 25), 2) if is_cc else round(max(abs(bal) * 0.01, 50), 2)
+
+            all_debts.append({
+                "name":           a.get("name"),
+                "balance":        round(abs(bal), 2),
+                "type":           debt_type,
+                "assumed_apr":    apr,
+                "min_payment":    min_payment,
+            })
+
+    if not all_debts:
+        return {
+            "message": "No non-mortgage debt accounts found in Emoney.",
+            "mortgages": mortgages,
+            "total_mortgage_balance": round(sum(m["balance"] for m in mortgages), 2),
+        }
+
+    total_debt       = round(sum(d["balance"] for d in all_debts), 2)
+    total_min        = round(sum(d["min_payment"] for d in all_debts), 2)
+    monthly_budget   = round(total_min + extra_monthly_payment, 2)
+
+    def _simulate_payoff(debts_ordered: list[dict]) -> dict:
+        """
+        Simulate debt payoff for a given ordering of debts.
+        Returns months_to_payoff and total_interest_paid.
+        """
+        balances  = [d["balance"] for d in debts_ordered]
+        rates     = [d["assumed_apr"] / 12 for d in debts_ordered]
+        minimums  = [d["min_payment"] for d in debts_ordered]
+
+        total_interest = 0.0
+        months         = 0
+        budget         = monthly_budget
+
+        while any(b > 0 for b in balances) and months < 600:
+            months    += 1
+            freed      = 0.0
+
+            # Apply interest to each active balance
+            for i in range(len(balances)):
+                if balances[i] <= 0:
+                    continue
+                interest        = balances[i] * rates[i]
+                total_interest += interest
+                balances[i]     = round(balances[i] + interest, 2)
+
+            # Pay minimums on all but the target debt
+            remaining_budget = budget
+            for i in range(1, len(balances)):   # 0 = focus debt
+                if balances[i] <= 0:
+                    freed += minimums[i]
+                    continue
+                pay           = min(minimums[i], balances[i])
+                balances[i]   = round(balances[i] - pay, 2)
+                remaining_budget -= pay
+                if balances[i] <= 0:
+                    freed += minimums[i]
+
+            # All available budget goes to focus debt
+            focus_pay    = min(remaining_budget + freed, balances[0])
+            balances[0]  = round(balances[0] - focus_pay, 2)
+
+            # When focus debt is paid, shift remaining budget to next
+            if balances[0] <= 0:
+                balances.pop(0)
+                rates.pop(0)
+                minimums.pop(0)
+                if not balances:
+                    break
+
+        return {
+            "months_to_payoff":     months,
+            "years_to_payoff":      round(months / 12, 1),
+            "total_interest_paid":  round(total_interest, 2),
+        }
+
+    # Avalanche: highest APR first
+    avalanche_order = sorted(all_debts, key=lambda d: d["assumed_apr"], reverse=True)
+    avalanche       = _simulate_payoff(avalanche_order)
+
+    # Snowball: smallest balance first
+    snowball_order  = sorted(all_debts, key=lambda d: d["balance"])
+    snowball        = _simulate_payoff(snowball_order)
+
+    interest_saved  = round(snowball["total_interest_paid"] - avalanche["total_interest_paid"], 2)
+
+    return {
+        "total_debt":               total_debt,
+        "debt_accounts":            all_debts,
+        "mortgages_excluded":       mortgages,
+        "total_minimum_payment":    total_min,
+        "extra_monthly_payment":    extra_monthly_payment,
+        "total_monthly_payment":    monthly_budget,
+        "avalanche_strategy": {
+            "description":          "Pay highest APR debt first (minimises total interest)",
+            "payoff_order":         [d["name"] for d in avalanche_order],
+            **avalanche,
+        },
+        "snowball_strategy": {
+            "description":          "Pay smallest balance first (fastest early wins)",
+            "payoff_order":         [d["name"] for d in snowball_order],
+            **snowball,
+        },
+        "avalanche_saves_vs_snowball": max(0, interest_saved),
+        "recommendation": (
+            "Avalanche saves more interest; snowball provides faster motivational wins. "
+            "Avalanche is mathematically optimal when rates differ significantly."
+        ),
+        "note": (
+            f"APRs are assumed ({int(assumed_credit_card_apr*100)}% for credit cards, "
+            f"{int(assumed_loan_apr*100)}% for loans). "
+            "Update assumptions based on your actual statements for accurate projections. "
+            "Minimum payments estimated as 2% of balance for credit cards."
+        ),
+    }
+
+
 async def _build_account_type_map(http_session) -> dict[str, str]:
     """Return {account_name_lower: tax_bucket} from card 1."""
     accts = await get_accounts(http_session)

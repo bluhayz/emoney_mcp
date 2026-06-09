@@ -25,6 +25,8 @@ _build_account_type_map(http_session) — {account_name_lower: tax_bucket}
 _match_tax_bucket(name, type_map)     — fuzzy lookup in type_map
 """
 
+import time
+
 from ._helpers import _get_card, _CARD_URL
 
 # ---------------------------------------------------------------------------
@@ -48,7 +50,6 @@ _TAX_BUCKET: dict[str, str] = {
 
 async def get_accounts(http_session) -> dict:
     """Fetch net worth and all accounts via the CardSwitcher API."""
-    import time
     ts = int(time.time() * 1000)
     http = await http_session.get_http()
 

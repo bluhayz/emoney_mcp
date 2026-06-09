@@ -77,14 +77,12 @@ _fetch_snb_data(http_session, days) — Shared SNB fetch/filter used by all
 clear_snb_cache()                — Purges the SNB in-memory cache.
 """
 
+import asyncio
 import re
 import time
 from datetime import datetime, timedelta
 
-from ._helpers import BASE_URL, _get_card
-
-# The SNB API lives on a separate host from the main Emoney portal
-_SNB_API = "https://api.emoneyadvisor.com/snb-api"
+from ._helpers import BASE_URL, _SNB_API, _get_card
 
 # ---------------------------------------------------------------------------
 # US state abbreviations — used by _normalize_merchant to strip trailing
@@ -980,12 +978,10 @@ async def get_budget_vs_actual(http_session, months_avg: int = 3) -> dict:
     days       = (months_avg + 1) * 31 + 5  # extra month for current month
 
     # Fetch data in parallel: card 13 (budget total) + SNB transactions
-    http      = await http_session.get_http()
-    from ._helpers import _get_card
+    http        = await http_session.get_http()
     card13_task = _get_card(http, 13)
     snb_task    = _fetch_snb_data(http_session, days=days)
 
-    import asyncio
     card13, (txns, ok) = await asyncio.gather(card13_task, snb_task)
 
     if not ok:
@@ -1235,11 +1231,10 @@ async def get_cash_flow_projection(http_session, months_ahead: int = 6) -> dict:
     import asyncio
     months_ahead = min(max(months_ahead, 1), 24)
 
-    # Fetch SNB data and recurring charges in parallel
-    snb_task  = _fetch_snb_data(http_session, days=90)
-    from ._helpers import _get_card
-    http      = await http_session.get_http()
-    card9_task = _get_card(http, 9)   # net worth / liquid assets (card 9 or card 1)
+    # Fetch SNB data and card 9 (net worth / liquid assets) in parallel
+    snb_task   = _fetch_snb_data(http_session, days=90)
+    http       = await http_session.get_http()
+    card9_task = _get_card(http, 9)
 
     (txns, ok), card9 = await asyncio.gather(snb_task, card9_task)
 

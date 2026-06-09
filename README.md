@@ -2,7 +2,7 @@
 
 MCP server for [Emoney Advisor](https://wealth.emaplan.com) — exposes your complete financial picture as tools Claude Desktop can call.
 
-> **Ask Claude:** *"How are my finances looking?"* · *"Am I over budget this month?"* · *"When will I hit $2M?"* · *"What's my tax bracket headroom for a Roth conversion?"* · *"Are we on track for college savings?"*
+> **Ask Claude:** *"How are my finances looking?"* · *"Am I over budget this month?"* · *"When will I hit $2M?"* · *"What's my tax bracket headroom for a Roth conversion?"* · *"What are my odds of not running out of money in retirement?"* · *"Should I claim Social Security at 62 or 70?"*
 
 ---
 
@@ -97,7 +97,7 @@ Then point Claude Desktop at your local clone:
 
 ---
 
-## Available tools (38 total)
+## Available tools (42 total)
 
 ### 🏠 Overview & Dashboard
 
@@ -143,6 +143,8 @@ Then point Claude Desktop at your local clone:
 | `get_roth_conversion_analysis` | Estimates the federal tax cost and long-term benefit of converting pre-tax dollars to Roth. Shows bracket-by-bracket impact, effective rate on conversion, and projected tax-free growth. Required: `conversion_amount`, `current_income`. Optional: `filing_status`, `age` |
 | `get_capital_gains_exposure` | Identifies embedded unrealized gains in taxable accounts and estimates the tax bill if positions were sold today. Applies LTCG rates and NIIT based on income. Optional: `filing_status`, `annual_income` |
 | `get_rmd_estimate` | Estimates Required Minimum Distributions from pre-tax retirement accounts using the IRS Uniform Lifetime Table (RMDs begin at age 73, SECURE 2.0). Returns current-year RMD and a 10-year projected schedule. Required: `birth_year` |
+| `get_social_security_optimizer` | **Optimize your SS claiming age.** Compares monthly benefit, annual benefit, and lifetime value at 62, FRA, and 70. Shows breakeven crossover ages. Includes spousal analysis. Required: `birth_year`. Optional: `estimated_monthly_benefit_at_67` (from ssa.gov), `life_expectancy` (default 85), `spouse_birth_year`, `spouse_benefit_at_67` |
+| `get_quarterly_estimated_taxes` | Calculates Q1–Q4 federal estimated tax payments and due dates. Uses current-year annualized and safe-harbor methods, recommends the lower one. Optional: `filing_status`, `annual_income_override`, `prior_year_tax`, `expected_withholding` |
 
 ### 🏖️ Retirement & Long-range Planning
 
@@ -153,6 +155,8 @@ Then point Claude Desktop at your local clone:
 | `get_net_worth_projection` | **"When will I hit $X?"** Projects net worth forward using compound growth + actual monthly savings. Shows $500k/$1M/$2M/$5M/$10M milestone years and a 30-year snapshot table. Optional: `target_net_worth`, `annual_return` (default 7%), `annual_savings_override` |
 | `get_debt_payoff_plan` | Models **avalanche** (highest APR first) vs. **snowball** (smallest balance first) strategies. Returns months-to-payoff and total interest for each. Optional: `extra_monthly_payment`, `assumed_credit_card_apr` (default 22%), `assumed_loan_apr` (default 7%) |
 | `get_college_savings_gap` | Estimates the gap between current 529 savings and projected college costs from Emoney's education goals. Shows required monthly contribution to close the gap by the goal start year. Optional: `annual_return` (default 6%), `annual_college_inflation` (default 5%) |
+| `run_monte_carlo_retirement` | **Monte Carlo simulation** — runs 1,000–10,000 stochastic paths with random annual returns and inflation draws to compute the probability your portfolio survives your retirement horizon. Returns success rate, median/10th/90th percentile ending balances, worst-case depletion year, and the safe withdrawal rate at 90% success. Optional: `simulations` (default 1000), `years` (default 30), `mean_return` (default 7%), `std_dev` (default 15%), `social_security_annual`, `withdrawal_rate` |
+| `get_dynamic_withdrawal_guardrails` | **Guyton-Klinger guardrails** — determines whether to raise, hold, or cut the current withdrawal based on portfolio performance vs. the starting value. Returns RAISE / HOLD / CUT with adjusted annual and monthly amounts. Optional: `initial_withdrawal_rate` (default 5%), `initial_portfolio_value`, `current_annual_withdrawal` |
 
 ### ⚖️ Portfolio Analysis
 
@@ -252,6 +256,13 @@ When will I be debt-free?
 Which debt payoff strategy saves the most interest?
 Are we on track for Parker's college savings?
 How much do we need to save monthly for the 529?
+What are the odds my portfolio lasts 30 years?
+Run a Monte Carlo simulation on my retirement plan.
+Should I adjust my withdrawals this year given how the market has performed?
+Should I claim Social Security at 62 or wait until 70?
+What is the Social Security breakeven age for me?
+How much do I owe in estimated taxes each quarter?
+What are my Q3 estimated federal tax payments?
 ```
 
 ### Investments
@@ -340,7 +351,7 @@ Tools with multiple independent data sources use `asyncio.gather()` for parallel
 Claude Desktop
      │  MCP stdio
      ▼
-emoney_mcp/server.py          ← tool registration + dispatch (38 tools)
+emoney_mcp/server.py          ← tool registration + dispatch (42 tools)
 emoney_mcp/scraper.py         ← re-export shim (backward-compatible)
 emoney_mcp/scrapers/          ← domain-split scraping package
   ├── _helpers.py             ←   shared URL constants + TTL-cached _get_card()

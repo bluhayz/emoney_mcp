@@ -18,9 +18,26 @@ get_withdrawal_rate_analysis(http_session)
     4%, 4.5%, and 5% withdrawal rates along with estimated years funded.
     Pulls the retirement goal start/end year directly from card 2 via
     get_goals(), so no parameters are needed.
+
+run_monte_carlo_retirement(http_session, ...)
+    Runs Monte Carlo simulations (default 1,000 paths) to estimate the
+    probability that a retirement portfolio survives a given number of years.
+    Uses stochastic annual returns drawn from a normal distribution parameterized
+    by mean_return / std_dev, with independent inflation draws each year.
+    Returns probability of success, median/10th/90th percentile ending balances,
+    worst-case depletion year, and per-year balance percentiles.
+
+get_dynamic_withdrawal_guardrails(http_session, ...)
+    Implements the Guyton-Klinger guardrail rules: raises withdrawals when the
+    portfolio is outperforming and cuts them when it's underperforming.  Compares
+    the current portfolio value against an initial reference (or the estimated
+    value at retirement) and returns the guardrail-adjusted annual and monthly
+    withdrawal amounts.
 """
 
 import math
+import random
+import statistics
 from datetime import datetime, timedelta
 
 from .accounts import get_accounts
@@ -339,5 +356,317 @@ async def get_net_worth_projection(
             "adds the average monthly savings each month. Does not model inflation, "
             "variable income/spending, or tax drag. "
             "A negative monthly_savings means you are currently spending more than you earn."
+        ),
+    }
+
+
+# ---------------------------------------------------------------------------
+# run_monte_carlo_retirement
+# ---------------------------------------------------------------------------
+
+async def run_monte_carlo_retirement(
+    http_session,
+    simulations: int = 1_000,
+    years: int = 30,
+    annual_spending: float | None = None,
+    mean_return: float = 0.07,
+    std_dev: float = 0.15,
+    inflation_mean: float = 0.03,
+    inflation_std: float = 0.01,
+    social_security_annual: float = 0.0,
+    withdrawal_rate: float | None = None,
+) -> dict:
+    """
+    Monte Carlo retirement simulation using stochastic annual returns and inflation.
+
+    Parameters
+    ----------
+    simulations            : number of simulation paths (default 1,000)
+    years                  : retirement horizon in years (default 30)
+    annual_spending        : annual withdrawal in dollars (default: actual 12-month spend)
+    mean_return            : mean annual portfolio return, nominal (default 0.07)
+    std_dev                : annual return standard deviation (default 0.15 — blended equity/bond)
+    inflation_mean         : mean annual inflation rate (default 0.03)
+    inflation_std          : inflation standard deviation (default 0.01)
+    social_security_annual : annual Social Security or pension income to offset withdrawals (default 0)
+    withdrawal_rate        : if supplied, overrides annual_spending (e.g. 0.04 = 4% of portfolio)
+    """
+    simulations = max(100, min(simulations, 10_000))
+    years       = max(5,   min(years,       60))
+
+    accts = await get_accounts(http_session)
+    if "error" in accts:
+        return accts
+
+    total_assets  = accts.get("total_assets") or 0
+    total_liab    = accts.get("total_liabilities") or 0
+    portfolio     = max(0.0, total_assets - total_liab)
+
+    if portfolio <= 0:
+        return {"error": "No investable portfolio found."}
+
+    if withdrawal_rate is not None:
+        annual_spending = portfolio * withdrawal_rate
+    elif annual_spending is None:
+        txns, ok = await _fetch_snb_data(http_session, days=365)
+        if ok:
+            annual_spending = round(sum(
+                t["amount"] for t in txns
+                if not t["is_income"] and not t["is_excluded"]
+            ), 2)
+        else:
+            annual_spending = portfolio * 0.04
+
+    net_annual_withdrawal = max(0.0, annual_spending - social_security_annual)
+
+    rng = random.Random(42)   # reproducible seed so same inputs → same result
+
+    ending_balances: list[float] = []
+    depletion_years: list[int]   = []
+    year_balances: list[list[float]] = [[] for _ in range(years)]
+
+    for _ in range(simulations):
+        bal      = portfolio
+        depleted = False
+        spending = net_annual_withdrawal
+
+        for yr in range(years):
+            ret  = rng.gauss(mean_return, std_dev)
+            inf  = max(0.0, rng.gauss(inflation_mean, inflation_std))
+            bal  = bal * (1 + ret) - spending
+            spending *= (1 + inf)
+
+            year_balances[yr].append(max(0.0, bal))
+
+            if bal <= 0 and not depleted:
+                depleted = True
+                depletion_years.append(yr + 1)
+                bal = 0.0
+
+        ending_balances.append(max(0.0, bal))
+
+    successes    = sum(1 for b in ending_balances if b > 0)
+    success_rate = round(successes / simulations * 100, 1)
+
+    sorted_end   = sorted(ending_balances)
+    n            = len(sorted_end)
+    median_end   = round(statistics.median(sorted_end), 2)
+    p10_end      = round(sorted_end[int(n * 0.10)], 2)
+    p25_end      = round(sorted_end[int(n * 0.25)], 2)
+    p75_end      = round(sorted_end[int(n * 0.75)], 2)
+    p90_end      = round(sorted_end[int(n * 0.90)], 2)
+
+    worst_depletion = min(depletion_years) if depletion_years else None
+    median_depletion = round(statistics.median(depletion_years), 1) if depletion_years else None
+
+    year_summary = []
+    for yr, balances in enumerate(year_balances):
+        s = sorted(balances)
+        m = len(s)
+        year_summary.append({
+            "year":   yr + 1,
+            "p10":    round(s[int(m * 0.10)], 2),
+            "median": round(statistics.median(s), 2),
+            "p90":    round(s[int(m * 0.90)], 2),
+        })
+
+    # Find the SWR (to nearest 0.25%) that achieves 90% success
+    safe_swr = None
+    for candidate_rate_bp in range(500, 100, -25):
+        candidate_rate = candidate_rate_bp / 10_000
+        cand_withdrawal = portfolio * candidate_rate - social_security_annual
+        cand_successes = 0
+        for _ in range(200):
+            bal      = portfolio
+            spending = cand_withdrawal
+            ok       = True
+            for _yr in range(years):
+                ret  = rng.gauss(mean_return, std_dev)
+                inf  = max(0.0, rng.gauss(inflation_mean, inflation_std))
+                bal  = bal * (1 + ret) - spending
+                spending *= (1 + inf)
+                if bal <= 0:
+                    ok = False
+                    break
+            if ok:
+                cand_successes += 1
+        if cand_successes / 200 >= 0.90:
+            safe_swr = candidate_rate
+            break
+
+    return {
+        "portfolio_value":              round(portfolio, 2),
+        "annual_spending":              round(annual_spending, 2),
+        "social_security_annual":       round(social_security_annual, 2),
+        "net_annual_withdrawal":        round(net_annual_withdrawal, 2),
+        "current_withdrawal_rate_pct":  round(net_annual_withdrawal / portfolio * 100, 2) if portfolio else None,
+        "simulation_parameters": {
+            "simulations":     simulations,
+            "years":           years,
+            "mean_return_pct": round(mean_return * 100, 1),
+            "std_dev_pct":     round(std_dev * 100, 1),
+            "inflation_mean_pct": round(inflation_mean * 100, 1),
+            "inflation_std_pct":  round(inflation_std * 100, 1),
+        },
+        "results": {
+            "probability_of_success_pct": success_rate,
+            "outcome_label": (
+                "Excellent" if success_rate >= 90 else
+                "Good"      if success_rate >= 80 else
+                "Caution"   if success_rate >= 70 else
+                "At Risk"   if success_rate >= 60 else
+                "Danger"
+            ),
+            "simulations_succeeded":  successes,
+            "simulations_depleted":   simulations - successes,
+            "ending_balance": {
+                "p10":    p10_end,
+                "p25":    p25_end,
+                "median": median_end,
+                "p75":    p75_end,
+                "p90":    p90_end,
+            },
+            "depletion": {
+                "pct_depleted":           round((simulations - successes) / simulations * 100, 1),
+                "earliest_depletion_year": worst_depletion,
+                "median_depletion_year":   median_depletion,
+            },
+            "safe_withdrawal_rate_for_90pct_success_pct": (
+                round(safe_swr * 100, 2) if safe_swr else None
+            ),
+        },
+        "year_by_year_percentiles": year_summary,
+        "interpretation": (
+            f"At a {round(net_annual_withdrawal/portfolio*100,1)}% withdrawal rate "
+            f"this portfolio has a {success_rate}% chance of lasting {years} years "
+            f"across {simulations:,} simulated market scenarios. "
+            f"The median ending balance is ${median_end:,.0f}; "
+            f"in the worst 10% of scenarios the portfolio ends at ${p10_end:,.0f}."
+        ),
+        "note": (
+            "Returns are drawn each year from a normal distribution — extreme sequences "
+            "(e.g. a 2008-style crash in year 1) naturally occur. "
+            "std_dev=0.15 approximates a 60/40 blended portfolio; use 0.18–0.20 for all-equity. "
+            "Social Security reduces the net withdrawal each year, significantly improving success rates. "
+            "This is a statistical model — actual outcomes depend on sequence of returns, fees, taxes, "
+            "and spending flexibility."
+        ),
+    }
+
+
+# ---------------------------------------------------------------------------
+# get_dynamic_withdrawal_guardrails
+# ---------------------------------------------------------------------------
+
+async def get_dynamic_withdrawal_guardrails(
+    http_session,
+    initial_withdrawal_rate: float = 0.05,
+    raise_ceiling_pct: float = 20.0,
+    cut_floor_pct: float = 20.0,
+    raise_guard_pct: float = 20.0,
+    cut_guard_pct: float = 20.0,
+    initial_portfolio_value: float | None = None,
+    current_annual_withdrawal: float | None = None,
+) -> dict:
+    """
+    Apply Guyton-Klinger guardrail rules to determine whether to raise, cut,
+    or hold the current withdrawal amount.
+
+    The rules compare the current withdrawal rate (withdrawal / current portfolio)
+    against upper and lower guardrail thresholds.  If the current rate drifts
+    more than ``raise_guard_pct``% below the initial rate → raise withdrawals 10%.
+    If it drifts more than ``cut_guard_pct``% above the initial rate → cut 10%.
+
+    Parameters
+    ----------
+    initial_withdrawal_rate   : withdrawal rate at retirement start (default 5%)
+    raise_ceiling_pct         : max % a raised withdrawal can be above initial (default 20%)
+    cut_floor_pct             : max % a cut withdrawal can be below initial (default 20%)
+    raise_guard_pct           : how far rate must drop below initial to trigger a raise (default 20%)
+    cut_guard_pct             : how far rate must rise above initial to trigger a cut (default 20%)
+    initial_portfolio_value   : portfolio value at retirement start (optional; uses current if omitted)
+    current_annual_withdrawal : override the inferred annual withdrawal (optional)
+    """
+    accts = await get_accounts(http_session)
+    if "error" in accts:
+        return accts
+
+    total_assets = accts.get("total_assets") or 0
+    total_liab   = accts.get("total_liabilities") or 0
+    current_portfolio = max(0.0, total_assets - total_liab)
+
+    if current_portfolio <= 0:
+        return {"error": "No investable portfolio found."}
+
+    ref_portfolio = initial_portfolio_value or current_portfolio
+    initial_dollar_withdrawal = ref_portfolio * initial_withdrawal_rate
+
+    if current_annual_withdrawal is None:
+        txns, ok = await _fetch_snb_data(http_session, days=365)
+        if ok:
+            current_annual_withdrawal = round(sum(
+                t["amount"] for t in txns
+                if not t["is_income"] and not t["is_excluded"]
+            ), 2)
+        else:
+            current_annual_withdrawal = initial_dollar_withdrawal
+
+    current_rate = current_annual_withdrawal / current_portfolio if current_portfolio > 0 else 0.0
+    upper_guard  = initial_withdrawal_rate * (1 + cut_guard_pct  / 100)
+    lower_guard  = initial_withdrawal_rate * (1 - raise_guard_pct / 100)
+    ceiling_amt  = initial_dollar_withdrawal * (1 + raise_ceiling_pct / 100)
+    floor_amt    = initial_dollar_withdrawal * (1 - cut_floor_pct   / 100)
+
+    if current_rate > upper_guard:
+        action          = "CUT"
+        adjusted_annual = max(floor_amt, current_annual_withdrawal * 0.90)
+        reason          = (
+            f"Current withdrawal rate ({current_rate*100:.2f}%) exceeds the upper guardrail "
+            f"({upper_guard*100:.2f}%). Reduce withdrawals by 10% to protect the portfolio."
+        )
+    elif current_rate < lower_guard:
+        action          = "RAISE"
+        adjusted_annual = min(ceiling_amt, current_annual_withdrawal * 1.10)
+        reason          = (
+            f"Current withdrawal rate ({current_rate*100:.2f}%) is below the lower guardrail "
+            f"({lower_guard*100:.2f}%). Portfolio is outperforming — raise withdrawals 10%."
+        )
+    else:
+        action          = "HOLD"
+        adjusted_annual = current_annual_withdrawal
+        reason          = (
+            f"Current withdrawal rate ({current_rate*100:.2f}%) is within guardrails "
+            f"({lower_guard*100:.2f}% – {upper_guard*100:.2f}%). No adjustment needed."
+        )
+
+    portfolio_change_pct = round(
+        (current_portfolio - ref_portfolio) / ref_portfolio * 100, 1
+    ) if ref_portfolio else None
+
+    return {
+        "current_portfolio_value":      round(current_portfolio, 2),
+        "reference_portfolio_value":    round(ref_portfolio, 2),
+        "portfolio_change_pct":         portfolio_change_pct,
+        "initial_withdrawal_rate_pct":  round(initial_withdrawal_rate * 100, 2),
+        "current_annual_withdrawal":    round(current_annual_withdrawal, 2),
+        "current_withdrawal_rate_pct":  round(current_rate * 100, 2),
+        "guardrails": {
+            "upper_guard_pct":   round(upper_guard * 100, 2),
+            "lower_guard_pct":   round(lower_guard * 100, 2),
+            "ceiling_amount":    round(ceiling_amt, 2),
+            "floor_amount":      round(floor_amt, 2),
+        },
+        "action":                    action,
+        "reason":                    reason,
+        "adjusted_annual_withdrawal": round(adjusted_annual, 2),
+        "adjusted_monthly_withdrawal": round(adjusted_annual / 12, 2),
+        "change_from_current":        round(adjusted_annual - current_annual_withdrawal, 2),
+        "change_pct":                 round((adjusted_annual - current_annual_withdrawal) / current_annual_withdrawal * 100, 1) if current_annual_withdrawal else 0,
+        "note": (
+            "Guyton-Klinger guardrails dynamically adjust withdrawals to extend portfolio longevity. "
+            "A 10% raise/cut is applied each time a guardrail is breached. "
+            "The ceiling prevents withdrawals from rising more than raise_ceiling_pct% above the initial amount; "
+            "the floor prevents cuts below cut_floor_pct% of the initial amount. "
+            "Run this annually (or after a major market move) to keep withdrawals on track."
         ),
     }

@@ -1002,8 +1002,13 @@ async def _get_spending_transactions(days: int = 30) -> dict:
 # ── Help ──────────────────────────────────────────────────────────────────
 
 def _get_features() -> dict:
+    from importlib.metadata import version, PackageNotFoundError
+    try:
+        ver = version("emoney-mcp")
+    except PackageNotFoundError:
+        ver = "unknown (dev install)"
     return {
-        "version": "0.5.0",
+        "version": ver,
         "total_tools": 38,
         "categories": {
             "Overview & Dashboard": {

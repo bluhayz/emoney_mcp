@@ -2,7 +2,40 @@
 
 All notable changes to emoney-mcp are documented here.
 
-## [0.3.0] — 2026-06-08 (current)
+## [0.6.0] — 2026-06-09 (current)
+
+### Fixed / Refactored
+- **`spending.py`** — moved `import asyncio` and `_SNB_API` to module top-level; removed duplicate `from ._helpers import _get_card` calls that were buried inside two functions (`get_budget_vs_actual`, `get_cash_flow_projection`); `_SNB_API` now imported from `_helpers` instead of being redefined locally
+- **`accounts.py`** — moved `import time` out of the `get_accounts` function body to module top-level
+- **`investments.py`** — removed redundant `from ._helpers import _INV_URL` inside `get_transactions` (already imported at module top)
+- **`_helpers.py`** — removed dead `_SPEND_URL` constant (was defined but never imported by any module); `_SNB_API` is now the single source of truth for the SNB API base URL
+- **`server.py`** — `_get_features()` now reads the installed package version via `importlib.metadata` instead of hardcoding `"0.5.0"`
+
+## [0.5.0] — 2026
+
+### Added — 8 new planning tools
+- **`get_quick_status`** — 5-number snapshot (net worth, portfolio change, savings rate, top spending category, goal status); designed for minimal token usage
+- **`get_tax_bracket_headroom`** — shows remaining room in the current ordinary income and LTCG bracket before the next threshold; infers income automatically if not supplied
+- **`get_budget_vs_actual`** — compares this month's actual spending against a rolling N-month average per category; flags categories tracking above their average
+- **`get_year_over_year`** — compares this year's spending and income to the same calendar year-to-date period last year
+- **`get_cash_flow_projection`** — projects future monthly cash flow using actual average income/spending from the last 90 days, layered with known recurring charges
+- **`get_college_savings_gap`** — estimates the funding gap between current 529 balances and projected college costs for each education goal
+- **`get_debt_payoff_plan`** — models debt payoff using avalanche (highest rate first) and snowball (smallest balance first) strategies with month-by-month simulation
+- **`get_net_worth_projection`** — projects net worth forward at configurable return rates
+
+### Refactored
+- `scraper.py` split into a `scrapers/` package with domain modules: `accounts`, `investments`, `spending`, `goals`, `tax`, `retirement`, `portfolio`, `_helpers`
+- TTL caching added for CardSwitcher cards (5-minute window) and SNB API responses — parallel tool calls within one turn share a single HTTP request per endpoint
+- `scraper.py` kept as a backward-compatible re-export shim so `server.py` requires no changes
+
+## [0.4.0] — 2026
+
+### Refactored
+- Merged `feature/working-mcp-server` branch into `main`
+- Added module-level docstrings and inline comments to all scraper modules
+- Codebase restructured in preparation for the v0.5.0 domain split
+
+## [0.3.0] — 2026-06-08
 
 ### Added
 - **`get_features`** — lists all available tools grouped by category with descriptions, example questions, and parameter summaries; no session or authentication required
@@ -21,7 +54,6 @@ All notable changes to emoney-mcp are documented here.
 - **`get_asset_location_efficiency`** — grades how well assets are positioned across account types for tax efficiency (A–F) with specific swap suggestions
 - **`get_rebalancing_targets`** — computes exact buy/sell amounts to reach a target equity/bond/cash allocation
 - **`get_financial_health_score`** — composite 0–100 score across six dimensions: savings rate, goal funding, debt-to-asset ratio, emergency fund, diversification, net worth trend
-- **`get_features`** — lists all available tools grouped by category with descriptions and example questions (this tool)
 
 ## [0.1.5] — 2025
 
@@ -29,7 +61,7 @@ All notable changes to emoney-mcp are documented here.
 - **`get_financial_summary`** — executive dashboard combining net worth, performance, income vs. spending, top 5 spending categories, and goal status in a single call
 - **`search_transactions`** — search spending transactions by keyword, category, and/or amount range
 - **`get_recurring_charges`** — detects recurring/subscription charges by analyzing 120-day transaction patterns; estimates monthly recurring spend
-- **`get_net_worth_breakdown`** — breaks net worth down by person (Drew / Lacey / Joint), liquidity (liquid / semi-liquid / illiquid), and tax treatment (taxable / tax-deferred / tax-free)
+- **`get_net_worth_breakdown`** — breaks net worth down by person, liquidity (liquid / semi-liquid / illiquid), and tax treatment (taxable / tax-deferred / tax-free)
 
 ## [0.1.4] — 2025
 

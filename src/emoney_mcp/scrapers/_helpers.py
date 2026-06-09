@@ -11,7 +11,6 @@ Constants
 BASE_URL           — https://<subdomain>.emaplan.com
 _CARD_URL          — CardSwitcher endpoint (used by almost every module)
 _INV_URL           — Investments endpoint (holdings, transactions, performance)
-_SPEND_URL         — Spending page (used only to scrape the JWT token for the SNB API)
 _SNB_API           — External SNB (Spending/Net Banking) API base URL
 _CARD_CACHE_TTL    — Card response TTL in seconds (default 300 = 5 minutes)
 
@@ -35,12 +34,11 @@ from ..browser import BASE_URL  # single source of truth for the subdomain
 # API endpoint roots — built once at import time from BASE_URL
 # ---------------------------------------------------------------------------
 
-_CARD_URL  = f"{BASE_URL}/ema/CS/CardSwitcher/GetCard"
-_INV_URL   = f"{BASE_URL}/ema/CS/Investments"
-_SPEND_URL = f"{BASE_URL}/ema/CS/Spending"
+_CARD_URL = f"{BASE_URL}/ema/CS/CardSwitcher/GetCard"
+_INV_URL  = f"{BASE_URL}/ema/CS/Investments"
 
 # The SNB API lives on a separate host — always https regardless of subdomain
-_SNB_API   = "https://api.emoneyadvisor.com/snb-api"
+_SNB_API  = "https://api.emoneyadvisor.com/snb-api"
 
 # ---------------------------------------------------------------------------
 # In-memory TTL cache for CardSwitcher card responses

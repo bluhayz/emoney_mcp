@@ -331,7 +331,6 @@ async def get_transactions(http_session, days: int = 30, account_id: str | None 
     Optionally filter by account_id (Emoney AccountID GUID).
     Source: POST /ema/CS/Investments/GetInvestmentTransactions  (requires CSRF token)
     """
-    from ._helpers import _INV_URL
     days = min(max(days, 1), 365)
     end_dt   = datetime.now()
     start_dt = end_dt - timedelta(days=days)

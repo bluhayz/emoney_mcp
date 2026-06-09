@@ -2,7 +2,7 @@
 
 MCP server for [Emoney Advisor](https://wealth.emaplan.com) — exposes your complete financial picture as tools Claude Desktop can call.
 
-> **Ask Claude:** *"How are my finances looking?"* · *"What subscriptions am I paying for?"* · *"Should I do a Roth conversion this year?"* · *"How long will my money last?"* · *"Am I on track for retirement?"*
+> **Ask Claude:** *"How are my finances looking?"* · *"Am I over budget this month?"* · *"When will I hit $2M?"* · *"What's my tax bracket headroom for a Roth conversion?"* · *"Are we on track for college savings?"*
 
 ---
 
@@ -85,23 +85,27 @@ Then point Claude Desktop at your local clone:
       "command": "uvx",
       "args": ["--from", "/path/to/emoney_mcp", "emoney-mcp"],
       "env": {
-        "EMONEY_SUBDOMAIN": "wealth"
+        "EMONEY_SUBDOMAIN": "wealth",
+        "EMONEY_DEV": "1"
       }
     }
   }
 }
 ```
 
+> **`EMONEY_DEV=1`** enables hot-reload: edit any file in `src/emoney_mcp/scrapers/` and changes take effect on the next tool call without restarting Claude Desktop.
+
 ---
 
-## Available tools (32 total)
+## Available tools (38 total)
 
-### 🏠 Overview
+### 🏠 Overview & Dashboard
 
 | Tool | Description |
 |------|-------------|
-| `get_financial_summary` | **Start here.** Single-call executive dashboard — net worth, portfolio performance, this month's income vs. spending, top 5 categories, and goal status. Best for broad questions like *"How are my finances?"* |
-| `get_financial_health_score` | **0–100 composite score** with A–F letter grade across six dimensions: savings rate, goal funding, debt-to-asset ratio, emergency fund coverage, diversification, and net worth trend. Each component is scored and explained. |
+| `get_quick_status` | **5-number snapshot** — net worth, portfolio today's change, this month's savings rate, top spending category, and goal on-track status. Designed for quick checks with minimal token usage. |
+| `get_financial_summary` | **Full executive dashboard** — net worth, portfolio performance, this month's income vs. spending, top 5 categories, and goal status. Best for broad *"How are my finances?"* questions. |
+| `get_financial_health_score` | **0–100 composite score** with A–F letter grade across six dimensions: savings rate, goal funding, debt-to-asset ratio, emergency fund coverage, diversification, and net worth trend. |
 
 ### 💰 Balance Sheet
 
@@ -123,7 +127,7 @@ Then point Claude Desktop at your local clone:
 | `get_transactions` | Investment transactions (buys, sells, dividends). Parameters: `days` (default 30, max 365), `account_id` (optional GUID) |
 | `get_capital_gains` | Realized gains summary — sell proceeds, dividends, interest by tax year. Parameter: `year` (default current) |
 
-### 🎯 Financial Planning
+### 🎯 Goals
 
 | Tool | Description |
 |------|-------------|
@@ -133,18 +137,22 @@ Then point Claude Desktop at your local clone:
 
 | Tool | Description |
 |------|-------------|
-| `get_tax_loss_harvesting` | Identifies positions with unrealized losses in **taxable accounts** suitable for harvesting. Excludes IRAs/401ks where harvesting has no immediate benefit. Returns losses sorted by magnitude with estimated tax savings at 15%, 20%, and 23.8% (LTCG + NIIT) rates. |
+| `get_tax_bracket_headroom` | **How much more income before the next bracket?** Shows remaining room in the current ordinary income bracket and LTCG bracket. Infers income automatically if not supplied. Optional: `current_income`, `filing_status` |
+| `get_tax_loss_harvesting` | Identifies positions with unrealized losses in **taxable accounts** suitable for harvesting. Returns losses sorted by magnitude with estimated tax savings at 15%, 20%, and 23.8% (LTCG + NIIT) rates. |
 | `get_contribution_room` | Shows 2025 IRS annual limits for all tax-advantaged accounts (401k, IRA, HSA, SIMPLE IRA, SEP IRA, 529). Adjusts for catch-up contributions by age including the SECURE 2.0 super catch-up (ages 60–63). Parameters: `age`, `filing_status` |
-| `get_roth_conversion_analysis` | Estimates the federal tax cost and long-term benefit of converting pre-tax dollars to Roth. Shows bracket-by-bracket impact, effective rate on conversion, projected tax-free growth, and whether conversion is tax-favored vs. leaving funds in traditional. Required: `conversion_amount`, `current_income`. Optional: `filing_status`, `age` |
+| `get_roth_conversion_analysis` | Estimates the federal tax cost and long-term benefit of converting pre-tax dollars to Roth. Shows bracket-by-bracket impact, effective rate on conversion, and projected tax-free growth. Required: `conversion_amount`, `current_income`. Optional: `filing_status`, `age` |
 | `get_capital_gains_exposure` | Identifies embedded unrealized gains in taxable accounts and estimates the tax bill if positions were sold today. Applies LTCG rates and NIIT based on income. Optional: `filing_status`, `annual_income` |
-| `get_rmd_estimate` | Estimates Required Minimum Distributions from pre-tax retirement accounts using the IRS Uniform Lifetime Table. RMDs begin at age 73 (SECURE 2.0). Returns current-year RMD and a 10-year projected schedule. Required: `birth_year` |
+| `get_rmd_estimate` | Estimates Required Minimum Distributions from pre-tax retirement accounts using the IRS Uniform Lifetime Table (RMDs begin at age 73, SECURE 2.0). Returns current-year RMD and a 10-year projected schedule. Required: `birth_year` |
 
-### 🏖️ Retirement Planning
+### 🏖️ Retirement & Long-range Planning
 
 | Tool | Description |
 |------|-------------|
-| `get_retirement_runway` | Models how many years the current portfolio can sustain withdrawals under conservative (4%), base (6%), and optimistic (8%) return scenarios. Also shows sustainable withdrawal amounts at 3.5%, 4%, and 4.5% SWR. Optional: `annual_spending`, `return_rate` |
+| `get_retirement_runway` | Models how many years the current portfolio can sustain withdrawals under conservative (4%), base (6%), and optimistic (8%) return scenarios. Also shows sustainable withdrawal amounts at 3.5%–4.5% SWR. Optional: `annual_spending`, `return_rate` |
 | `get_withdrawal_rate_analysis` | Projects portfolio to your Emoney retirement goal date, then shows annual and monthly income at 3%–5% withdrawal rates with estimated years funded. Uses retirement start/end year from Emoney goals. |
+| `get_net_worth_projection` | **"When will I hit $X?"** Projects net worth forward using compound growth + actual monthly savings. Shows $500k/$1M/$2M/$5M/$10M milestone years and a 30-year snapshot table. Optional: `target_net_worth`, `annual_return` (default 7%), `annual_savings_override` |
+| `get_debt_payoff_plan` | Models **avalanche** (highest APR first) vs. **snowball** (smallest balance first) strategies. Returns months-to-payoff and total interest for each. Optional: `extra_monthly_payment`, `assumed_credit_card_apr` (default 22%), `assumed_loan_apr` (default 7%) |
+| `get_college_savings_gap` | Estimates the gap between current 529 savings and projected college costs from Emoney's education goals. Shows required monthly contribution to close the gap by the goal start year. Optional: `annual_return` (default 6%), `annual_college_inflation` (default 5%) |
 
 ### ⚖️ Portfolio Analysis
 
@@ -158,12 +166,15 @@ Then point Claude Desktop at your local clone:
 | Tool | Description |
 |------|-------------|
 | `get_spending` | Cash flow summary — income, expenses, net cash flow, savings rate, and 5 most recent transactions. Parameter: `months` (default 1) |
-| `get_spending_transactions` | Bank and credit card transactions with **category labels** (Groceries, Dining, Travel, etc.) and **top merchants** with location dedup. Parameter: `days` (default 30, max 365) |
+| `get_spending_transactions` | Bank and credit card transactions with **category labels** (Groceries, Dining, Travel, etc.) and **top merchants** with location dedup. Parameters: `days` (default 30, max 365), `max_transactions` (default 100; pass 0 for all) |
 | `get_spending_trends` | Month-over-month category comparison — which categories are trending up/down, plus monthly income vs. spending per month. Parameter: `months` (default 3, max 12) |
+| `get_budget_vs_actual` | **"Am I over budget?"** Compares this month's actual spending to the rolling N-month category average. Flags categories >15% above benchmark. Also compares against any total budget set in Emoney. Parameter: `months_avg` (default 3) |
+| `get_year_over_year` | **"Am I spending more than last year?"** Compares this year's YTD spending and income to the same period last year with a full per-category breakdown. Requires ~2 years of SNB history. |
+| `get_cash_flow_projection` | Projects monthly cash flow 1–24 months forward using actual income/spending averages from the last 90 days. Includes a running balance estimate. Parameter: `months_ahead` (default 6, max 24) |
 | `get_income_summary` | Income sources and monthly income trend — paychecks, direct deposits, dividends, interest grouped by source. Parameter: `days` (default 90, max 365) |
 | `get_savings_rate` | Month-by-month savings rate (income minus spending ÷ income). Parameter: `months` (default 6, max 12) |
-| `search_transactions` | Search transactions by keyword, category, and/or amount range across up to 365 days. Parameters: `query`, `category`, `days`, `min_amount`, `max_amount` |
-| `get_recurring_charges` | Detects subscriptions and recurring bills by analyzing 120 days of transaction patterns. Returns weekly/monthly/quarterly charges and total estimated monthly recurring spend |
+| `search_transactions` | Search transactions by keyword, category, and/or amount range across up to 365 days. Parameters: `query`, `category`, `days`, `min_amount`, `max_amount`, `max_results` (default 100; pass 0 for all) |
+| `get_recurring_charges` | Detects subscriptions and recurring bills by analyzing 120 days of transaction patterns. Returns weekly/monthly/quarterly charges and total estimated monthly recurring spend. |
 
 ### 🔧 Debug & Session Management
 
@@ -172,11 +183,19 @@ Then point Claude Desktop at your local clone:
 | `sync_chrome_session` | Pull active Emoney session from a running Chrome browser (no re-login if already logged in) |
 | `reset_session` | Clear saved session and force a fresh login on next call |
 | `get_version` | Returns installed version, cookie file path, and session status — useful for debugging |
-| `explore_emoney_cards` | Probes unexplored Emoney CardSwitcher endpoints (cards 5, 6, 7, 10, 12, 14–16) to discover additional data (insurance, tax projection, estate, etc.). Optional: `card_ids` list |
+| `get_features` | Lists all available tools grouped by category with descriptions and example questions |
+| `explore_emoney_cards` | Probes unexplored Emoney CardSwitcher endpoints (cards 5, 6, 7, 10, 12, 14–16) to discover additional data. Optional: `card_ids` list |
 
 ---
 
 ## Example questions to ask Claude
+
+### Quick checks
+```
+How am I doing today?
+Quick financial check.
+Give me a 5-number snapshot of my finances.
+```
 
 ### Overview & Health
 ```
@@ -190,29 +209,49 @@ What should I focus on improving financially?
 ```
 What's my current net worth?
 How has my net worth changed over the last 6 months?
+When will I hit $2 million?
 How is our wealth split between my spouse and me?
 How much of my assets are liquid vs. illiquid?
 How much do I have in tax-free vs. tax-deferred accounts?
 ```
 
+### Budgeting & Spending Comparison
+```
+Am I over budget this month?
+Which spending categories are tracking above normal?
+Am I spending more this year than last year?
+How has my grocery spending changed year-over-year?
+Compare this month's dining to my average.
+```
+
+### Cash Flow & Projections
+```
+Will I have enough cash to cover a big purchase in 3 months?
+What does my cash flow look like through year-end?
+Project my finances for the next 6 months.
+```
+
 ### Tax Planning
 ```
+How much can I convert to Roth without crossing the next bracket?
+How much freelance income can I take on this year at my current rate?
 Where can I harvest tax losses this year?
-What are my tax-loss harvesting opportunities?
 What would it cost to convert $150,000 to Roth this year?
-Should I do a Roth conversion given my income?
 What's my capital gains tax exposure if I sell my concentrated positions?
 How much can I still contribute to my IRA and HSA this year?
 When do I have to start taking RMDs, and how much will they be?
 ```
 
-### Retirement Planning
+### Retirement & Long-range Planning
 ```
 Can I afford to retire now?
 How long will my money last at different withdrawal rates?
 What does a 4% withdrawal rate give me each month?
 Am I on track for retirement?
-How funded is my child's 529 education account?
+When will I be debt-free?
+Which debt payoff strategy saves the most interest?
+Are we on track for Parker's college savings?
+How much do we need to save monthly for the 529?
 ```
 
 ### Investments
@@ -222,37 +261,20 @@ How is my portfolio performing this month?
 Are my assets in the right accounts for tax efficiency?
 Which positions are in the wrong account types?
 How do I rebalance to a 60/40 allocation?
-How much do I need to buy or sell to rebalance?
 How concentrated am I in any single stock?
 What are my realized capital gains this year?
-Show me all my buy and sell transactions in the last 90 days.
-How much do I have in retirement accounts?
 ```
 
-### Spending & Cash Flow
+### Spending & Cash Flow Detail
 ```
 What did I spend last month vs. what came in?
 What are my top spending categories over the last 60 days?
 How much did I spend on groceries last month?
 Is my dining spending going up or down?
-Compare my spending this month vs. last month by category.
-```
-
-### Income & Savings
-```
-What are all my income sources?
-How much has my employer paid me in the last 90 days?
-What is my savings rate over the last 6 months?
-Am I saving more or less than last month?
-```
-
-### Search & Subscriptions
-```
-How much have I spent at Costco this year?
-Show me all Amazon charges over $50.
 What subscriptions am I paying for?
 What are my recurring monthly bills?
-What is my total monthly recurring spend?
+How much have I spent at Costco this year?
+Show me all Amazon charges over $50.
 ```
 
 ---
@@ -284,7 +306,19 @@ Key assumptions:
 - LTCG rates: 0% / 15% / 20% based on taxable income
 - NIIT (3.8%) applies above $200k single / $250k MFJ
 - RMD start age: 73 (SECURE 2.0)
-- Roth conversion analysis uses standard deduction; itemizers should adjust current_income to taxable income
+- Roth conversion analysis uses standard deduction; itemizers should adjust `current_income` to taxable income
+
+---
+
+## Performance & caching
+
+emoney-mcp maintains two module-level TTL caches (5-minute expiry) to eliminate redundant HTTP calls within a conversation turn:
+
+- **Card cache** — `_get_card()` results are shared across all tools that use the same card. Calling `get_financial_summary` followed by `get_financial_health_score` (both use card 2 for goals) makes only one card request.
+- **SNB cache** — the full transaction + category dataset from the SNB API is fetched once. All 9 spending tools (`get_savings_rate`, `get_income_summary`, `get_spending_trends`, etc.) share that single fetch when called in the same session.
+- Both caches are cleared automatically on `reset_session`.
+
+Tools with multiple independent data sources use `asyncio.gather()` for parallel fetching (`get_financial_summary` and `get_financial_health_score` cut from ~5 s to ~1.5 s wall-clock time).
 
 ---
 
@@ -306,9 +340,18 @@ Key assumptions:
 Claude Desktop
      │  MCP stdio
      ▼
-emoney_mcp/server.py       ← tool registration + dispatch (32 tools)
-emoney_mcp/scraper.py      ← Emoney internal API calls + tax/planning calculations (hot-reloaded)
-emoney_mcp/browser.py      ← session management + nodriver login
+emoney_mcp/server.py          ← tool registration + dispatch (38 tools)
+emoney_mcp/scraper.py         ← re-export shim (backward-compatible)
+emoney_mcp/scrapers/          ← domain-split scraping package
+  ├── _helpers.py             ←   shared URL constants + TTL-cached _get_card()
+  ├── accounts.py             ←   balance sheet tools
+  ├── investments.py          ←   holdings, performance, transactions
+  ├── spending.py             ←   SNB-based cash flow tools + TTL cache
+  ├── goals.py                ←   goals, financial summary, health score
+  ├── tax.py                  ←   2025 IRS tax planning tools
+  ├── retirement.py           ←   runway, withdrawal, net worth projection
+  └── portfolio.py            ←   asset location, rebalancing
+emoney_mcp/browser.py         ← session management + nodriver login
      │
      ├── curl_cffi AsyncSession  ← Chrome TLS fingerprint for API calls
      └── nodriver (background thread)  ← Chrome login window when needed
@@ -316,10 +359,11 @@ emoney_mcp/browser.py      ← session management + nodriver login
 
 **Key design decisions:**
 - `nodriver` runs in a separate OS thread with its own `asyncio` event loop to avoid conflicting with the MCP server's event loop
-- `importlib.reload(scraper)` on every tool call enables hot-reload — edit `scraper.py` and changes take effect immediately without restarting Claude Desktop
+- Two TTL caches (card + SNB) eliminate redundant HTTP calls within a conversation turn; `asyncio.gather()` parallelises independent fetches
 - Session cookies are persisted to `~/.emoney_mcp/session.json` — a stable path that works whether running via `uvx`, PyPI, or local clone
 - The SNB API JWT token is extracted from the Spending page HTML on each call — no separate auth flow required
 - Tax and planning calculations are pure Python — no external API calls, using hardcoded 2025 IRS tables
+- Set `EMONEY_DEV=1` to enable hot-reload of scraper modules without restarting Claude Desktop
 
 ---
 
@@ -336,7 +380,7 @@ emoney_mcp/browser.py      ← session management + nodriver login
 | `CS/CardSwitcher/GetCard/8` | Net worth + monthly history array |
 | `CS/CardSwitcher/GetCard/9` | Net worth, total assets, total liabilities |
 | `CS/CardSwitcher/GetCard/11` | Net worth MTD and YTD change |
-| `CS/CardSwitcher/GetCard/13` | Cash flow — income, expenses, recent transactions |
+| `CS/CardSwitcher/GetCard/13` | Cash flow — income, expenses, budget, recent transactions |
 
 ### Investments
 
@@ -347,13 +391,12 @@ emoney_mcp/browser.py      ← session management + nodriver login
 
 ### SNB API (`api.emoneyadvisor.com/snb-api`)
 
-The spending module uses a separate REST API authenticated with a short-lived JWT token embedded in the Spending page HTML.
+The spending module uses a separate REST API authenticated with a short-lived JWT token embedded in the Spending page HTML. Results are cached for 5 minutes via `_fetch_snb_raw()`.
 
 | Endpoint | Data |
 |----------|------|
-| `api/values/GetFilteredTransactions` | All bank/CC transactions with `categoryId` (up to 2,000 most recent) |
+| `api/values/GetFilteredTransactions` | All bank/CC transactions with `categoryId` (full history, client-side filtered) |
 | `api/values/GetCategories` | 114 spending category names mapped by ID |
-| `api/values/GetAccounts` | Linked bank and credit card accounts |
 
 ---
 
@@ -369,8 +412,10 @@ uv pip install -e ".[dev]"
 # Run tests
 uv run pytest tests/ -v
 
-# Syntax check
-uv run python -m py_compile src/emoney_mcp/scraper.py src/emoney_mcp/server.py
+# Syntax check all modules
+uv run python -m py_compile src/emoney_mcp/scrapers/_helpers.py \
+  src/emoney_mcp/scrapers/spending.py src/emoney_mcp/scraper.py \
+  src/emoney_mcp/server.py
 ```
 
 Tests use fixture JSON files in `tests/fixtures/` and mock HTTP sessions — no live Emoney connection needed.
@@ -383,7 +428,7 @@ CI runs on GitHub Actions (Python 3.11, 3.12, 3.13) on every push and pull reque
 
 Cookies are saved to `~/.emoney_mcp/session.json` (`C:\Users\<you>\.emoney_mcp\session.json` on Windows). This path is stable regardless of how the package is installed.
 
-Delete the file to force a fresh login.
+Delete the file (or call `reset_session`) to force a fresh login.
 
 ---
 
@@ -398,15 +443,8 @@ Delete the file to force a fresh login.
 | `beautifulsoup4` | HTML parsing (fallback) |
 | `python-dotenv` | Environment variable support |
 
+---
+
 ## Changelog
 
-### 0.2.0
-- Added 11 new tools for tax planning, retirement planning, and portfolio analysis
-- **Tax planning:** `get_tax_loss_harvesting`, `get_contribution_room`, `get_roth_conversion_analysis`, `get_capital_gains_exposure`, `get_rmd_estimate`
-- **Retirement planning:** `get_retirement_runway`, `get_withdrawal_rate_analysis`
-- **Portfolio analysis:** `get_asset_location_efficiency`, `get_rebalancing_targets`, `get_financial_health_score`
-- **Discovery:** `explore_emoney_cards` to probe unexplored Emoney endpoints
-- IRS 2025 tax brackets, LTCG thresholds, contribution limits, and RMD Uniform Lifetime Table built in
-
-### 0.1.5 and earlier
-- Initial release with 21 tools covering net worth, holdings, spending, income, goals, and session management
+See [CHANGELOG.md](CHANGELOG.md) for the full version history.

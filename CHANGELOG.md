@@ -2,7 +2,13 @@
 
 All notable changes to emoney-mcp are documented here.
 
-## [0.7.1] — 2026-06-09 (current)
+## [0.7.2] — 2026-06-09 (current)
+
+### Changed
+- **`README_PYPI.md`** (new file) — added a separate end-user-focused PyPI description covering installation, Claude Desktop config, first-use login flow, example questions, and a simplified tool reference. Developer content (architecture, internal endpoints, local dev install, testing) remains in `README.md` for GitHub only.
+- **`pyproject.toml`** — `readme` now points to `README_PYPI.md` so PyPI displays the end-user description; `README.md` is unchanged and continues to serve as the full GitHub project reference.
+
+## [0.7.1] — 2026-06-09
 
 ### Fixed
 - **`pyproject.toml`** — added `readme = "README.md"` so PyPI publishes the full project description (tool list, examples, architecture). Previously the PyPI page showed no long description.

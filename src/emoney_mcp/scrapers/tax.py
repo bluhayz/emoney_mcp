@@ -584,6 +584,327 @@ async def get_rmd_estimate(http_session, birth_year: int) -> dict:
 
 
 # ---------------------------------------------------------------------------
+# get_social_security_optimizer
+# ---------------------------------------------------------------------------
+
+async def get_social_security_optimizer(
+    http_session,
+    birth_year: int,
+    estimated_monthly_benefit_at_67: float | None = None,
+    filing_status: str = "mfj",
+    spouse_birth_year: int | None = None,
+    spouse_benefit_at_67: float | None = None,
+    life_expectancy: int = 85,
+) -> dict:
+    """
+    Optimize Social Security claiming age by computing lifetime benefit at
+    age 62, 67, and 70 and showing the breakeven crossover points.
+
+    If estimated_monthly_benefit_at_67 is not supplied, the tool will remind
+    the user to provide it from their Social Security statement (ssa.gov).
+
+    Parameters
+    ----------
+    birth_year                       : your year of birth (e.g. 1962)
+    estimated_monthly_benefit_at_67  : monthly SS benefit at Full Retirement Age (FRA)
+    filing_status                    : 'single', 'mfj', or 'hoh' (affects spousal strategies)
+    spouse_birth_year                : spouse year of birth (optional — for spousal analysis)
+    spouse_benefit_at_67             : spouse monthly FRA benefit (optional)
+    life_expectancy                  : assumed age at death for lifetime value calc (default 85)
+    """
+    current_year = datetime.now().year
+    age = current_year - birth_year
+
+    # Full Retirement Age by birth year (Congress schedule)
+    if birth_year <= 1937:
+        fra = 65
+    elif birth_year <= 1954:
+        fra = 66
+    elif birth_year == 1955:
+        fra = 66.17
+    elif birth_year == 1956:
+        fra = 66.33
+    elif birth_year == 1957:
+        fra = 66.5
+    elif birth_year == 1958:
+        fra = 66.67
+    elif birth_year == 1959:
+        fra = 66.83
+    else:
+        fra = 67  # born 1960+
+
+    years_to_fra = max(0.0, fra - age)
+    years_to_62  = max(0.0, 62 - age)
+    years_to_70  = max(0.0, 70 - age)
+
+    # Adjustment factors relative to FRA benefit
+    # Each month before FRA: -5/9% for first 36 months, -5/12% thereafter
+    # Each month after FRA:  +8% per year (2/3% per month)
+    def _ss_factor(claim_age: float, fra_age: float) -> float:
+        months_diff = round((claim_age - fra_age) * 12)
+        if months_diff >= 0:
+            return 1 + months_diff * (8 / 100 / 12)
+        months_early = -months_diff
+        first36 = min(months_early, 36)
+        remaining = max(0, months_early - 36)
+        return 1 - (first36 * (5/9/100)) - (remaining * (5/12/100))
+
+    factor_62 = _ss_factor(62, fra)
+    factor_67 = _ss_factor(67, fra)
+    factor_70 = _ss_factor(70, fra)
+
+    if estimated_monthly_benefit_at_67 is None:
+        placeholder = True
+        fra_monthly = 2_000.0   # placeholder — user needs their SSA statement
+    else:
+        placeholder = False
+        fra_monthly = estimated_monthly_benefit_at_67 / _ss_factor(67, fra)
+
+    monthly_62 = round(fra_monthly * factor_62, 2)
+    monthly_67 = round(fra_monthly * factor_67, 2)
+    monthly_70 = round(fra_monthly * factor_70, 2)
+
+    def _lifetime(monthly: float, claim_age: float, death_age: int) -> float:
+        months = max(0, (death_age - claim_age) * 12)
+        return round(monthly * months, 2)
+
+    lifetime_62 = _lifetime(monthly_62, 62, life_expectancy)
+    lifetime_67 = _lifetime(monthly_67, 67, life_expectancy)
+    lifetime_70 = _lifetime(monthly_70, 70, life_expectancy)
+
+    # Breakeven: age where claiming later surpasses claiming earlier
+    def _breakeven(monthly_early: float, claim_early: float,
+                   monthly_late: float,  claim_late: float) -> float | None:
+        if monthly_late <= monthly_early:
+            return None
+        cumulative_early = 0.0
+        cumulative_late  = 0.0
+        for m in range(int((claim_late - claim_early) * 12)):
+            cumulative_early += monthly_early
+        for age_m in range(1, 600):
+            cumulative_early += monthly_early
+            cumulative_late  += monthly_late
+            if cumulative_late >= cumulative_early:
+                return round(claim_late + age_m / 12, 1)
+        return None
+
+    breakeven_62_vs_67 = _breakeven(monthly_62, 62, monthly_67, 67)
+    breakeven_67_vs_70 = _breakeven(monthly_67, 67, monthly_70, 70)
+    breakeven_62_vs_70 = _breakeven(monthly_62, 62, monthly_70, 70)
+
+    strategies = [
+        {
+            "claim_age":          62,
+            "monthly_benefit":    monthly_62,
+            "annual_benefit":     round(monthly_62 * 12, 2),
+            "pct_of_fra":         round(factor_62 * 100, 1),
+            "lifetime_benefit":   lifetime_62,
+            "current_age_years_away": round(years_to_62, 1),
+            "pros": ["Earliest access to income", "Beneficial if health concerns or short life expectancy",
+                     "More years of benefits paid"],
+            "cons": ["Permanently reduced monthly benefit", f"Receives {round((1-factor_62)*100,1)}% less per month than FRA"],
+        },
+        {
+            "claim_age":          round(fra),
+            "monthly_benefit":    round(fra_monthly * _ss_factor(fra, fra), 2),
+            "annual_benefit":     round(fra_monthly * _ss_factor(fra, fra) * 12, 2),
+            "pct_of_fra":         100.0,
+            "lifetime_benefit":   _lifetime(fra_monthly, fra, life_expectancy),
+            "current_age_years_away": round(years_to_fra, 1),
+            "pros": ["Full benefit — no reduction", "More flexibility to reassess later"],
+            "cons": ["Not the maximum possible", "Later start than 62"],
+        },
+        {
+            "claim_age":          70,
+            "monthly_benefit":    monthly_70,
+            "annual_benefit":     round(monthly_70 * 12, 2),
+            "pct_of_fra":         round(factor_70 * 100, 1),
+            "lifetime_benefit":   lifetime_70,
+            "current_age_years_away": round(years_to_70, 1),
+            "pros": [f"Maximum monthly benefit ({round(factor_70*100,1)}% of FRA)",
+                     "Highest lifetime value if you live past breakeven",
+                     "Best longevity insurance"],
+            "cons": ["No benefit during ages 67–70", "Requires bridge income or withdrawals in the gap"],
+        },
+    ]
+
+    optimal_by_lifetime = max(strategies, key=lambda s: s["lifetime_benefit"])
+
+    spousal = None
+    if spouse_birth_year and spouse_benefit_at_67:
+        sp_age   = current_year - spouse_birth_year
+        sp_fra70 = spouse_benefit_at_67 / _ss_factor(67, 67)  # approximate
+        sp_m62   = round(sp_fra70 * _ss_factor(62, 67), 2)
+        sp_m67   = round(spouse_benefit_at_67, 2)
+        sp_m70   = round(sp_fra70 * _ss_factor(70, 67), 2)
+        spousal_benefit = round(monthly_70 * 0.50, 2)
+        spousal = {
+            "spouse_birth_year":     spouse_birth_year,
+            "spouse_current_age":    sp_age,
+            "spouse_monthly_at_62":  sp_m62,
+            "spouse_monthly_at_67":  sp_m67,
+            "spouse_monthly_at_70":  sp_m70,
+            "spousal_benefit_note":  (
+                f"Lower-earning spouse may qualify for up to 50% of higher earner's PIA "
+                f"(≈${spousal_benefit:,.0f}/mo). File-and-suspend strategies eliminated in 2016 — "
+                "coordinate claiming ages to maximize household lifetime benefit."
+            ),
+        }
+
+    return {
+        "birth_year":                 birth_year,
+        "current_age":                age,
+        "full_retirement_age":        fra,
+        "life_expectancy_assumed":    life_expectancy,
+        "benefit_placeholder":        placeholder,
+        "fra_monthly_benefit":        round(fra_monthly, 2),
+        "strategies":                 strategies,
+        "breakeven_ages": {
+            "age_62_vs_67":  breakeven_62_vs_67,
+            "age_67_vs_70":  breakeven_67_vs_70,
+            "age_62_vs_70":  breakeven_62_vs_70,
+        },
+        "optimal_by_lifetime_benefit": {
+            "claim_age":         optimal_by_lifetime["claim_age"],
+            "lifetime_benefit":  optimal_by_lifetime["lifetime_benefit"],
+        },
+        "spousal_analysis":  spousal,
+        "note": (
+            "Breakeven age = when cumulative benefits from a later claiming date surpass the earlier date. "
+            "If you live past the breakeven age, delaying is mathematically better; if you die before it, earlier is better. "
+            "These figures ignore the time value of money and income taxes on SS benefits. "
+            "Social Security benefits are partially taxable (up to 85%) once combined income exceeds "
+            "$34k single / $44k married."
+        ),
+        "placeholder_note": (
+            "No benefit estimate provided — figures use a $2,000/mo FRA placeholder. "
+            "Get your actual estimate at ssa.gov/myaccount or from your Social Security statement."
+        ) if placeholder else None,
+        "caveat": _IRS_CAVEAT,
+    }
+
+
+# ---------------------------------------------------------------------------
+# get_quarterly_estimated_taxes
+# ---------------------------------------------------------------------------
+
+async def get_quarterly_estimated_taxes(
+    http_session,
+    filing_status: str = "mfj",
+    annual_income_override: float | None = None,
+    prior_year_tax: float | None = None,
+    expected_withholding: float | None = None,
+) -> dict:
+    """
+    Calculate quarterly estimated tax payments for the current calendar year.
+
+    Uses two methods and recommends the lower:
+    - Safe harbor: pay 100% of prior-year tax (110% if prior AGI > $150k) in four equal installments.
+    - Current-year annualized: pay based on the estimated current-year tax liability.
+
+    Parameters
+    ----------
+    filing_status           : 'single', 'mfj', or 'hoh' (default 'mfj')
+    annual_income_override  : override the inferred annual income (dollars)
+    prior_year_tax          : total federal tax paid last year (for safe harbor calc)
+    expected_withholding    : W-2 withholding expected this year (reduces estimated payments needed)
+    """
+    fs = filing_status if filing_status in _BRACKETS else "mfj"
+    std_ded = _STD_DEDUCTION.get(fs, 30_000)
+    current_year = datetime.now().year
+    current_month = datetime.now().month
+
+    # Infer income
+    if annual_income_override is not None:
+        annual_income = annual_income_override
+        income_source = "provided"
+    else:
+        inc_result = await get_income_summary(http_session, days=365)
+        annual_income = inc_result.get("total_income", 0) if "error" not in inc_result else 0
+        income_source = "inferred from 12-month transaction history"
+
+    taxable_income = max(0.0, annual_income - std_ded)
+    estimated_annual_tax = _compute_tax(taxable_income, fs)
+
+    # Withholding reduces balance due
+    withholding = expected_withholding or 0.0
+    balance_due_annual = max(0.0, estimated_annual_tax - withholding)
+
+    # Safe harbor: 100% of prior year tax (110% if prior AGI > $150k, assumed from income)
+    safe_harbor_multiplier = 1.10 if annual_income > 150_000 else 1.00
+    safe_harbor_annual = round((prior_year_tax or estimated_annual_tax) * safe_harbor_multiplier, 2)
+    safe_harbor_annual_net = max(0.0, safe_harbor_annual - withholding)
+
+    # IRS quarterly due dates
+    due_dates = [
+        {"quarter": "Q1", "period": f"Jan 1 – Mar 31",    "due": f"April 15, {current_year}"},
+        {"quarter": "Q2", "period": f"Apr 1 – May 31",    "due": f"June 16, {current_year}"},
+        {"quarter": "Q3", "period": f"Jun 1 – Aug 31",    "due": f"September 15, {current_year}"},
+        {"quarter": "Q4", "period": f"Sep 1 – Dec 31",    "due": f"January 15, {current_year + 1}"},
+    ]
+
+    # IRS unequal installment fractions: 25% each
+    installment_fractions = [0.25, 0.25, 0.25, 0.25]
+
+    method_actual_payments = []
+    method_safe_harbor_payments = []
+
+    for i, (frac, due) in enumerate(zip(installment_fractions, due_dates)):
+        method_actual_payments.append({
+            **due,
+            "payment": round(balance_due_annual * frac, 2),
+        })
+        method_safe_harbor_payments.append({
+            **due,
+            "payment": round(safe_harbor_annual_net * frac, 2),
+        })
+
+    recommended = "safe_harbor" if safe_harbor_annual_net <= balance_due_annual else "current_year"
+
+    return {
+        "tax_year":               current_year,
+        "filing_status":          fs,
+        "income_source":          income_source,
+        "estimated_annual_income": round(annual_income, 2),
+        "standard_deduction":     std_ded,
+        "estimated_taxable_income": round(taxable_income, 2),
+        "estimated_annual_tax":   round(estimated_annual_tax, 2),
+        "expected_withholding":   round(withholding, 2),
+        "effective_rate_pct":     round(estimated_annual_tax / annual_income * 100, 2) if annual_income else 0,
+        "marginal_rate_pct":      round(_marginal_rate(taxable_income, fs) * 100),
+        "methods": {
+            "current_year_annualized": {
+                "description": "Based on estimated current-year income and tax",
+                "total_needed": round(balance_due_annual, 2),
+                "quarterly_payments": method_actual_payments,
+            },
+            "safe_harbor": {
+                "description": (
+                    f"100%{' (110% — income > $150k)' if safe_harbor_multiplier > 1 else ''} "
+                    f"of prior-year tax {'(estimated)' if not prior_year_tax else ''} "
+                    "avoids underpayment penalty regardless of actual income"
+                ),
+                "prior_year_tax_used":  round(prior_year_tax or estimated_annual_tax, 2),
+                "safe_harbor_amount":   safe_harbor_annual,
+                "total_needed":         round(safe_harbor_annual_net, 2),
+                "quarterly_payments":   method_safe_harbor_payments,
+            },
+        },
+        "recommended_method":  recommended,
+        "recommended_payments": (
+            method_safe_harbor_payments if recommended == "safe_harbor"
+            else method_actual_payments
+        ),
+        "underpayment_penalty_note": (
+            "The IRS penalty for underpayment (Form 2210) applies if you owe more than $1,000 "
+            "AND paid less than 90% of this year's tax OR less than 100%/110% of last year's tax. "
+            "W-2 withholding counts toward these thresholds."
+        ),
+        "caveat": _IRS_CAVEAT,
+    }
+
+
+# ---------------------------------------------------------------------------
 # get_tax_bracket_headroom  (Sprint 2)
 # ---------------------------------------------------------------------------
 

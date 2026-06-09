@@ -18,6 +18,7 @@ from .scrapers import (   # make sure private helpers are also importable
     _build_account_type_map,
     _match_tax_bucket,
     _fetch_snb_data,
+    _fetch_snb_raw,
     _normalize_merchant,
     _compute_tax,
     _marginal_rate,
@@ -29,4 +30,7 @@ from .scrapers import (   # make sure private helpers are also importable
     _INCOME_CATEGORIES,
     _EXCLUDE_CATEGORIES,
     _NON_MERCHANT_CATEGORIES,
+    clear_card_cache,
+    clear_snb_cache,
+    clear_caches,
 )

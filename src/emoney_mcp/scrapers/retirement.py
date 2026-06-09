@@ -21,11 +21,11 @@ get_withdrawal_rate_analysis(http_session)
 """
 
 import math
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from .accounts import get_accounts
 from .goals import get_goals
-from .spending import _fetch_snb_data
+from .spending import _fetch_snb_data, get_savings_rate
 
 
 async def get_retirement_runway(
@@ -197,4 +197,147 @@ async def get_withdrawal_rate_analysis(http_session) -> dict:
                 "at this withdrawal rate from a diversified equity/bond portfolio."
             ),
         },
+    }
+
+
+# ---------------------------------------------------------------------------
+# get_net_worth_projection  (Sprint 3)
+# ---------------------------------------------------------------------------
+
+async def get_net_worth_projection(
+    http_session,
+    target_net_worth: float | None = None,
+    annual_return: float = 0.07,
+    annual_savings_override: float | None = None,
+) -> dict:
+    """
+    Project net worth forward and answer "When will I hit $X?" questions.
+
+    Uses the current net worth from Emoney and the actual average monthly net
+    savings (income − spending) from the last 6 months to drive the projection.
+    Investment returns compound on the existing portfolio; new savings are added
+    monthly on top.
+
+    Automatically shows milestone years for common targets
+    ($500k, $1M, $2M, $5M, $10M) and, if ``target_net_worth`` is provided,
+    the specific year and month when that target will be reached.
+
+    Parameters
+    ----------
+    target_net_worth       : optional target in dollars (e.g. 2_000_000)
+    annual_return          : assumed annual portfolio return (default 7%)
+    annual_savings_override: override the inferred annual savings amount
+    """
+    import asyncio
+
+    # Fetch accounts and savings rate in parallel
+    accts, savings_result = await asyncio.gather(
+        get_accounts(http_session),
+        get_savings_rate(http_session, months=6),
+    )
+
+    if "error" in accts:
+        return accts
+
+    current_nw   = accts.get("net_worth") or 0
+    total_assets = accts.get("total_assets") or 0
+    total_liab   = accts.get("total_liabilities") or 0
+
+    # Monthly savings: use override, or infer from savings_rate data
+    if annual_savings_override is not None:
+        monthly_savings = round(annual_savings_override / 12, 2)
+        savings_source  = "override"
+    elif "error" not in savings_result:
+        total_net       = savings_result.get("total_net", 0) or 0
+        months_shown    = savings_result.get("months_shown", 6) or 6
+        monthly_savings = round(total_net / months_shown, 2)
+        savings_source  = f"average over last {months_shown} months"
+    else:
+        monthly_savings = 0.0
+        savings_source  = "unavailable (defaulting to $0)"
+
+    monthly_return = annual_return / 12
+    current_year   = datetime.now().year
+    current_month  = datetime.now().month
+
+    # Common milestones to track
+    _MILESTONES = [500_000, 1_000_000, 2_000_000, 5_000_000, 10_000_000]
+
+    milestones_hit:   dict[float, dict] = {}
+    target_hit:       dict | None = None
+
+    # Project month by month for up to 50 years
+    balance       = float(current_nw)
+    month_offset  = 0
+    yearly_snaps  = []
+
+    for _ in range(50 * 12):
+        month_offset += 1
+        # Compound existing balance and add new savings
+        balance = round(balance * (1 + monthly_return) + monthly_savings, 2)
+
+        proj_year  = current_year + (current_month + month_offset - 1) // 12
+        proj_month = (current_month + month_offset - 1) % 12 + 1
+
+        # Check milestones
+        for ms in _MILESTONES:
+            if ms not in milestones_hit and balance >= ms:
+                milestones_hit[ms] = {
+                    "milestone":   ms,
+                    "year":        proj_year,
+                    "month":       proj_month,
+                    "years_away":  round(month_offset / 12, 1),
+                }
+
+        # Check user target
+        if target_net_worth and target_hit is None and balance >= target_net_worth:
+            target_hit = {
+                "target":     target_net_worth,
+                "year":       proj_year,
+                "month":      proj_month,
+                "years_away": round(month_offset / 12, 1),
+                "balance_at_target": round(balance, 2),
+            }
+
+        # Annual snapshot (every 12 months)
+        if month_offset % 12 == 0:
+            years_out = month_offset // 12
+            yearly_snaps.append({
+                "year":          current_year + years_out,
+                "years_out":     years_out,
+                "net_worth":     round(balance, 2),
+            })
+
+        # Stop projecting once all milestones and the user target are hit
+        if len(milestones_hit) == len(_MILESTONES) and (target_net_worth is None or target_hit is not None):
+            break
+
+    # Cap yearly snapshots for readability
+    yearly_snaps = yearly_snaps[:30]  # 30-year horizon
+
+    return {
+        "current_net_worth":      round(current_nw, 2),
+        "total_assets":           round(total_assets, 2),
+        "total_liabilities":      round(total_liab, 2),
+        "monthly_savings":        monthly_savings,
+        "annual_savings":         round(monthly_savings * 12, 2),
+        "savings_source":         savings_source,
+        "annual_return_pct":      round(annual_return * 100, 1),
+        "target_net_worth":       target_net_worth,
+        "target_reached":         target_hit,
+        "milestones": [
+            milestones_hit.get(ms, {
+                "milestone": ms,
+                "year": None,
+                "note": "Not reached within 50-year projection",
+            })
+            for ms in _MILESTONES
+        ],
+        "30_year_projection":     yearly_snaps,
+        "note": (
+            "Projection compounds existing net worth at the assumed annual return and "
+            "adds the average monthly savings each month. Does not model inflation, "
+            "variable income/spending, or tax drag. "
+            "A negative monthly_savings means you are currently spending more than you earn."
+        ),
     }

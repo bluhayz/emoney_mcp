@@ -182,6 +182,16 @@ async def list_tools() -> list[Tool]:
             inputSchema={"type": "object", "properties": {}, "required": []},
         ),
         Tool(
+            name="get_quick_status",
+            description=(
+                "Returns a 5-number financial snapshot: net worth, portfolio today's change, "
+                "this month's savings rate, top spending category, and goal on-track status. "
+                "Designed for quick-check queries with minimal token usage. "
+                "Useful for 'How am I doing today?' or 'Quick financial check.'"
+            ),
+            inputSchema={"type": "object", "properties": {}, "required": []},
+        ),
+        Tool(
             name="search_transactions",
             description=(
                 "Search spending transactions by keyword, category, or amount. "
@@ -196,7 +206,8 @@ async def list_tools() -> list[Tool]:
                     "category":   {"type": "string",  "description": "Category name to filter by (partial match)"},
                     "days":       {"type": "integer", "description": "Days back to search (default 365)", "default": 365},
                     "min_amount": {"type": "number",  "description": "Minimum transaction amount"},
-                    "max_amount": {"type": "number",  "description": "Maximum transaction amount"},
+                    "max_amount":   {"type": "number",  "description": "Maximum transaction amount"},
+                    "max_results":  {"type": "integer", "description": "Cap on returned transactions (default 100; pass 0 for all)", "default": 100},
                 },
                 "required": [],
             },
@@ -287,7 +298,7 @@ async def list_tools() -> list[Tool]:
                 "Returns bank and credit card transactions with category labels (Groceries, Dining, "
                 "Travel, Shopping, etc.) for the last N days. Unlike get_transactions (which covers "
                 "investment activity), this covers everyday spending from linked bank/CC accounts. "
-                "Optional parameter: days (default 30, max 365). "
+                "Optional: days (default 30, max 365), max_transactions (default 100; pass 0 for all). "
                 "Useful for 'What did I spend on groceries last month?' or 'Show me my dining expenses.'"
             ),
             inputSchema={
@@ -297,6 +308,64 @@ async def list_tools() -> list[Tool]:
                         "type": "integer",
                         "description": "Number of days back to fetch (default 30, max 365)",
                         "default": 30,
+                    },
+                    "max_transactions": {
+                        "type": "integer",
+                        "description": "Cap on returned transactions (default 100; pass 0 for all)",
+                        "default": 100,
+                    },
+                },
+                "required": [],
+            },
+        ),
+        Tool(
+            name="get_budget_vs_actual",
+            description=(
+                "Compares this month's actual spending to the rolling average of the prior N months "
+                "by category. Flags categories that are tracking >15% above their average ('over_budget'). "
+                "Also compares to any total monthly budget configured in Emoney. "
+                "Optional: months_avg (default 3). "
+                "Useful for 'Am I over budget this month?' or 'Which categories are overspending?'"
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "months_avg": {
+                        "type": "integer",
+                        "description": "Prior months to use as the rolling average benchmark (default 3)",
+                        "default": 3,
+                    }
+                },
+                "required": [],
+            },
+        ),
+        Tool(
+            name="get_year_over_year",
+            description=(
+                "Compares this year's spending and income to the same period last year. "
+                "Shows total year-to-date change in dollars and percent plus a per-category breakdown "
+                "of biggest increases and decreases. Requires 2 years of transaction history. "
+                "No parameters required. "
+                "Useful for 'Am I spending more this year than last year?' or 'How has my dining changed?'"
+            ),
+            inputSchema={"type": "object", "properties": {}, "required": []},
+        ),
+        Tool(
+            name="get_cash_flow_projection",
+            description=(
+                "Projects monthly cash flow for the next N months based on actual income and spending "
+                "averages from the last 90 days. Shows projected monthly surplus/deficit and a running "
+                "balance estimate. Optional: months_ahead (default 6, max 24). "
+                "Useful for 'Will I have enough to cover a big expense in 3 months?' or "
+                "'What does my cash flow look like through year-end?'"
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "months_ahead": {
+                        "type": "integer",
+                        "description": "Months to project forward (default 6, max 24)",
+                        "default": 6,
                     }
                 },
                 "required": [],
@@ -394,6 +463,25 @@ async def list_tools() -> list[Tool]:
                 "required": ["birth_year"],
             },
         ),
+        Tool(
+            name="get_tax_bracket_headroom",
+            description=(
+                "Shows how much additional income can be earned before crossing into the next "
+                "federal tax bracket. Infers current income from 12-month transaction history "
+                "if not supplied. Also shows LTCG bracket headroom. "
+                "Optional: current_income (dollars), filing_status ('mfj', 'single', 'hoh'). "
+                "Useful for 'How much can I convert to Roth without hitting the next bracket?' or "
+                "'How much freelance income can I take this year at my current rate?'"
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "current_income":  {"type": "number", "description": "Estimated annual gross income (inferred if omitted)"},
+                    "filing_status":   {"type": "string", "description": "'single', 'mfj', or 'hoh' (default 'mfj')"},
+                },
+                "required": [],
+            },
+        ),
         # ── Retirement planning ───────────────────────────────────────────
         Tool(
             name="get_retirement_runway",
@@ -424,6 +512,61 @@ async def list_tools() -> list[Tool]:
                 "Useful for 'How much can I spend in retirement?' or 'What does a 4% withdrawal rate give me?'"
             ),
             inputSchema={"type": "object", "properties": {}, "required": []},
+        ),
+        Tool(
+            name="get_net_worth_projection",
+            description=(
+                "Projects net worth forward using the current balance plus actual average monthly savings, "
+                "compounding at an assumed annual return. Shows milestone years ($500k, $1M, $2M, $5M, $10M) "
+                "and a 30-year snapshot table. Optional: target_net_worth (dollars to find the specific year for), "
+                "annual_return (default 0.07), annual_savings_override. "
+                "Useful for 'When will I hit $2M?' or 'How is my net worth projected to grow?'"
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "target_net_worth":       {"type": "number", "description": "Target to find the year for (e.g. 2000000)"},
+                    "annual_return":          {"type": "number", "description": "Annual return assumption (default 0.07)", "default": 0.07},
+                    "annual_savings_override":{"type": "number", "description": "Override the inferred annual savings amount"},
+                },
+                "required": [],
+            },
+        ),
+        Tool(
+            name="get_debt_payoff_plan",
+            description=(
+                "Models debt payoff using the avalanche (highest-rate first) and snowball (smallest-balance first) "
+                "strategies. Identifies all non-mortgage debt accounts from Emoney, assumes typical APRs by account "
+                "type, and shows months to payoff and total interest for each strategy. "
+                "Optional: extra_monthly_payment, assumed_credit_card_apr (default 0.22), assumed_loan_apr (default 0.07). "
+                "Useful for 'When will I be debt-free?' or 'Which debt payoff strategy saves the most interest?'"
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "extra_monthly_payment":   {"type": "number", "description": "Extra monthly payment above minimums (default $0)"},
+                    "assumed_credit_card_apr": {"type": "number", "description": "Assumed APR for credit cards (default 0.22)"},
+                    "assumed_loan_apr":        {"type": "number", "description": "Assumed APR for non-mortgage loans (default 0.07)"},
+                },
+                "required": [],
+            },
+        ),
+        Tool(
+            name="get_college_savings_gap",
+            description=(
+                "Estimates the gap between current 529 savings and projected college costs for education goals "
+                "in the Emoney financial plan. Shows required monthly contributions to close any gap by the "
+                "goal start year. Optional: annual_return (default 0.06), annual_college_inflation (default 0.05). "
+                "Useful for 'Are we on track for Parker's college?' or 'How much do we need to save monthly for 529?'"
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "annual_return":           {"type": "number", "description": "Expected 529 portfolio return (default 0.06)"},
+                    "annual_college_inflation":{"type": "number", "description": "College cost inflation rate (default 0.05)"},
+                },
+                "required": [],
+            },
         ),
         # ── Portfolio analysis ─────────────────────────────────────────────
         Tool(
@@ -528,7 +671,13 @@ async def list_tools() -> list[Tool]:
 
 @app.call_tool()
 async def call_tool(name: str, arguments: dict) -> list[TextContent]:
-    importlib.reload(scraper)
+    # Hot-reload scraper module only in development mode.
+    # In production (the common case) this is skipped — the thin shim adds
+    # no value once the package is installed, and reloading every call adds
+    # measurable overhead.  Set EMONEY_DEV=1 to re-enable hot-reload.
+    import os
+    if os.environ.get("EMONEY_DEV"):
+        importlib.reload(scraper)
 
     if name == "get_features":
         result = _get_features()
@@ -570,7 +719,16 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
             days=int(arguments.get("days", 365)),
             min_amount=float(arguments.get("min_amount", 0)),
             max_amount=float(arguments["max_amount"]) if "max_amount" in arguments else None,
+            max_results=int(arguments.get("max_results", 100)),
         )
+    elif name == "get_quick_status":
+        result = await _get_quick_status()
+    elif name == "get_budget_vs_actual":
+        result = await _get_budget_vs_actual(months_avg=int(arguments.get("months_avg", 3)))
+    elif name == "get_year_over_year":
+        result = await _get_year_over_year()
+    elif name == "get_cash_flow_projection":
+        result = await _get_cash_flow_projection(months_ahead=int(arguments.get("months_ahead", 6)))
     elif name == "get_recurring_charges":
         result = await _get_recurring_charges()
     elif name == "get_net_worth_breakdown":
@@ -586,7 +744,8 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
         result = await _get_savings_rate(months=months)
     elif name == "get_spending_transactions":
         days = int(arguments.get("days", 30))
-        result = await _get_spending_transactions(days=days)
+        max_transactions = int(arguments.get("max_transactions", 100))
+        result = await _get_spending_transactions(days=days, max_transactions=max_transactions)
     elif name == "get_version":
         result = _get_version()
     elif name == "sync_chrome_session":
@@ -618,6 +777,11 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
         )
     elif name == "get_rmd_estimate":
         result = await _get_rmd_estimate(birth_year=int(arguments["birth_year"]))
+    elif name == "get_tax_bracket_headroom":
+        result = await _get_tax_bracket_headroom(
+            current_income=float(arguments["current_income"]) if "current_income" in arguments else None,
+            filing_status=arguments.get("filing_status", "mfj"),
+        )
     # ── Retirement planning ───────────────────────────────────────────────
     elif name == "get_retirement_runway":
         result = await _get_retirement_runway(
@@ -626,6 +790,12 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
         )
     elif name == "get_withdrawal_rate_analysis":
         result = await _get_withdrawal_rate_analysis()
+    elif name == "get_net_worth_projection":
+        result = await _get_net_worth_projection(
+            target_net_worth=float(arguments["target_net_worth"]) if "target_net_worth" in arguments else None,
+            annual_return=float(arguments.get("annual_return", 0.07)),
+            annual_savings_override=float(arguments["annual_savings_override"]) if "annual_savings_override" in arguments else None,
+        )
     # ── Portfolio analysis ────────────────────────────────────────────────
     elif name == "get_asset_location_efficiency":
         result = await _get_asset_location_efficiency()
@@ -642,6 +812,17 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
         if card_ids is not None:
             card_ids = [int(c) for c in card_ids]
         result = await _explore_emoney_cards(card_ids=card_ids)
+    elif name == "get_debt_payoff_plan":
+        result = await _get_debt_payoff_plan(
+            extra_monthly_payment=float(arguments.get("extra_monthly_payment", 0.0)),
+            assumed_credit_card_apr=float(arguments.get("assumed_credit_card_apr", 0.22)),
+            assumed_loan_apr=float(arguments.get("assumed_loan_apr", 0.07)),
+        )
+    elif name == "get_college_savings_gap":
+        result = await _get_college_savings_gap(
+            annual_return=float(arguments.get("annual_return", 0.06)),
+            annual_college_inflation=float(arguments.get("annual_college_inflation", 0.05)),
+        )
     else:
         raise ValueError(f"Unknown tool: {name}")
 
@@ -822,11 +1003,16 @@ async def _get_spending_transactions(days: int = 30) -> dict:
 
 def _get_features() -> dict:
     return {
-        "version": "0.4.0",
-        "total_tools": 30,
+        "version": "0.5.0",
+        "total_tools": 38,
         "categories": {
             "Overview & Dashboard": {
                 "tools": {
+                    "get_quick_status": {
+                        "description": "5-number snapshot: net worth, portfolio change, savings rate, top spending category, goal status. Minimal tokens.",
+                        "examples": ["How am I doing today?", "Quick financial check."],
+                        "parameters": "none",
+                    },
                     "get_financial_summary": {
                         "description": "Executive dashboard — net worth, performance, income vs. spending, top 5 spending categories, goal status.",
                         "examples": ["How are my finances?", "Give me a financial overview."],
@@ -922,17 +1108,32 @@ def _get_features() -> dict:
                     "get_spending_transactions": {
                         "description": "Bank and credit card transactions with category labels for everyday spending.",
                         "examples": ["Show me my dining expenses.", "What did I spend on groceries last month?"],
-                        "parameters": "days (default 30, max 365)",
+                        "parameters": "days (default 30, max 365), max_transactions (default 100; 0=all)",
                     },
                     "get_spending_trends": {
                         "description": "Month-over-month spending trends by category — which are trending up, down, or stable.",
                         "examples": ["Is my dining spending going up?", "Compare my last 3 months of spending."],
                         "parameters": "months (default 3, max 12)",
                     },
+                    "get_budget_vs_actual": {
+                        "description": "Compares this month's actual spending to the rolling average by category. Flags overspend categories.",
+                        "examples": ["Am I over budget this month?", "Which categories are overspending?"],
+                        "parameters": "months_avg (default 3)",
+                    },
+                    "get_year_over_year": {
+                        "description": "Compares this year's spending and income to the same period last year with per-category breakdown.",
+                        "examples": ["Am I spending more this year?", "How has my grocery spending changed year-over-year?"],
+                        "parameters": "none",
+                    },
+                    "get_cash_flow_projection": {
+                        "description": "Projects monthly cash flow for the next N months using actual income/spending averages.",
+                        "examples": ["Will I have enough cash in 3 months?", "What does my cash flow look like through year-end?"],
+                        "parameters": "months_ahead (default 6, max 24)",
+                    },
                     "search_transactions": {
                         "description": "Search spending transactions by keyword, category, and/or amount range.",
                         "examples": ["How much did I spend at Costco this year?", "Show me all Amazon charges."],
-                        "parameters": "query, category, days (default 365), min_amount, max_amount",
+                        "parameters": "query, category, days (default 365), min_amount, max_amount, max_results (default 100)",
                     },
                     "get_recurring_charges": {
                         "description": "Detects recurring/subscription charges from 120-day transaction patterns.",
@@ -962,6 +1163,11 @@ def _get_features() -> dict:
             },
             "Tax Planning": {
                 "tools": {
+                    "get_tax_bracket_headroom": {
+                        "description": "Shows how much more income can be earned before crossing into the next federal bracket. Also shows LTCG bracket headroom.",
+                        "examples": ["How much can I convert to Roth without a bracket jump?", "How much freelance income can I take this year?"],
+                        "parameters": "current_income (optional — inferred if omitted), filing_status (default 'mfj')",
+                    },
                     "get_tax_loss_harvesting": {
                         "description": "Identifies taxable positions with unrealized losses, ranked by size with estimated tax savings.",
                         "examples": ["Where can I harvest losses?", "What's my tax-loss harvesting opportunity?"],
@@ -1000,6 +1206,21 @@ def _get_features() -> dict:
                         "description": "Projects portfolio to retirement year and shows annual/monthly income at 3–5% withdrawal rates.",
                         "examples": ["How much can I spend in retirement?", "What does a 4% withdrawal rate give me?"],
                         "parameters": "none",
+                    },
+                    "get_net_worth_projection": {
+                        "description": "Projects net worth forward and answers 'When will I hit $X?' — shows milestone years and 30-year snapshot.",
+                        "examples": ["When will I hit $2M?", "How is my net worth projected to grow?"],
+                        "parameters": "target_net_worth (optional), annual_return (default 0.07), annual_savings_override",
+                    },
+                    "get_debt_payoff_plan": {
+                        "description": "Models avalanche vs. snowball debt payoff strategies — months to payoff and total interest for each.",
+                        "examples": ["When will I be debt-free?", "Which payoff strategy saves the most interest?"],
+                        "parameters": "extra_monthly_payment, assumed_credit_card_apr (default 0.22), assumed_loan_apr (default 0.07)",
+                    },
+                    "get_college_savings_gap": {
+                        "description": "Estimates 529 funding gap for education goals — current trajectory vs. projected college costs with monthly savings needed.",
+                        "examples": ["Are we on track for Parker's college?", "How much do we need to save monthly for 529?"],
+                        "parameters": "annual_return (default 0.06), annual_college_inflation (default 0.05)",
                     },
                 },
             },
@@ -1084,6 +1305,8 @@ async def _reset() -> dict:
             COOKIE_FILE.unlink()
         bmod._http_session = EmoneyHttpSession()
         bmod._login_session = EmoneyLoginSession()
+        # Purge in-memory caches so stale data is never returned after login
+        scraper.clear_caches()
         return {"success": True, "message": "Session cleared. Call get_accounts to log in again."}
     except Exception as e:
         return {"error": str(e)}
@@ -1200,6 +1423,94 @@ async def _explore_emoney_cards(card_ids: list[int] | None = None) -> dict:
     if err:
         return err
     return await scraper.explore_emoney_cards(sess, card_ids=card_ids)
+
+
+# ── New Sprint 2 & 3 handlers ──────────────────────────────────────────────
+
+async def _get_quick_status() -> dict:
+    sess, err = await _get_session_or_err()
+    if err:
+        return err
+    return await scraper.get_quick_status(sess)
+
+
+async def _get_budget_vs_actual(months_avg: int = 3) -> dict:
+    sess, err = await _get_session_or_err()
+    if err:
+        return err
+    return await scraper.get_budget_vs_actual(sess, months_avg=months_avg)
+
+
+async def _get_year_over_year() -> dict:
+    sess, err = await _get_session_or_err()
+    if err:
+        return err
+    return await scraper.get_year_over_year(sess)
+
+
+async def _get_cash_flow_projection(months_ahead: int = 6) -> dict:
+    sess, err = await _get_session_or_err()
+    if err:
+        return err
+    return await scraper.get_cash_flow_projection(sess, months_ahead=months_ahead)
+
+
+async def _get_tax_bracket_headroom(
+    current_income: float | None = None,
+    filing_status: str = "mfj",
+) -> dict:
+    sess, err = await _get_session_or_err()
+    if err:
+        return err
+    return await scraper.get_tax_bracket_headroom(
+        sess, current_income=current_income, filing_status=filing_status
+    )
+
+
+async def _get_net_worth_projection(
+    target_net_worth: float | None = None,
+    annual_return: float = 0.07,
+    annual_savings_override: float | None = None,
+) -> dict:
+    sess, err = await _get_session_or_err()
+    if err:
+        return err
+    return await scraper.get_net_worth_projection(
+        sess,
+        target_net_worth=target_net_worth,
+        annual_return=annual_return,
+        annual_savings_override=annual_savings_override,
+    )
+
+
+async def _get_debt_payoff_plan(
+    extra_monthly_payment: float = 0.0,
+    assumed_credit_card_apr: float = 0.22,
+    assumed_loan_apr: float = 0.07,
+) -> dict:
+    sess, err = await _get_session_or_err()
+    if err:
+        return err
+    return await scraper.get_debt_payoff_plan(
+        sess,
+        extra_monthly_payment=extra_monthly_payment,
+        assumed_credit_card_apr=assumed_credit_card_apr,
+        assumed_loan_apr=assumed_loan_apr,
+    )
+
+
+async def _get_college_savings_gap(
+    annual_return: float = 0.06,
+    annual_college_inflation: float = 0.05,
+) -> dict:
+    sess, err = await _get_session_or_err()
+    if err:
+        return err
+    return await scraper.get_college_savings_gap(
+        sess,
+        annual_return=annual_return,
+        annual_college_inflation=annual_college_inflation,
+    )
 
 
 async def main() -> None:

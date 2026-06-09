@@ -2,7 +2,12 @@
 
 All notable changes to emoney-mcp are documented here.
 
-## [0.7.0] — 2026-06-09 (current)
+## [0.7.1] — 2026-06-09 (current)
+
+### Fixed
+- **`pyproject.toml`** — added `readme = "README.md"` so PyPI publishes the full project description (tool list, examples, architecture). Previously the PyPI page showed no long description.
+
+## [0.7.0] — 2026-06-09
 
 ### Added — 4 new advanced planning tools (42 tools total)
 

@@ -24,9 +24,11 @@ goals.py      — get_goals, get_financial_summary, get_financial_health_score,
                  get_quick_status, get_college_savings_gap
 tax.py        — get_tax_loss_harvesting, get_contribution_room,
                  get_roth_conversion_analysis, get_capital_gains_exposure,
-                 get_rmd_estimate, get_tax_bracket_headroom
+                 get_rmd_estimate, get_tax_bracket_headroom,
+                 get_social_security_optimizer, get_quarterly_estimated_taxes
 retirement.py — get_retirement_runway, get_withdrawal_rate_analysis,
-                 get_net_worth_projection
+                 get_net_worth_projection, run_monte_carlo_retirement,
+                 get_dynamic_withdrawal_guardrails
 portfolio.py  — get_asset_location_efficiency, get_rebalancing_targets,
                  explore_emoney_cards, _classify_asset
 
@@ -93,6 +95,8 @@ from .tax import (
     get_capital_gains_exposure,
     get_rmd_estimate,
     get_tax_bracket_headroom,
+    get_social_security_optimizer,
+    get_quarterly_estimated_taxes,
     _compute_tax,
     _marginal_rate,
     _ltcg_rate,
@@ -102,6 +106,8 @@ from .retirement import (
     get_retirement_runway,
     get_withdrawal_rate_analysis,
     get_net_worth_projection,
+    run_monte_carlo_retirement,
+    get_dynamic_withdrawal_guardrails,
 )
 
 from .portfolio import (
@@ -149,10 +155,12 @@ __all__ = [
     "get_tax_loss_harvesting", "get_contribution_room",
     "get_roth_conversion_analysis", "get_capital_gains_exposure",
     "get_rmd_estimate", "get_tax_bracket_headroom",
+    "get_social_security_optimizer", "get_quarterly_estimated_taxes",
     "_compute_tax", "_marginal_rate", "_ltcg_rate",
     # retirement
     "get_retirement_runway", "get_withdrawal_rate_analysis",
-    "get_net_worth_projection",
+    "get_net_worth_projection", "run_monte_carlo_retirement",
+    "get_dynamic_withdrawal_guardrails",
     # portfolio
     "get_asset_location_efficiency", "get_rebalancing_targets",
     "explore_emoney_cards", "_classify_asset", "_ASSET_EFFICIENCY",

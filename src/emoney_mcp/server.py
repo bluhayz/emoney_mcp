@@ -632,6 +632,112 @@ async def list_tools() -> list[Tool]:
                 "required": [],
             },
         ),
+        # ── Advanced retirement simulations ──────────────────────────────
+        Tool(
+            name="run_monte_carlo_retirement",
+            description=(
+                "Runs Monte Carlo retirement simulations (default 1,000 paths) using stochastic "
+                "annual returns and inflation to estimate the probability that a portfolio survives "
+                "a given retirement horizon. Returns probability of success, median/10th/90th percentile "
+                "ending balances, worst-case depletion year, and a year-by-year percentile table. "
+                "Also finds the safe withdrawal rate at 90% success. "
+                "Optional: simulations (default 1000), years (default 30), annual_spending (inferred if omitted), "
+                "mean_return (default 0.07), std_dev (default 0.15), inflation_mean (default 0.03), "
+                "inflation_std (default 0.01), social_security_annual (default 0), withdrawal_rate. "
+                "Useful for 'What are my odds of not running out of money?' or 'How safe is a 4% withdrawal rate?'"
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "simulations":            {"type": "integer", "description": "Number of simulation paths (default 1000, max 10000)", "default": 1000},
+                    "years":                  {"type": "integer", "description": "Retirement horizon in years (default 30)", "default": 30},
+                    "annual_spending":        {"type": "number",  "description": "Annual spending/withdrawal in dollars (default: actual 12-month spend)"},
+                    "mean_return":            {"type": "number",  "description": "Mean annual portfolio return (default 0.07 = 7%)", "default": 0.07},
+                    "std_dev":                {"type": "number",  "description": "Annual return standard deviation (default 0.15; use 0.18-0.20 for all-equity)", "default": 0.15},
+                    "inflation_mean":         {"type": "number",  "description": "Mean annual inflation rate (default 0.03)", "default": 0.03},
+                    "inflation_std":          {"type": "number",  "description": "Inflation standard deviation (default 0.01)", "default": 0.01},
+                    "social_security_annual": {"type": "number",  "description": "Annual Social Security or pension income to offset withdrawals (default 0)", "default": 0},
+                    "withdrawal_rate":        {"type": "number",  "description": "Override spending with a portfolio percentage (e.g. 0.04 = 4%)"},
+                },
+                "required": [],
+            },
+        ),
+        Tool(
+            name="get_dynamic_withdrawal_guardrails",
+            description=(
+                "Applies Guyton-Klinger guardrail rules to determine whether to raise, hold, or cut "
+                "the current withdrawal amount based on how the portfolio is performing relative to "
+                "its starting value. If portfolio outperforms, a 10% raise is triggered; if it "
+                "underperforms past the lower guardrail, a 10% cut is recommended. Returns the "
+                "adjusted annual and monthly withdrawal and whether a change is needed. "
+                "Optional: initial_withdrawal_rate (default 0.05), raise_ceiling_pct (default 20), "
+                "cut_floor_pct (default 20), initial_portfolio_value, current_annual_withdrawal. "
+                "Useful for 'Should I adjust my retirement withdrawals this year?' or "
+                "'Am I hitting a guardrail on my spending?'"
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "initial_withdrawal_rate":   {"type": "number",  "description": "Withdrawal rate at retirement start (default 0.05 = 5%)", "default": 0.05},
+                    "raise_ceiling_pct":         {"type": "number",  "description": "Max % above initial a raise can go (default 20)", "default": 20.0},
+                    "cut_floor_pct":             {"type": "number",  "description": "Max % below initial a cut can go (default 20)", "default": 20.0},
+                    "raise_guard_pct":           {"type": "number",  "description": "Rate must drop this % below initial to trigger a raise (default 20)", "default": 20.0},
+                    "cut_guard_pct":             {"type": "number",  "description": "Rate must rise this % above initial to trigger a cut (default 20)", "default": 20.0},
+                    "initial_portfolio_value":   {"type": "number",  "description": "Portfolio value at retirement start (optional; uses current if omitted)"},
+                    "current_annual_withdrawal": {"type": "number",  "description": "Override inferred annual withdrawal (optional)"},
+                },
+                "required": [],
+            },
+        ),
+        Tool(
+            name="get_social_security_optimizer",
+            description=(
+                "Computes the optimal Social Security claiming age by comparing lifetime benefits "
+                "at age 62, Full Retirement Age (FRA), and 70. Shows monthly benefit at each age, "
+                "breakeven ages (when claiming later surpasses claiming earlier), and which strategy "
+                "maximizes lifetime benefits at a given life expectancy. Includes spousal analysis "
+                "if spouse parameters are provided. "
+                "Required: birth_year. Optional: estimated_monthly_benefit_at_67 (from ssa.gov — "
+                "uses $2,000 placeholder if omitted), filing_status, spouse_birth_year, "
+                "spouse_benefit_at_67, life_expectancy (default 85). "
+                "Useful for 'Should I claim Social Security at 62 or wait until 70?' or "
+                "'What is the breakeven age for delaying Social Security?'"
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "birth_year":                      {"type": "integer", "description": "Your year of birth (e.g. 1962)"},
+                    "estimated_monthly_benefit_at_67": {"type": "number",  "description": "Your estimated monthly SS benefit at age 67 (from ssa.gov — uses placeholder if omitted)"},
+                    "filing_status":                   {"type": "string",  "description": "'single', 'mfj', or 'hoh' (default 'mfj')"},
+                    "spouse_birth_year":               {"type": "integer", "description": "Spouse year of birth (optional — enables spousal analysis)"},
+                    "spouse_benefit_at_67":            {"type": "number",  "description": "Spouse monthly benefit at FRA (optional)"},
+                    "life_expectancy":                 {"type": "integer", "description": "Assumed age at death for lifetime value calculation (default 85)", "default": 85},
+                },
+                "required": ["birth_year"],
+            },
+        ),
+        Tool(
+            name="get_quarterly_estimated_taxes",
+            description=(
+                "Calculates quarterly federal estimated tax payment amounts and due dates for the "
+                "current year. Uses two methods — current-year annualized (based on estimated income) "
+                "and IRS safe harbor (100%/110% of prior-year tax) — and recommends the lower one to "
+                "avoid underpayment penalties. Infers income from 12-month transaction history if not supplied. "
+                "Optional: filing_status, annual_income_override, prior_year_tax, expected_withholding. "
+                "Useful for 'How much do I owe in estimated taxes each quarter?' or "
+                "'What are my Q2 estimated tax payments?'"
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "filing_status":          {"type": "string", "description": "'single', 'mfj', or 'hoh' (default 'mfj')"},
+                    "annual_income_override": {"type": "number", "description": "Override inferred annual income (dollars)"},
+                    "prior_year_tax":         {"type": "number", "description": "Total federal tax paid last year (for safe harbor calculation)"},
+                    "expected_withholding":   {"type": "number", "description": "Expected W-2 withholding this year (reduces estimated payments needed)"},
+                },
+                "required": [],
+            },
+        ),
         # ── Help ──────────────────────────────────────────────────────────
         Tool(
             name="get_features",
@@ -823,6 +929,45 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
             annual_return=float(arguments.get("annual_return", 0.06)),
             annual_college_inflation=float(arguments.get("annual_college_inflation", 0.05)),
         )
+    # ── Advanced retirement simulations ──────────────────────────────────
+    elif name == "run_monte_carlo_retirement":
+        result = await _run_monte_carlo_retirement(
+            simulations=int(arguments.get("simulations", 1_000)),
+            years=int(arguments.get("years", 30)),
+            annual_spending=float(arguments["annual_spending"]) if "annual_spending" in arguments else None,
+            mean_return=float(arguments.get("mean_return", 0.07)),
+            std_dev=float(arguments.get("std_dev", 0.15)),
+            inflation_mean=float(arguments.get("inflation_mean", 0.03)),
+            inflation_std=float(arguments.get("inflation_std", 0.01)),
+            social_security_annual=float(arguments.get("social_security_annual", 0.0)),
+            withdrawal_rate=float(arguments["withdrawal_rate"]) if "withdrawal_rate" in arguments else None,
+        )
+    elif name == "get_dynamic_withdrawal_guardrails":
+        result = await _get_dynamic_withdrawal_guardrails(
+            initial_withdrawal_rate=float(arguments.get("initial_withdrawal_rate", 0.05)),
+            raise_ceiling_pct=float(arguments.get("raise_ceiling_pct", 20.0)),
+            cut_floor_pct=float(arguments.get("cut_floor_pct", 20.0)),
+            raise_guard_pct=float(arguments.get("raise_guard_pct", 20.0)),
+            cut_guard_pct=float(arguments.get("cut_guard_pct", 20.0)),
+            initial_portfolio_value=float(arguments["initial_portfolio_value"]) if "initial_portfolio_value" in arguments else None,
+            current_annual_withdrawal=float(arguments["current_annual_withdrawal"]) if "current_annual_withdrawal" in arguments else None,
+        )
+    elif name == "get_social_security_optimizer":
+        result = await _get_social_security_optimizer(
+            birth_year=int(arguments["birth_year"]),
+            estimated_monthly_benefit_at_67=float(arguments["estimated_monthly_benefit_at_67"]) if "estimated_monthly_benefit_at_67" in arguments else None,
+            filing_status=arguments.get("filing_status", "mfj"),
+            spouse_birth_year=int(arguments["spouse_birth_year"]) if "spouse_birth_year" in arguments else None,
+            spouse_benefit_at_67=float(arguments["spouse_benefit_at_67"]) if "spouse_benefit_at_67" in arguments else None,
+            life_expectancy=int(arguments.get("life_expectancy", 85)),
+        )
+    elif name == "get_quarterly_estimated_taxes":
+        result = await _get_quarterly_estimated_taxes(
+            filing_status=arguments.get("filing_status", "mfj"),
+            annual_income_override=float(arguments["annual_income_override"]) if "annual_income_override" in arguments else None,
+            prior_year_tax=float(arguments["prior_year_tax"]) if "prior_year_tax" in arguments else None,
+            expected_withholding=float(arguments["expected_withholding"]) if "expected_withholding" in arguments else None,
+        )
     else:
         raise ValueError(f"Unknown tool: {name}")
 
@@ -1009,7 +1154,7 @@ def _get_features() -> dict:
         ver = "unknown (dev install)"
     return {
         "version": ver,
-        "total_tools": 38,
+        "total_tools": 42,
         "categories": {
             "Overview & Dashboard": {
                 "tools": {
@@ -1198,6 +1343,16 @@ def _get_features() -> dict:
                         "examples": ["When do I have to start taking RMDs?", "How much will my RMD be at 75?"],
                         "parameters": "birth_year (required)",
                     },
+                    "get_social_security_optimizer": {
+                        "description": "Compares SS claiming at 62, FRA, and 70 — monthly benefit, lifetime value, and breakeven ages. Includes spousal analysis.",
+                        "examples": ["Should I claim Social Security at 62 or wait until 70?", "What is the SS breakeven age?"],
+                        "parameters": "birth_year (required), estimated_monthly_benefit_at_67 (optional), filing_status, spouse_birth_year, spouse_benefit_at_67, life_expectancy (default 85)",
+                    },
+                    "get_quarterly_estimated_taxes": {
+                        "description": "Calculates Q1–Q4 estimated federal tax payments using current-year annualized and safe-harbor methods. Shows due dates.",
+                        "examples": ["How much do I owe in estimated taxes?", "What are my Q2 estimated tax payments?"],
+                        "parameters": "filing_status, annual_income_override, prior_year_tax, expected_withholding",
+                    },
                 },
             },
             "Retirement Planning": {
@@ -1226,6 +1381,16 @@ def _get_features() -> dict:
                         "description": "Estimates 529 funding gap for education goals — current trajectory vs. projected college costs with monthly savings needed.",
                         "examples": ["Are we on track for Parker's college?", "How much do we need to save monthly for 529?"],
                         "parameters": "annual_return (default 0.06), annual_college_inflation (default 0.05)",
+                    },
+                    "run_monte_carlo_retirement": {
+                        "description": "Monte Carlo simulation (1,000+ paths) with stochastic returns and inflation — probability of success, median/10th/90th ending balances, safe withdrawal rate.",
+                        "examples": ["What are my odds of not running out of money?", "How safe is a 4% withdrawal rate for 30 years?"],
+                        "parameters": "simulations (default 1000), years (default 30), annual_spending, mean_return (default 0.07), std_dev (default 0.15), inflation_mean, inflation_std, social_security_annual, withdrawal_rate",
+                    },
+                    "get_dynamic_withdrawal_guardrails": {
+                        "description": "Guyton-Klinger guardrail rules — raises withdrawals 10% when portfolio outperforms or cuts 10% when it underperforms vs. the starting value.",
+                        "examples": ["Should I adjust my retirement withdrawals this year?", "Am I hitting a guardrail on my spending?"],
+                        "parameters": "initial_withdrawal_rate (default 0.05), raise_ceiling_pct, cut_floor_pct, initial_portfolio_value, current_annual_withdrawal",
                     },
                 },
             },
@@ -1515,6 +1680,100 @@ async def _get_college_savings_gap(
         sess,
         annual_return=annual_return,
         annual_college_inflation=annual_college_inflation,
+    )
+
+
+# ── Advanced retirement simulations ───────────────────────────────────────
+
+async def _run_monte_carlo_retirement(
+    simulations: int = 1_000,
+    years: int = 30,
+    annual_spending: float | None = None,
+    mean_return: float = 0.07,
+    std_dev: float = 0.15,
+    inflation_mean: float = 0.03,
+    inflation_std: float = 0.01,
+    social_security_annual: float = 0.0,
+    withdrawal_rate: float | None = None,
+) -> dict:
+    sess, err = await _get_session_or_err()
+    if err:
+        return err
+    return await scraper.run_monte_carlo_retirement(
+        sess,
+        simulations=simulations,
+        years=years,
+        annual_spending=annual_spending,
+        mean_return=mean_return,
+        std_dev=std_dev,
+        inflation_mean=inflation_mean,
+        inflation_std=inflation_std,
+        social_security_annual=social_security_annual,
+        withdrawal_rate=withdrawal_rate,
+    )
+
+
+async def _get_dynamic_withdrawal_guardrails(
+    initial_withdrawal_rate: float = 0.05,
+    raise_ceiling_pct: float = 20.0,
+    cut_floor_pct: float = 20.0,
+    raise_guard_pct: float = 20.0,
+    cut_guard_pct: float = 20.0,
+    initial_portfolio_value: float | None = None,
+    current_annual_withdrawal: float | None = None,
+) -> dict:
+    sess, err = await _get_session_or_err()
+    if err:
+        return err
+    return await scraper.get_dynamic_withdrawal_guardrails(
+        sess,
+        initial_withdrawal_rate=initial_withdrawal_rate,
+        raise_ceiling_pct=raise_ceiling_pct,
+        cut_floor_pct=cut_floor_pct,
+        raise_guard_pct=raise_guard_pct,
+        cut_guard_pct=cut_guard_pct,
+        initial_portfolio_value=initial_portfolio_value,
+        current_annual_withdrawal=current_annual_withdrawal,
+    )
+
+
+async def _get_social_security_optimizer(
+    birth_year: int,
+    estimated_monthly_benefit_at_67: float | None = None,
+    filing_status: str = "mfj",
+    spouse_birth_year: int | None = None,
+    spouse_benefit_at_67: float | None = None,
+    life_expectancy: int = 85,
+) -> dict:
+    sess, err = await _get_session_or_err()
+    if err:
+        return err
+    return await scraper.get_social_security_optimizer(
+        sess,
+        birth_year=birth_year,
+        estimated_monthly_benefit_at_67=estimated_monthly_benefit_at_67,
+        filing_status=filing_status,
+        spouse_birth_year=spouse_birth_year,
+        spouse_benefit_at_67=spouse_benefit_at_67,
+        life_expectancy=life_expectancy,
+    )
+
+
+async def _get_quarterly_estimated_taxes(
+    filing_status: str = "mfj",
+    annual_income_override: float | None = None,
+    prior_year_tax: float | None = None,
+    expected_withholding: float | None = None,
+) -> dict:
+    sess, err = await _get_session_or_err()
+    if err:
+        return err
+    return await scraper.get_quarterly_estimated_taxes(
+        sess,
+        filing_status=filing_status,
+        annual_income_override=annual_income_override,
+        prior_year_tax=prior_year_tax,
+        expected_withholding=expected_withholding,
     )
 
 

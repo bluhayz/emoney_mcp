@@ -84,6 +84,14 @@ from datetime import datetime, timedelta
 
 from ._helpers import BASE_URL, _SNB_API, _get_card
 
+
+def _month_offset(base_date: datetime, months_back: int) -> datetime:
+    """Return the first day of the month that is ``months_back`` calendar months before base_date."""
+    month = base_date.month - months_back
+    year = base_date.year + (month - 1) // 12
+    month = ((month - 1) % 12) + 1
+    return base_date.replace(year=year, month=month, day=1)
+
 # ---------------------------------------------------------------------------
 # US state abbreviations — used by _normalize_merchant to strip trailing
 # "CITY STATE" suffixes that appear in bank transaction descriptions.
@@ -546,7 +554,7 @@ async def get_spending_trends(http_session, months: int = 3) -> dict:
     now = datetime.now()
     month_labels = []
     for i in range(months - 1, -1, -1):
-        dt = (now.replace(day=1) - timedelta(days=i * 28)).replace(day=1)
+        dt = _month_offset(now, i)
         month_labels.append(dt.strftime("%Y-%m"))
 
     month_set = set(month_labels)
@@ -684,7 +692,7 @@ async def get_income_summary(http_session, days: int = 90) -> dict:
     months_back = max(1, days // 30)
     month_labels = []
     for i in range(months_back - 1, -1, -1):
-        dt = (now.replace(day=1) - timedelta(days=i * 28)).replace(day=1)
+        dt = _month_offset(now, i)
         month_labels.append(dt.strftime("%Y-%m"))
 
     monthly: dict[str, float] = {m: 0.0 for m in month_labels}
@@ -724,7 +732,7 @@ async def get_savings_rate(http_session, months: int = 6) -> dict:
     now = datetime.now()
     month_labels = []
     for i in range(months - 1, -1, -1):
-        dt = (now.replace(day=1) - timedelta(days=i * 28)).replace(day=1)
+        dt = _month_offset(now, i)
         month_labels.append(dt.strftime("%Y-%m"))
 
     month_set = set(month_labels)
@@ -1001,7 +1009,7 @@ async def get_budget_vs_actual(http_session, months_avg: int = 3) -> dict:
     # Build month labels: [oldest avg month … one month ago] + [this_month]
     avg_months = []
     for i in range(months_avg, 0, -1):
-        dt = (now.replace(day=1) - timedelta(days=i * 28)).replace(day=1)
+        dt = _month_offset(now, i)
         avg_months.append(dt.strftime("%Y-%m"))
     all_months = avg_months + [this_month]
     month_set  = set(all_months)
@@ -1281,7 +1289,7 @@ async def get_cash_flow_projection(http_session, months_ahead: int = 6) -> dict:
 
     for i in range(1, months_ahead + 1):
         # Calculate the projected month label
-        target_dt = (now.replace(day=1) + timedelta(days=i * 32)).replace(day=1)
+        target_dt = _month_offset(now, -i)
         month_label = target_dt.strftime("%Y-%m")
 
         proj_income   = avg_income

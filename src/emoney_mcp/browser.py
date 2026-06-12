@@ -445,34 +445,32 @@ async def get_authenticated_session() -> "EmoneyHttpSession | str":
     Returns an authenticated EmoneyHttpSession or MANUAL_LOGIN_REQUIRED.
 
     Order of operations:
-    1. If the nodriver thread just finished (cookies saved), use them.
-    2. If saved cookies still work, use them.
+    1. If saved cookies work, use them (and stop any waiting browser window).
+    2. If a browser window is open and waiting, return MANUAL_LOGIN_REQUIRED.
     3. Try extracting cookies directly from the user's running Chrome.
     4. Open nodriver browser window for manual login.
     """
-    # 1. Nodriver thread finished since last check → reload session
-    if not _login_session._waiting and _http_session.has_cookies():
+    # 1. Always try saved cookies first — covers: normal resumption, nodriver
+    #    just completed, sync_chrome_session was used, or cookies were saved
+    #    while a browser window happened to be open (the common stuck state).
+    if _http_session.has_cookies():
         if await _http_session.is_logged_in():
+            _login_session.stop()          # cancel any pending browser window
             return _http_session
-        # Cookies exist but invalid → fall through to re-login
+        # Cookies exist but are stale — fall through to re-authenticate
 
-    # 2. Browser open — still waiting for login
+    # 2. Browser window is open — user still logging in
     if _login_session._waiting:
         return MANUAL_LOGIN_REQUIRED
 
-    # 3. Try saved cookies
-    if _http_session.has_cookies():
-        if await _http_session.is_logged_in():
-            return _http_session
-
-    # 4. Try to extract from the user's live Chrome session
+    # 3. Try to extract from the user's live Chrome session (Windows only)
     chrome_cookies = extract_chrome_emaplan_cookies()
     if chrome_cookies:
         _http_session.save_cookies(chrome_cookies)
         if await _http_session.is_logged_in():
             return _http_session
 
-    # 5. Need fresh login via nodriver
+    # 4. Need fresh login via nodriver
     _login_session.open_login_window()
     return MANUAL_LOGIN_REQUIRED
 

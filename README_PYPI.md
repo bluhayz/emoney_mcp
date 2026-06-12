@@ -4,6 +4,7 @@ Connect your [Emoney Advisor](https://wealth.emaplan.com) account to Claude Desk
 Ask Claude questions about your finances in plain English — no spreadsheets, no dashboards.
 
 > *"How are my finances looking?"* · *"Am I over budget this month?"* · *"When will I hit $2M?"*  
+> *"What's my year-end tax checklist?"* · *"If I save $500/month more, when do I retire?"* · *"Flag any unusual charges this month."*  
 > *"What's my tax bracket headroom for a Roth conversion?"* · *"What are my odds of not running out of money in retirement?"* · *"Should I claim Social Security at 62 or 70?"*
 
 ---
@@ -75,6 +76,7 @@ Restart Claude Desktop. The first startup takes ~30 seconds while dependencies d
 ### Quick overview
 ```
 How am I doing today?
+Give me my monthly review.
 Give me a full financial summary.
 What's my financial health score?
 ```
@@ -84,23 +86,27 @@ What's my financial health score?
 What's my current net worth?
 How has my net worth changed over the last 6 months?
 When will I hit $2 million?
+If I save $500/month more, when will I hit $2 million?
 How much do I have in tax-free vs. tax-deferred accounts?
 ```
 
 ### Spending & budgets
 ```
 Am I over budget this month?
+Are there any unusual charges this month?
 What are my biggest spending categories?
+How much have I spent at Amazon this year?
+What are my top merchants by total spending?
 Am I spending more this year than last year?
 What subscriptions am I paying for?
-How much have I spent at Costco this year?
 Show me all Amazon charges over $50.
 ```
 
 ### Cash flow
 ```
 Will I have enough cash to cover a big purchase in 3 months?
-What does my cash flow look like through year-end?
+What does my monthly cash flow look like next quarter?
+How much of my spending is fixed vs. discretionary?
 What are my recurring monthly bills?
 ```
 
@@ -114,6 +120,7 @@ What are my realized capital gains this year?
 
 ### Tax planning
 ```
+What are my year-end tax action items?
 How much can I convert to Roth without crossing the next bracket?
 Where can I harvest tax losses this year?
 What would it cost to convert $150,000 to Roth?
@@ -124,9 +131,11 @@ Should I claim Social Security at 62 or wait until 70?
 How much do I owe in estimated taxes each quarter?
 ```
 
-### Retirement planning
+### Retirement & scenario planning
 ```
 Can I afford to retire now?
+If I save $1,000/month more, how much sooner can I retire?
+What if I assume 8% returns — when do I hit $3M?
 How long will my money last at different withdrawal rates?
 What are the odds my portfolio lasts 30 years?
 Run a Monte Carlo simulation on my retirement plan.
@@ -135,9 +144,16 @@ When will I be debt-free?
 Are we on track for college savings?
 ```
 
+### Insurance & protection
+```
+Am I adequately insured?
+How much life insurance do I need?
+Do I have enough set aside for an emergency?
+```
+
 ---
 
-## Available tools (42 total)
+## Available tools (51 total)
 
 ### Overview & Dashboard
 | Tool | What it answers |
@@ -145,6 +161,7 @@ Are we on track for college savings?
 | `get_quick_status` | 5-number snapshot: net worth, portfolio change, savings rate, top spending category, goal status |
 | `get_financial_summary` | Full dashboard: net worth, performance, income vs. spending, top 5 categories, goal status |
 | `get_financial_health_score` | 0–100 composite score (A–F) across savings rate, goal funding, debt ratio, emergency fund, diversification, net worth trend |
+| `get_monthly_review` | **New.** Structured monthly report — net worth change, investments, spending breakdown, savings rate, goal status, and action items in one call |
 
 ### Balance Sheet
 | Tool | What it answers |
@@ -175,10 +192,13 @@ Are we on track for college savings?
 | `get_budget_vs_actual` | This month vs. rolling average; flags overspend categories |
 | `get_year_over_year` | This year's YTD vs. last year same period |
 | `get_cash_flow_projection` | Monthly cash flow forecast up to 24 months ahead |
+| `get_cash_flow_forecast` | **New.** Projected cash flow broken into recurring fixed costs vs. discretionary spending |
 | `get_income_summary` | Income sources grouped by payee |
 | `get_savings_rate` | Month-by-month savings rate |
 | `search_transactions` | Search by keyword, category, or amount range |
 | `get_recurring_charges` | Detected subscriptions and recurring bills |
+| `get_unusual_transactions` | **New.** Flag charges unusually large vs. merchant or category historical average |
+| `get_merchant_spending` | **New.** Total spending grouped by normalized merchant name |
 
 ### Goals
 | Tool | What it answers |
@@ -196,6 +216,7 @@ Are we on track for college savings?
 | `get_rmd_estimate` | Required Minimum Distribution schedule (10-year projection) |
 | `get_social_security_optimizer` | SS benefit at 62 / FRA / 70 with breakeven ages and spousal analysis |
 | `get_quarterly_estimated_taxes` | Q1–Q4 estimated federal payment amounts and due dates |
+| `get_year_end_checklist` | **New.** Prioritized year-end tax action list with status and dollar amounts |
 
 ### Retirement & Long-range Planning
 | Tool | What it answers |
@@ -207,12 +228,20 @@ Are we on track for college savings?
 | `get_college_savings_gap` | 529 funding gap and monthly contribution needed to close it |
 | `run_monte_carlo_retirement` | Probability of success across 1,000+ stochastic retirement paths |
 | `get_dynamic_withdrawal_guardrails` | Whether to raise, hold, or cut withdrawals (Guyton-Klinger rules) |
+| `run_scenario` | **New.** What-if projection: compare baseline vs. savings increase, return override, or retirement age change |
+
+### Planning
+| Tool | What it answers |
+|------|----------------|
+| `get_insurance_gap_analysis` | **New.** Life insurance need, disability coverage need, and emergency fund adequacy from your actual income and assets |
 
 ### Session Management
 | Tool | What it does |
 |------|-------------|
 | `sync_chrome_session` | Import your active Emoney session from Chrome (no re-login) |
 | `reset_session` | Clear saved session and force a fresh login |
+| `clear_cache` | **New.** Selectively clear card or spending data cache to force fresh data |
+| `get_available_cards` | **New.** Inventory of all responding Emoney data cards with key-type fingerprints |
 | `get_features` | List all tools with descriptions and example questions |
 
 ---

@@ -2,7 +2,19 @@
 
 All notable changes to emoney-mcp are documented here.
 
-## [0.7.2] — 2026-06-09 (current)
+## [0.7.3] — 2026-06-12 (current)
+
+### Fixed
+
+- **`server.py`** — `search_transactions` and `get_spending_transactions` both crashed with `TypeError` on every call because their inner handler functions were missing the `max_results` and `max_transactions` kwargs that `call_tool` was passing; both signatures and downstream scraper calls are now aligned
+- **`server.py`** — added a top-level `try/except` in `call_tool` (dispatches via new `_call_tool_inner`) so any unhandled exception returns a structured `{"error": "...", "tool": "..."}` JSON response instead of crashing the MCP session with a protocol error
+- **`browser.py`** — session cookie file (`~/.emoney_mcp/session.json`) is now written with `os.open` mode `0o600` (owner-read-only) instead of the process umask default which made it world-readable
+- **`browser.py`** — replaced unsafe `tempfile.mktemp()` (TOCTOU race) with `NamedTemporaryFile(delete=False)` in the Chrome cookie extraction path
+- **`scrapers/tax.py`** — `get_rmd_estimate` was incorrectly including Roth IRA balances in the RMD base (Roth IRAs have no RMD requirement); now computes traditional-IRA-only balance by filtering individual account records to exclude accounts with "roth" in the name or type
+- **`scrapers/spending.py`** — five functions (`get_spending_trends`, `get_savings_rate`, `get_budget_vs_actual`, `get_income_summary`, `get_cash_flow_projection`) were generating month labels with `timedelta(days=i*28)` / `timedelta(days=i*32)` approximations that accumulate a full calendar month of drift over 12 months; replaced with a `_month_offset` helper that uses correct calendar arithmetic
+- **`scrapers/_helpers.py`** — failed Emoney card fetches were cached for the full 5-minute TTL, blocking all dependent tools for 5 minutes on a transient server error; error responses are now cached for 30 seconds
+
+## [0.7.2] — 2026-06-09
 
 ### Changed
 - **`README_PYPI.md`** (new file) — added a separate end-user-focused PyPI description covering installation, Claude Desktop config, first-use login flow, example questions, and a simplified tool reference. Developer content (architecture, internal endpoints, local dev install, testing) remains in `README.md` for GitHub only.

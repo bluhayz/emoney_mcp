@@ -530,9 +530,18 @@ async def get_rmd_estimate(http_session, birth_year: int) -> dict:
         return retirement
 
     breakdown = retirement.get("retirement_breakdown", {})
-    pretax_balance = (breakdown.get("401k_403b", 0) or 0) + (breakdown.get("ira_roth", 0) or 0)
+    k401_balance = breakdown.get("401k_403b", 0) or 0
+    # ira_roth bucket conflates traditional IRA + Roth IRA; Roth IRAs have no RMD.
+    # Compute traditional-only IRA balance from the individual account list.
+    trad_ira_balance = sum(
+        a.get("balance", 0) or 0
+        for a in retirement.get("retirement_accounts", [])
+        if "ira" in (a.get("name") or "").lower() + " " + (a.get("type") or "").lower()
+        and "roth" not in (a.get("name") or "").lower() + " " + (a.get("type") or "").lower()
+    )
+    pretax_balance = k401_balance + trad_ira_balance
 
-    trad_balance = pretax_balance  # conservative: assume all is pre-tax for RMD
+    trad_balance = pretax_balance
 
     years_until_rmd = max(0, rmd_start_age - age)
     rmd_age = max(age, rmd_start_age)

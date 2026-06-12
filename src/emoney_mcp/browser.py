@@ -115,7 +115,8 @@ def extract_chrome_emaplan_cookies() -> dict:
     if key is None:
         return {}
 
-    tmp = tempfile.mktemp(suffix=".db")
+    with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as _f:
+        tmp = _f.name
     try:
         if not _copy_locked_file(_CHROME_COOKIE_SRC, tmp):
             return {}
@@ -188,7 +189,12 @@ class EmoneyHttpSession:
 
     def save_cookies(self, cookies: dict) -> None:
         COOKIE_FILE.parent.mkdir(parents=True, exist_ok=True)
-        COOKIE_FILE.write_text(json.dumps(cookies, indent=2))
+        data = json.dumps(cookies, indent=2).encode()
+        fd = os.open(str(COOKIE_FILE), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        try:
+            os.write(fd, data)
+        finally:
+            os.close(fd)
         self._http = None  # force reload with fresh cookies
 
     async def get_http(self) -> AsyncSession:

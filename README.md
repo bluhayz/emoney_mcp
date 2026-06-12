@@ -2,7 +2,7 @@
 
 MCP server for [Emoney Advisor](https://wealth.emaplan.com) — exposes your complete financial picture as tools Claude Desktop can call.
 
-> **Ask Claude:** *"How are my finances looking?"* · *"Am I over budget this month?"* · *"When will I hit $2M?"* · *"What's my tax bracket headroom for a Roth conversion?"* · *"What are my odds of not running out of money in retirement?"* · *"Should I claim Social Security at 62 or 70?"*
+> **Ask Claude:** *"How are my finances looking?"* · *"Am I over budget this month?"* · *"When will I hit $2M?"* · *"What's my year-end tax checklist?"* · *"If I save $500/month more, when can I retire?"* · *"Are there any unusual charges this month?"* · *"What are my odds of not running out of money in retirement?"* · *"Should I claim Social Security at 62 or 70?"*
 
 ---
 
@@ -97,7 +97,7 @@ Then point Claude Desktop at your local clone:
 
 ---
 
-## Available tools (42 total)
+## Available tools (51 total)
 
 ### 🏠 Overview & Dashboard
 
@@ -106,6 +106,7 @@ Then point Claude Desktop at your local clone:
 | `get_quick_status` | **5-number snapshot** — net worth, portfolio today's change, this month's savings rate, top spending category, and goal on-track status. Designed for quick checks with minimal token usage. |
 | `get_financial_summary` | **Full executive dashboard** — net worth, portfolio performance, this month's income vs. spending, top 5 categories, and goal status. Best for broad *"How are my finances?"* questions. |
 | `get_financial_health_score` | **0–100 composite score** with A–F letter grade across six dimensions: savings rate, goal funding, debt-to-asset ratio, emergency fund coverage, diversification, and net worth trend. |
+| `get_monthly_review` | **Structured monthly report** — net worth change, investment performance, this month's income vs. spending, top categories, savings rate, goal status, and a prioritized action item list. One call, no parameters. |
 
 ### 💰 Balance Sheet
 
@@ -145,6 +146,7 @@ Then point Claude Desktop at your local clone:
 | `get_rmd_estimate` | Estimates Required Minimum Distributions from pre-tax retirement accounts using the IRS Uniform Lifetime Table (RMDs begin at age 73, SECURE 2.0). Returns current-year RMD and a 10-year projected schedule. Required: `birth_year` |
 | `get_social_security_optimizer` | **Optimize your SS claiming age.** Compares monthly benefit, annual benefit, and lifetime value at 62, FRA, and 70. Shows breakeven crossover ages. Includes spousal analysis. Required: `birth_year`. Optional: `estimated_monthly_benefit_at_67` (from ssa.gov), `life_expectancy` (default 85), `spouse_birth_year`, `spouse_benefit_at_67` |
 | `get_quarterly_estimated_taxes` | Calculates Q1–Q4 federal estimated tax payments and due dates. Uses current-year annualized and safe-harbor methods, recommends the lower one. Optional: `filing_status`, `annual_income_override`, `prior_year_tax`, `expected_withholding` |
+| `get_year_end_checklist` | **Year-end action list.** Synthesizes all tax tools into a prioritized checklist with status (action\_needed / opportunity / done) and dollar amounts. Optional: `age`, `birth_year` (for RMD check), `filing_status`, `current_income` |
 
 ### 🏖️ Retirement & Long-range Planning
 
@@ -157,6 +159,13 @@ Then point Claude Desktop at your local clone:
 | `get_college_savings_gap` | Estimates the gap between current 529 savings and projected college costs from Emoney's education goals. Shows required monthly contribution to close the gap by the goal start year. Optional: `annual_return` (default 6%), `annual_college_inflation` (default 5%) |
 | `run_monte_carlo_retirement` | **Monte Carlo simulation** — runs 1,000–10,000 stochastic paths with random annual returns and inflation draws to compute the probability your portfolio survives your retirement horizon. Returns success rate, median/10th/90th percentile ending balances, worst-case depletion year, and the safe withdrawal rate at 90% success. Optional: `simulations` (default 1000), `years` (default 30), `mean_return` (default 7%), `std_dev` (default 15%), `social_security_annual`, `withdrawal_rate` |
 | `get_dynamic_withdrawal_guardrails` | **Guyton-Klinger guardrails** — determines whether to raise, hold, or cut the current withdrawal based on portfolio performance vs. the starting value. Returns RAISE / HOLD / CUT with adjusted annual and monthly amounts. Optional: `initial_withdrawal_rate` (default 5%), `initial_portfolio_value`, `current_annual_withdrawal` |
+| `run_scenario` | **What-if modeling.** Runs a scenario projection alongside the baseline and returns a comparison. e.g. *"If I save $500/month more, when do I retire?"* or *"What if I assume 8% returns?"* Optional: `monthly_savings_delta`, `target_net_worth`, `retirement_age`, `annual_return_pct` |
+
+### 🛡️ Planning
+
+| Tool | Description |
+|------|-------------|
+| `get_insurance_gap_analysis` | **Insurance coverage need.** Estimates life insurance need (income multiple minus liquid assets), recommended disability benefit, and emergency fund adequacy from your actual income and balance sheet. Optional: `income_multiple` (default 10×), `disability_pct` (default 65%) |
 
 ### ⚖️ Portfolio Analysis
 
@@ -175,10 +184,13 @@ Then point Claude Desktop at your local clone:
 | `get_budget_vs_actual` | **"Am I over budget?"** Compares this month's actual spending to the rolling N-month category average. Flags categories >15% above benchmark. Also compares against any total budget set in Emoney. Parameter: `months_avg` (default 3) |
 | `get_year_over_year` | **"Am I spending more than last year?"** Compares this year's YTD spending and income to the same period last year with a full per-category breakdown. Requires ~2 years of SNB history. |
 | `get_cash_flow_projection` | Projects monthly cash flow 1–24 months forward using actual income/spending averages from the last 90 days. Includes a running balance estimate. Parameter: `months_ahead` (default 6, max 24) |
+| `get_cash_flow_forecast` | **Recurring vs. discretionary cash flow.** Breaks projected spending into detected fixed recurring charges and estimated discretionary, giving a more structured forecast. Parameter: `months` (1–6, default 3) |
 | `get_income_summary` | Income sources and monthly income trend — paychecks, direct deposits, dividends, interest grouped by source. Parameter: `days` (default 90, max 365) |
 | `get_savings_rate` | Month-by-month savings rate (income minus spending ÷ income). Parameter: `months` (default 6, max 12) |
 | `search_transactions` | Search transactions by keyword, category, and/or amount range across up to 365 days. Parameters: `query`, `category`, `days`, `min_amount`, `max_amount`, `max_results` (default 100; pass 0 for all) |
 | `get_recurring_charges` | Detects subscriptions and recurring bills by analyzing 120 days of transaction patterns. Returns weekly/monthly/quarterly charges and total estimated monthly recurring spend. |
+| `get_unusual_transactions` | **Anomaly detection.** Flags transactions that are unusually large vs. the merchant's or category's historical average. Parameters: `days` (default 90), `threshold_pct` (default 150%) |
+| `get_merchant_spending` | **Spending by merchant.** Aggregated totals grouped by normalized merchant name with transaction count and date range. Parameters: `days` (default 365), `merchant` (substring filter), `limit` (default 25 merchants) |
 
 ### 🔧 Debug & Session Management
 
@@ -189,6 +201,8 @@ Then point Claude Desktop at your local clone:
 | `get_version` | Returns installed version, cookie file path, and session status — useful for debugging |
 | `get_features` | Lists all available tools grouped by category with descriptions and example questions |
 | `explore_emoney_cards` | Probes unexplored Emoney CardSwitcher endpoints (cards 5, 6, 7, 10, 12, 14–16) to discover additional data. Optional: `card_ids` list |
+| `get_available_cards` | **Clean card inventory.** Returns a structured inventory of all responding card IDs (1–16 by default) with key names and data-type fingerprints. Optional: `card_ids` list |
+| `clear_cache` | **Selective cache invalidation.** Purge card or SNB transaction cache without a full session reset. Parameter: `module` (`'cards'`, `'spending'`, or `'all'`; default `'all'`) |
 
 ---
 
@@ -197,7 +211,7 @@ Then point Claude Desktop at your local clone:
 ### Quick checks
 ```
 How am I doing today?
-Quick financial check.
+Give me my monthly review.
 Give me a 5-number snapshot of my finances.
 ```
 
@@ -222,6 +236,7 @@ How much do I have in tax-free vs. tax-deferred accounts?
 ### Budgeting & Spending Comparison
 ```
 Am I over budget this month?
+Are there any unusual charges this month?
 Which spending categories are tracking above normal?
 Am I spending more this year than last year?
 How has my grocery spending changed year-over-year?
@@ -231,12 +246,14 @@ Compare this month's dining to my average.
 ### Cash Flow & Projections
 ```
 Will I have enough cash to cover a big purchase in 3 months?
-What does my cash flow look like through year-end?
+What does my monthly cash flow look like next quarter?
+How much of my spending is fixed vs. discretionary?
 Project my finances for the next 6 months.
 ```
 
 ### Tax Planning
 ```
+What are my year-end tax action items?
 How much can I convert to Roth without crossing the next bracket?
 How much freelance income can I take on this year at my current rate?
 Where can I harvest tax losses this year?
@@ -246,9 +263,11 @@ How much can I still contribute to my IRA and HSA this year?
 When do I have to start taking RMDs, and how much will they be?
 ```
 
-### Retirement & Long-range Planning
+### Retirement & Scenario Planning
 ```
 Can I afford to retire now?
+If I save $1,000/month more, how much sooner can I retire?
+What if I assume 8% returns — when do I hit $3M?
 How long will my money last at different withdrawal rates?
 What does a 4% withdrawal rate give me each month?
 Am I on track for retirement?
@@ -263,6 +282,13 @@ Should I claim Social Security at 62 or wait until 70?
 What is the Social Security breakeven age for me?
 How much do I owe in estimated taxes each quarter?
 What are my Q3 estimated federal tax payments?
+```
+
+### Insurance & Protection
+```
+Am I adequately insured?
+How much life insurance do I need?
+Do I have enough saved for an emergency?
 ```
 
 ### Investments
@@ -282,6 +308,8 @@ What did I spend last month vs. what came in?
 What are my top spending categories over the last 60 days?
 How much did I spend on groceries last month?
 Is my dining spending going up or down?
+What are my top merchants by total spending this year?
+How much did I spend at Amazon last year?
 What subscriptions am I paying for?
 What are my recurring monthly bills?
 How much have I spent at Costco this year?
@@ -351,17 +379,18 @@ Tools with multiple independent data sources use `asyncio.gather()` for parallel
 Claude Desktop
      │  MCP stdio
      ▼
-emoney_mcp/server.py          ← tool registration + dispatch (42 tools)
+emoney_mcp/server.py         ← tool registration + dispatch (51 tools)
 emoney_mcp/scraper.py         ← re-export shim (backward-compatible)
 emoney_mcp/scrapers/          ← domain-split scraping package
   ├── _helpers.py             ←   shared URL constants + TTL-cached _get_card()
   ├── accounts.py             ←   balance sheet tools
   ├── investments.py          ←   holdings, performance, transactions
   ├── spending.py             ←   SNB-based cash flow tools + TTL cache
-  ├── goals.py                ←   goals, financial summary, health score
+  ├── goals.py                ←   goals, financial summary, health score, monthly review
   ├── tax.py                  ←   2025 IRS tax planning tools
-  ├── retirement.py           ←   runway, withdrawal, net worth projection
-  └── portfolio.py            ←   asset location, rebalancing
+  ├── retirement.py           ←   runway, withdrawal, net worth projection, run_scenario
+  ├── portfolio.py            ←   asset location, rebalancing, card discovery
+  └── planning.py             ←   insurance gap analysis
 emoney_mcp/browser.py         ← session management + nodriver login
      │
      ├── curl_cffi AsyncSession  ← Chrome TLS fingerprint for API calls

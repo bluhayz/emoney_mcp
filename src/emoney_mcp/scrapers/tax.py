@@ -247,6 +247,208 @@ async def get_tax_loss_harvesting(http_session) -> dict:
 
 
 # ---------------------------------------------------------------------------
+# get_year_end_checklist  (v0.8.0)
+# ---------------------------------------------------------------------------
+
+async def get_year_end_checklist(
+    http_session,
+    age: int | None = None,
+    birth_year: int | None = None,
+    filing_status: str = "mfj",
+    current_income: float | None = None,
+) -> dict:
+    """
+    Generate a year-end tax planning checklist with action status and dollar amounts.
+
+    Runs all applicable tax tools in parallel and synthesizes results into a
+    prioritized action list for the current tax year.
+
+    Parameters
+    ----------
+    age            : your age (determines catch-up contribution eligibility)
+    birth_year     : used for RMD analysis (required for RMD check; omit to skip)
+    filing_status  : 'mfj', 'single', or 'hoh' (default 'mfj')
+    current_income : annual gross income (inferred from transactions if omitted)
+    """
+    import asyncio
+
+    # Build parallel tasks — skip tools that need required params we don't have
+    tasks: dict[str, object] = {}
+    tasks["bracket_headroom"] = get_tax_bracket_headroom(
+        http_session, current_income=current_income, filing_status=filing_status
+    )
+    tasks["tlh"]              = get_tax_loss_harvesting(http_session)
+    tasks["cap_gains"]        = get_capital_gains_exposure(
+        http_session, filing_status=filing_status, annual_income=current_income
+    )
+    tasks["contribution"]     = get_contribution_room(
+        http_session, age=age, filing_status=filing_status
+    )
+
+    if birth_year is not None:
+        tasks["rmd"] = get_rmd_estimate(http_session, birth_year=birth_year)
+
+    keys   = list(tasks.keys())
+    values = await asyncio.gather(*tasks.values(), return_exceptions=True)
+    results = dict(zip(keys, values))
+
+    checklist = []
+    estimated_savings = 0.0
+
+    # --- 1. Tax bracket headroom ---
+    bh = results.get("bracket_headroom") or {}
+    if "error" not in bh and not isinstance(bh, Exception):
+        ordinary = bh.get("ordinary_income_headroom") or {}
+        ltcg     = bh.get("ltcg_headroom") or {}
+        room_ord  = ordinary.get("headroom_to_next_bracket", 0) or 0
+        room_ltcg = ltcg.get("headroom_in_0pct_ltcg_bracket", 0) or 0
+        if room_ord > 0:
+            checklist.append({
+                "item":     "Tax bracket headroom",
+                "status":   "opportunity",
+                "priority": "medium",
+                "detail":   (
+                    f"${room_ord:,.0f} of headroom before the next ordinary income bracket. "
+                    "Consider Roth conversions, income acceleration, or bonus timing."
+                ),
+                "amount":  round(room_ord, 2),
+            })
+        if room_ltcg > 0:
+            checklist.append({
+                "item":     "0% LTCG bracket room",
+                "status":   "opportunity",
+                "priority": "medium",
+                "detail":   (
+                    f"${room_ltcg:,.0f} of room before LTCG rate increases. "
+                    "Consider harvesting gains in this window."
+                ),
+                "amount":  round(room_ltcg, 2),
+            })
+
+    # --- 2. Tax-loss harvesting ---
+    tlh = results.get("tlh") or {}
+    if "error" not in tlh and not isinstance(tlh, Exception):
+        summary = tlh.get("summary") or {}
+        total_loss = abs(summary.get("harvestable_loss_total", 0) or 0)
+        savings_20 = summary.get("potential_tax_savings_20pct", 0) or 0
+        if total_loss > 0:
+            checklist.append({
+                "item":     "Tax-loss harvesting",
+                "status":   "action_needed",
+                "priority": "high",
+                "detail":   (
+                    f"${total_loss:,.0f} in harvestable losses in taxable accounts. "
+                    f"Estimated savings: up to ${savings_20:,.0f} at 20% LTCG rate."
+                ),
+                "amount":  round(total_loss, 2),
+            })
+            estimated_savings += savings_20
+        else:
+            checklist.append({
+                "item":    "Tax-loss harvesting",
+                "status":  "done",
+                "priority": "low",
+                "detail":  "No harvestable losses found in taxable accounts.",
+                "amount":  0,
+            })
+
+    # --- 3. Capital gains exposure ---
+    cge = results.get("cap_gains") or {}
+    if "error" not in cge and not isinstance(cge, Exception):
+        total_gain = cge.get("total_unrealized_gain_taxable", 0) or 0
+        total_tax  = cge.get("estimated_total_tax", 0) or 0
+        if total_gain > 0:
+            checklist.append({
+                "item":     "Capital gains exposure",
+                "status":   "opportunity",
+                "priority": "medium",
+                "detail":   (
+                    f"${total_gain:,.0f} in unrealized gains in taxable accounts "
+                    f"(est. ${total_tax:,.0f} tax if sold). Review before year-end for gain deferral."
+                ),
+                "amount":  round(total_gain, 2),
+            })
+
+    # --- 4. Contribution room ---
+    cr = results.get("contribution") or {}
+    if "error" not in cr and not isinstance(cr, Exception):
+        accounts = cr.get("accounts") or []
+        for acct in accounts:
+            remaining = acct.get("remaining_room", 0) or 0
+            if remaining > 0:
+                checklist.append({
+                    "item":     f"Max {acct.get('account_type', 'tax-advantaged')} contribution",
+                    "status":   "action_needed",
+                    "priority": "high",
+                    "detail":   (
+                        f"${remaining:,.0f} remaining contribution room "
+                        f"(limit: ${acct.get('limit', 0):,.0f}). Deadline: Dec 31."
+                    ),
+                    "amount":  round(remaining, 2),
+                })
+                # Approximate tax savings = remaining room × marginal rate
+                if current_income:
+                    rate = _marginal_rate(current_income, filing_status)
+                    estimated_savings += round(remaining * rate, 2)
+            else:
+                checklist.append({
+                    "item":     f"{acct.get('account_type', 'Account')} fully funded",
+                    "status":   "done",
+                    "priority": "low",
+                    "detail":   f"Contribution limit already reached for {acct.get('account_type', 'this account')}.",
+                    "amount":  0,
+                })
+
+    # --- 5. RMD check ---
+    rmd = results.get("rmd")
+    if rmd and "error" not in rmd and not isinstance(rmd, Exception):
+        current_rmd = rmd.get("current_year_rmd")
+        rmd_required = rmd.get("rmd_required", False)
+        if rmd_required:
+            checklist.append({
+                "item":     "Required Minimum Distribution",
+                "status":   "action_needed",
+                "priority": "high",
+                "detail":   (
+                    f"RMD required this year: ${current_rmd:,.0f}. "
+                    "Must be taken by Dec 31 to avoid 25% excise tax on shortfall."
+                ),
+                "amount":  round(current_rmd or 0, 2),
+            })
+        else:
+            checklist.append({
+                "item":    "Required Minimum Distribution",
+                "status":  "not_applicable",
+                "priority": "low",
+                "detail":  "RMDs not yet required based on provided birth year.",
+                "amount":  0,
+            })
+    elif birth_year is None:
+        checklist.append({
+            "item":    "Required Minimum Distribution",
+            "status":  "skipped",
+            "priority": "low",
+            "detail":  "Provide birth_year parameter to check RMD status.",
+            "amount":  0,
+        })
+
+    # Sort: action_needed first, then opportunity, then done/not_applicable
+    _priority_order = {"action_needed": 0, "opportunity": 1, "done": 2, "not_applicable": 3, "skipped": 4}
+    checklist.sort(key=lambda x: (_priority_order.get(x["status"], 9), -x.get("amount", 0)))
+
+    return {
+        "tax_year":               _TAX_YEAR,
+        "filing_status":          filing_status,
+        "as_of":                  datetime.now().strftime("%Y-%m-%d"),
+        "checklist":              checklist,
+        "action_items_count":     sum(1 for c in checklist if c["status"] == "action_needed"),
+        "opportunity_count":      sum(1 for c in checklist if c["status"] == "opportunity"),
+        "estimated_tax_savings":  round(estimated_savings, 2),
+        "caveat":                 _IRS_CAVEAT,
+    }
+
+
+# ---------------------------------------------------------------------------
 # get_contribution_room
 # ---------------------------------------------------------------------------
 

@@ -576,3 +576,121 @@ async def get_college_savings_gap(
             "Consult a financial advisor for personalized 529 planning."
         ),
     }
+
+
+# ---------------------------------------------------------------------------
+# get_monthly_review  (v0.8.0)
+# ---------------------------------------------------------------------------
+
+async def get_monthly_review(http_session) -> dict:
+    """
+    Compile a structured monthly financial review in a single call.
+
+    Fetches net worth, performance, spending, savings rate, and goal status
+    in parallel and returns a unified report with key numbers and action items.
+    """
+    http = await http_session.get_http()
+
+    # Phase 1: parallel card fetches + savings rate
+    card9_t, card11_t, card3_t, card2_t, savings_t = await asyncio.gather(
+        _get_card(http, 9),
+        _get_card(http, 11),
+        _get_card(http, 3),
+        _get_card(http, 2),
+        get_savings_rate(http_session, months=1),
+    )
+
+    # Phase 2: SNB spending data (typically hits cache after savings_rate)
+    now = datetime.now()
+    this_month = now.strftime("%Y-%m")
+    txns, snb_ok = await _fetch_snb_data(http_session, days=35)
+
+    # --- Net worth ---
+    nw_current   = (card9_t or {}).get("NetWorth")
+    nw_assets    = (card9_t or {}).get("Assets")
+    nw_liab      = (card9_t or {}).get("Liabilities")
+    nw_mtd_obj   = (card11_t or {}).get("ChangeThisMonth") or {}
+    nw_ytd_obj   = (card11_t or {}).get("ChangeThisYear") or {}
+
+    # --- Investments ---
+    inv_vc    = (card3_t or {}).get("ValueChange") or {}
+    inv_value = inv_vc.get("CurrentValue")
+    inv_today = inv_vc.get("Change")
+    inv_pct   = inv_vc.get("ChangePercent")
+
+    # --- Spending this month ---
+    month_income   = 0.0
+    month_spending = 0.0
+    cat_totals: dict[str, float] = {}
+    if snb_ok:
+        for t in txns:
+            if t["date"][:7] != this_month or t["is_excluded"]:
+                continue
+            if t["is_income"]:
+                month_income = round(month_income + t["amount"], 2)
+            else:
+                month_spending = round(month_spending + t["amount"], 2)
+                cat = t["category"]
+                cat_totals[cat] = round(cat_totals.get(cat, 0) + t["amount"], 2)
+
+    top_cats = sorted(cat_totals.items(), key=lambda x: x[1], reverse=True)[:5]
+
+    # --- Savings rate ---
+    avg_savings_rate = None
+    if "error" not in savings_t:
+        monthly = savings_t.get("monthly", [])
+        if monthly:
+            avg_savings_rate = monthly[-1].get("savings_rate_pct")
+
+    # --- Goals ---
+    goals_raw = (card2_t or {}).get("Goals") or []
+    goals_on_track = sum(
+        1 for g in goals_raw
+        if (g.get("Projection") or {}).get("PercentFunded", 0) >= 100
+    )
+    goals_total = len(goals_raw)
+
+    # --- Action items ---
+    action_items = []
+    nw_mtd_change = nw_mtd_obj.get("Change", 0) or 0
+    if nw_mtd_change < 0:
+        action_items.append(f"Net worth is down ${abs(nw_mtd_change):,.0f} this month — review spending and portfolio.")
+    if avg_savings_rate is not None and avg_savings_rate < 10:
+        action_items.append(f"Savings rate is {avg_savings_rate:.1f}% — below the 10% target. Consider reducing discretionary spending.")
+    if goals_total > 0 and goals_on_track < goals_total:
+        off = goals_total - goals_on_track
+        action_items.append(f"{off} of {goals_total} financial goals are below 100% funded.")
+    if top_cats:
+        top_name, top_amt = top_cats[0]
+        action_items.append(f"Top spending category this month: {top_name} (${top_amt:,.0f}).")
+
+    return {
+        "period":      this_month,
+        "as_of":       now.strftime("%Y-%m-%d"),
+        "net_worth": {
+            "current":           nw_current,
+            "total_assets":      nw_assets,
+            "total_liabilities": nw_liab,
+            "change_mtd":        nw_mtd_obj.get("Change"),
+            "change_mtd_pct":    round((nw_mtd_obj.get("ChangePercent") or 0) * 100, 2),
+            "change_ytd":        nw_ytd_obj.get("Change") if nw_ytd_obj else None,
+        },
+        "investments": {
+            "current_value":    inv_value,
+            "change_today":     round(inv_today or 0, 2),
+            "change_today_pct": round((inv_pct or 0) * 100, 2),
+        },
+        "spending": {
+            "income":         round(month_income, 2),
+            "total":          round(month_spending, 2),
+            "net":            round(month_income - month_spending, 2),
+            "top_categories": [{"category": c, "total": round(v, 2)} for c, v in top_cats],
+        },
+        "savings_rate_pct":  avg_savings_rate,
+        "goals": {
+            "total":      goals_total,
+            "on_track":   goals_on_track,
+            "off_track":  goals_total - goals_on_track,
+        },
+        "action_items": action_items,
+    }

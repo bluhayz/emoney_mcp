@@ -2,6 +2,7 @@
 
 import importlib
 import json
+import time
 
 from dotenv import load_dotenv
 from mcp.server import Server
@@ -21,6 +22,11 @@ from . import scraper
 load_dotenv()
 
 app = Server("emoney-mcp")
+
+# Session health check — tracks last time we verified the session is live.
+# Checked every 5 minutes to proactively warn before tools fail.
+_last_health_ts: float = 0.0
+_HEALTH_CHECK_INTERVAL: float = 300.0  # seconds
 
 
 @app.list_tools()
@@ -772,6 +778,174 @@ async def list_tools() -> list[Tool]:
             description="Clear the saved session and force a fresh login on the next call.",
             inputSchema={"type": "object", "properties": {}, "required": []},
         ),
+        # ── v0.8.0 new tools ──────────────────────────────────────────────
+        Tool(
+            name="get_monthly_review",
+            description=(
+                "Compiles a structured monthly financial report in a single call — net worth change, "
+                "investment performance, this month's income vs. spending, top categories, "
+                "savings rate, goal status, and a short list of action items. "
+                "No parameters required. "
+                "Useful for 'Give me my monthly financial review' or end-of-month check-ins."
+            ),
+            inputSchema={"type": "object", "properties": {}, "required": []},
+        ),
+        Tool(
+            name="get_unusual_transactions",
+            description=(
+                "Flags transactions that are unusually large compared to the merchant's or "
+                "category's historical average. Helps catch one-off large charges, billing errors, "
+                "or potential fraud. "
+                "Optional: days (look-back window, default 90), threshold_pct (% above avg to flag, default 150). "
+                "Useful for 'Are there any unusual charges this month?' or 'Flag any big unexpected purchases.'"
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "days":          {"type": "integer", "description": "Look-back window in days (default 90)", "default": 90},
+                    "threshold_pct": {"type": "number",  "description": "Flag transactions exceeding this % of merchant average (default 150)", "default": 150},
+                },
+                "required": [],
+            },
+        ),
+        Tool(
+            name="get_merchant_spending",
+            description=(
+                "Returns total spending grouped by normalized merchant name for the last N days. "
+                "Shows total, transaction count, average transaction, and date range per merchant. "
+                "Optional: days (default 365), merchant (substring filter), limit (top N merchants, default 25). "
+                "Useful for 'How much did I spend at Amazon this year?' or 'What are my top 10 merchants?'"
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "days":     {"type": "integer", "description": "Look-back window in days (default 365)", "default": 365},
+                    "merchant": {"type": "string",  "description": "Optional merchant name substring filter (case-insensitive)"},
+                    "limit":    {"type": "integer", "description": "Number of merchants to return (default 25)", "default": 25},
+                },
+                "required": [],
+            },
+        ),
+        Tool(
+            name="get_year_end_checklist",
+            description=(
+                "Generates a year-end tax planning checklist with status (action_needed / opportunity / done) "
+                "and dollar amounts. Covers contribution room, tax-loss harvesting, capital gains exposure, "
+                "bracket headroom, and RMDs. "
+                "Optional: age, birth_year (for RMD check), filing_status (default 'mfj'), current_income. "
+                "Useful for 'What tax actions should I take before year-end?' or 'Year-end tax checklist.'"
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "age":            {"type": "integer", "description": "Your age (determines catch-up contribution eligibility)"},
+                    "birth_year":     {"type": "integer", "description": "Your birth year (enables RMD check)"},
+                    "filing_status":  {"type": "string",  "description": "'single', 'mfj', or 'hoh' (default 'mfj')"},
+                    "current_income": {"type": "number",  "description": "Annual gross income (inferred from transactions if omitted)"},
+                },
+                "required": [],
+            },
+        ),
+        Tool(
+            name="run_scenario",
+            description=(
+                "Runs a what-if projection alongside a baseline and shows the difference. "
+                "Useful for 'If I save $500/month more, when do I retire?' or "
+                "'What if I assume 8% returns instead of 7%?' "
+                "Optional: monthly_savings_delta (e.g. 500 or -200), target_net_worth, "
+                "retirement_age, annual_return_pct (e.g. 8 for 8%). "
+                "All parameters have sensible defaults — calling with no args shows baseline vs. no-change."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "monthly_savings_delta": {"type": "number",  "description": "Change in monthly savings vs. current (e.g. 500 to save $500/month more)", "default": 0},
+                    "target_net_worth":      {"type": "number",  "description": "Target balance to reach (defaults to retirement goal value)"},
+                    "retirement_age":        {"type": "integer", "description": "Override retirement age for comparison year"},
+                    "annual_return_pct":     {"type": "number",  "description": "Override assumed annual return (e.g. 8 for 8%; default 7)"},
+                },
+                "required": [],
+            },
+        ),
+        Tool(
+            name="get_cash_flow_forecast",
+            description=(
+                "Projects future monthly cash flow broken into recurring fixed costs and discretionary "
+                "spending, using actual detected recurring charges and recent income/spending history. "
+                "More structured than get_cash_flow_projection — separates fixed from variable costs. "
+                "Optional: months (1–6, default 3). "
+                "Useful for 'What will my monthly cash flow look like next quarter?' or "
+                "'How much recurring vs. discretionary spending do I have?'"
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "months": {"type": "integer", "description": "Months to forecast (1–6, default 3)", "default": 3},
+                },
+                "required": [],
+            },
+        ),
+        Tool(
+            name="get_insurance_gap_analysis",
+            description=(
+                "Estimates life insurance need, disability coverage need, and emergency fund adequacy "
+                "using standard financial planning rules applied to your actual income and assets from Emoney. "
+                "Shows the gap between what you likely need and your liquid assets. "
+                "Optional: income_multiple (default 10× income for life), disability_pct (default 65% of income). "
+                "Useful for 'Am I adequately insured?' or 'How much life insurance do I need?'"
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "income_multiple": {"type": "number", "description": "Life insurance = this × annual income (default 10)", "default": 10},
+                    "disability_pct":  {"type": "number", "description": "Recommended disability benefit as fraction of income (default 0.65)", "default": 0.65},
+                },
+                "required": [],
+            },
+        ),
+        Tool(
+            name="clear_cache",
+            description=(
+                "Selectively clears the in-memory data cache to force fresh data on the next call. "
+                "Use 'cards' to clear CardSwitcher responses, 'spending' to clear SNB transaction data, "
+                "or 'all' to clear everything. "
+                "Optional: module ('cards', 'spending', or 'all'; default 'all'). "
+                "Useful when you need up-to-the-minute data without doing a full session reset."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "module": {
+                        "type":        "string",
+                        "description": "'cards', 'spending', or 'all' (default 'all')",
+                        "enum":        ["cards", "spending", "all"],
+                        "default":     "all",
+                    },
+                },
+                "required": [],
+            },
+        ),
+        Tool(
+            name="get_available_cards",
+            description=(
+                "Returns a clean inventory of all Emoney CardSwitcher card IDs (1–16) that respond, "
+                "showing which keys each card returns and a type fingerprint. "
+                "Useful before building new scrapers or exploring what data Emoney exposes. "
+                "Optional: card_ids (list of integers; default probes 1–16). "
+                "Useful for 'What Emoney data cards are available?' or 'Discover new data sources.'"
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "card_ids": {
+                        "type":  "array",
+                        "items": {"type": "integer"},
+                        "description": "Card IDs to probe (default: 1–16)",
+                    },
+                },
+                "required": [],
+            },
+        ),
     ]
 
 
@@ -975,6 +1149,48 @@ async def _call_tool_inner(name: str, arguments: dict) -> list[TextContent]:
             prior_year_tax=float(arguments["prior_year_tax"]) if "prior_year_tax" in arguments else None,
             expected_withholding=float(arguments["expected_withholding"]) if "expected_withholding" in arguments else None,
         )
+    # ── v0.8.0 new tools ──────────────────────────────────────────────────
+    elif name == "get_monthly_review":
+        result = await _get_monthly_review()
+    elif name == "get_unusual_transactions":
+        result = await _get_unusual_transactions(
+            days=int(arguments.get("days", 90)),
+            threshold_pct=float(arguments.get("threshold_pct", 150.0)),
+        )
+    elif name == "get_merchant_spending":
+        result = await _get_merchant_spending(
+            days=int(arguments.get("days", 365)),
+            merchant=arguments.get("merchant", ""),
+            limit=int(arguments.get("limit", 25)),
+        )
+    elif name == "get_year_end_checklist":
+        result = await _get_year_end_checklist(
+            age=int(arguments["age"]) if "age" in arguments else None,
+            birth_year=int(arguments["birth_year"]) if "birth_year" in arguments else None,
+            filing_status=arguments.get("filing_status", "mfj"),
+            current_income=float(arguments["current_income"]) if "current_income" in arguments else None,
+        )
+    elif name == "run_scenario":
+        result = await _run_scenario(
+            monthly_savings_delta=float(arguments.get("monthly_savings_delta", 0.0)),
+            target_net_worth=float(arguments["target_net_worth"]) if "target_net_worth" in arguments else None,
+            retirement_age=int(arguments["retirement_age"]) if "retirement_age" in arguments else None,
+            annual_return_pct=float(arguments["annual_return_pct"]) if "annual_return_pct" in arguments else None,
+        )
+    elif name == "get_cash_flow_forecast":
+        result = await _get_cash_flow_forecast(months=int(arguments.get("months", 3)))
+    elif name == "get_insurance_gap_analysis":
+        result = await _get_insurance_gap_analysis(
+            income_multiple=float(arguments.get("income_multiple", 10.0)),
+            disability_pct=float(arguments.get("disability_pct", 0.65)),
+        )
+    elif name == "clear_cache":
+        result = _clear_cache(module=arguments.get("module", "all"))
+    elif name == "get_available_cards":
+        card_ids = arguments.get("card_ids")
+        if card_ids is not None:
+            card_ids = [int(c) for c in card_ids]
+        result = await _get_available_cards(card_ids=card_ids)
     else:
         raise ValueError(f"Unknown tool: {name}")
 
@@ -982,6 +1198,7 @@ async def _call_tool_inner(name: str, arguments: dict) -> list[TextContent]:
 
 
 async def _get_session_or_err():
+    global _last_health_ts
     sess = await get_authenticated_session()
     if sess == MANUAL_LOGIN_REQUIRED:
         return None, {
@@ -993,6 +1210,24 @@ async def _get_session_or_err():
                 "log in manually, then call get_accounts again."
             ),
         }
+
+    # Proactive health check every 5 minutes — non-blocking warning if session stale.
+    now = time.time()
+    if now - _last_health_ts >= _HEALTH_CHECK_INTERVAL:
+        _last_health_ts = now
+        try:
+            logged_in = await _http_session.is_logged_in()
+            if not logged_in:
+                return None, {
+                    "session_warning": True,
+                    "message": (
+                        "Session health check failed — Emoney session appears stale. "
+                        "Run sync_chrome_session to refresh, then retry."
+                    ),
+                }
+        except Exception:
+            pass   # health check failures are non-fatal
+
     return sess, None
 
 
@@ -1163,7 +1398,7 @@ def _get_features() -> dict:
         ver = "unknown (dev install)"
     return {
         "version": ver,
-        "total_tools": 42,
+        "total_tools": 51,
         "categories": {
             "Overview & Dashboard": {
                 "tools": {
@@ -1424,6 +1659,16 @@ def _get_features() -> dict:
                         "description": "Probes unexplored Emoney CardSwitcher endpoints to discover additional data.",
                         "examples": ["What other Emoney data can we access?"],
                         "parameters": "card_ids (optional list of integers)",
+                    },
+                    "get_available_cards": {
+                        "description": "Clean inventory of all responding card IDs (1–16) with data-shape fingerprint.",
+                        "examples": ["What Emoney data cards are available?", "Discover new data sources."],
+                        "parameters": "card_ids (optional list of integers)",
+                    },
+                    "clear_cache": {
+                        "description": "Selectively purge in-memory data caches to force fresh data.",
+                        "examples": ["Clear spending cache.", "Force fresh data from Emoney."],
+                        "parameters": "module ('cards', 'spending', or 'all'; default 'all')",
                     },
                 },
             },
@@ -1784,6 +2029,99 @@ async def _get_quarterly_estimated_taxes(
         prior_year_tax=prior_year_tax,
         expected_withholding=expected_withholding,
     )
+
+
+# ── v0.8.0 new tool wrappers ───────────────────────────────────────────────
+
+async def _get_monthly_review() -> dict:
+    sess, err = await _get_session_or_err()
+    if err:
+        return err
+    return await scraper.get_monthly_review(sess)
+
+
+async def _get_unusual_transactions(days: int = 90, threshold_pct: float = 150.0) -> dict:
+    sess, err = await _get_session_or_err()
+    if err:
+        return err
+    return await scraper.get_unusual_transactions(sess, days=days, threshold_pct=threshold_pct)
+
+
+async def _get_merchant_spending(
+    days: int = 365,
+    merchant: str = "",
+    limit: int = 25,
+) -> dict:
+    sess, err = await _get_session_or_err()
+    if err:
+        return err
+    return await scraper.get_merchant_spending(sess, days=days, merchant=merchant, limit=limit)
+
+
+async def _get_year_end_checklist(
+    age: int | None = None,
+    birth_year: int | None = None,
+    filing_status: str = "mfj",
+    current_income: float | None = None,
+) -> dict:
+    sess, err = await _get_session_or_err()
+    if err:
+        return err
+    return await scraper.get_year_end_checklist(
+        sess,
+        age=age,
+        birth_year=birth_year,
+        filing_status=filing_status,
+        current_income=current_income,
+    )
+
+
+async def _run_scenario(
+    monthly_savings_delta: float = 0.0,
+    target_net_worth: float | None = None,
+    retirement_age: int | None = None,
+    annual_return_pct: float | None = None,
+) -> dict:
+    sess, err = await _get_session_or_err()
+    if err:
+        return err
+    return await scraper.run_scenario(
+        sess,
+        monthly_savings_delta=monthly_savings_delta,
+        target_net_worth=target_net_worth,
+        retirement_age=retirement_age,
+        annual_return_pct=annual_return_pct,
+    )
+
+
+async def _get_cash_flow_forecast(months: int = 3) -> dict:
+    sess, err = await _get_session_or_err()
+    if err:
+        return err
+    return await scraper.get_cash_flow_forecast(sess, months=months)
+
+
+async def _get_insurance_gap_analysis(
+    income_multiple: float = 10.0,
+    disability_pct: float = 0.65,
+) -> dict:
+    sess, err = await _get_session_or_err()
+    if err:
+        return err
+    return await scraper.get_insurance_gap_analysis(
+        sess, income_multiple=income_multiple, disability_pct=disability_pct
+    )
+
+
+def _clear_cache(module: str = "all") -> dict:
+    return scraper.clear_cache(module=module)
+
+
+async def _get_available_cards(card_ids: list[int] | None = None) -> dict:
+    sess, err = await _get_session_or_err()
+    if err:
+        return err
+    return await scraper.get_available_cards(sess, card_ids=card_ids)
 
 
 async def main() -> None:

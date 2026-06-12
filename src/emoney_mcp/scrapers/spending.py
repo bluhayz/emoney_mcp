@@ -1328,3 +1328,299 @@ async def get_cash_flow_projection(http_session, months_ahead: int = 6) -> dict:
             "For a more precise projection, add planned expenses manually."
         ),
     }
+
+
+# ---------------------------------------------------------------------------
+# get_unusual_transactions  (v0.8.0)
+# ---------------------------------------------------------------------------
+
+async def get_unusual_transactions(
+    http_session,
+    days: int = 90,
+    threshold_pct: float = 150.0,
+) -> dict:
+    """
+    Flag transactions that are unusually large compared to the merchant's
+    or category's historical average.
+
+    Parameters
+    ----------
+    days          : look-back window to establish baselines (default 90)
+    threshold_pct : flag a transaction when it exceeds this % of the merchant's
+                    average amount (default 150 = 50% above average)
+    """
+    days = min(max(days, 30), 365)
+    threshold_pct = max(threshold_pct, 110.0)
+
+    txns, ok = await _fetch_snb_data(http_session, days=days)
+    if not ok:
+        return {"error": "Could not retrieve SNB transaction data. Try re-syncing Chrome session."}
+
+    spending_txns = [
+        t for t in txns
+        if not t["is_income"] and not t["is_excluded"] and not t["is_pending"]
+    ]
+
+    # --- Per-merchant stats ---
+    merchant_totals: dict[str, list[float]] = {}
+    for t in spending_txns:
+        key = _normalize_merchant(t["description"])
+        merchant_totals.setdefault(key, []).append(t["amount"])
+
+    merchant_avg: dict[str, float] = {
+        k: sum(v) / len(v) for k, v in merchant_totals.items() if len(v) >= 2
+    }
+
+    # --- Per-category monthly averages (over all full months in window) ---
+    now = datetime.now()
+    this_month = now.strftime("%Y-%m")
+    cat_month: dict[str, dict[str, float]] = {}
+    for t in spending_txns:
+        m = t["date"][:7]
+        if m == this_month:
+            continue  # exclude current partial month from baseline
+        cat = t["category"]
+        cat_month.setdefault(cat, {}).setdefault(m, 0.0)
+        cat_month[cat][m] += t["amount"]
+
+    cat_monthly_avg: dict[str, float] = {}
+    for cat, by_month in cat_month.items():
+        if by_month:
+            cat_monthly_avg[cat] = sum(by_month.values()) / len(by_month)
+
+    # --- Flag unusual transactions ---
+    flagged = []
+    for t in spending_txns:
+        key = _normalize_merchant(t["description"])
+        amount = t["amount"]
+        reasons = []
+
+        # Merchant-level check
+        if key in merchant_avg:
+            avg = merchant_avg[key]
+            if avg > 0 and amount >= avg * (threshold_pct / 100):
+                pct_above = round((amount / avg - 1) * 100, 1)
+                reasons.append(f"{pct_above}% above this merchant's average of ${avg:,.2f}")
+
+        # Category-level check (flag if > 2× monthly average for this category)
+        cat = t["category"]
+        if cat in cat_monthly_avg:
+            cat_avg = cat_monthly_avg[cat]
+            if cat_avg > 0 and amount >= cat_avg * 2:
+                reasons.append(
+                    f"single transaction exceeds 2× the monthly avg for {cat} (${cat_avg:,.2f}/mo)"
+                )
+
+        if reasons:
+            flagged.append({
+                "date":        t["date"],
+                "merchant":    key,
+                "description": t["description"],
+                "category":    t["category"],
+                "amount":      round(amount, 2),
+                "merchant_avg": round(merchant_avg.get(key, 0), 2) or None,
+                "reasons":     reasons,
+            })
+
+    flagged.sort(key=lambda x: x["date"], reverse=True)
+    total_flagged_amount = round(sum(f["amount"] for f in flagged), 2)
+
+    return {
+        "period_days":          days,
+        "threshold_pct":        threshold_pct,
+        "unusual_count":        len(flagged),
+        "total_flagged_amount": total_flagged_amount,
+        "unusual_transactions": flagged,
+        "note": (
+            f"Flags transactions that exceed {threshold_pct:.0f}% of the merchant's "
+            "average or are 2× the monthly category average. "
+            "Merchants with only one historical charge are excluded from merchant-level checks."
+        ),
+    }
+
+
+# ---------------------------------------------------------------------------
+# get_merchant_spending  (v0.8.0)
+# ---------------------------------------------------------------------------
+
+async def get_merchant_spending(
+    http_session,
+    days: int = 365,
+    merchant: str = "",
+    limit: int = 25,
+) -> dict:
+    """
+    Return spending totals grouped by normalized merchant name.
+
+    Parameters
+    ----------
+    days     : look-back window (default 365)
+    merchant : optional substring filter on merchant name (case-insensitive)
+    limit    : number of top merchants to return (default 25)
+    """
+    days  = min(max(days, 7), 365)
+    limit = min(max(limit, 1), 200)
+
+    txns, ok = await _fetch_snb_data(http_session, days=days)
+    if not ok:
+        return {"error": "Could not retrieve SNB transaction data. Try re-syncing Chrome session."}
+
+    merchant_filter = merchant.strip().upper()
+
+    merchant_data: dict[str, dict] = {}
+    for t in txns:
+        if t["is_excluded"] or t["is_income"] or t["category"] in _NON_MERCHANT_CATEGORIES:
+            continue
+        key = _normalize_merchant(t["description"])
+        if merchant_filter and merchant_filter not in key:
+            continue
+        entry = merchant_data.setdefault(key, {
+            "merchant":  key,
+            "total":     0.0,
+            "count":     0,
+            "dates":     [],
+            "category":  t["category"],
+        })
+        entry["total"] = round(entry["total"] + t["amount"], 2)
+        entry["count"] += 1
+        entry["dates"].append(t["date"])
+
+    results = []
+    for entry in merchant_data.values():
+        results.append({
+            "merchant":        entry["merchant"],
+            "total":           entry["total"],
+            "transaction_count": entry["count"],
+            "avg_transaction": round(entry["total"] / entry["count"], 2),
+            "last_date":       max(entry["dates"]),
+            "first_date":      min(entry["dates"]),
+            "category":        entry["category"],
+        })
+
+    results.sort(key=lambda x: x["total"], reverse=True)
+    total_tracked = round(sum(r["total"] for r in results), 2)
+    results = results[:limit]
+
+    return {
+        "period_days":   days,
+        "start_date":    (datetime.now() - timedelta(days=days)).strftime("%Y-%m-%d"),
+        "end_date":      datetime.now().strftime("%Y-%m-%d"),
+        "merchant_filter": merchant or "(all)",
+        "total_tracked": total_tracked,
+        "merchant_count_shown": len(results),
+        "merchants":     results,
+        "note": (
+            "Merchant names are normalized (POS prefixes, location suffixes, and ZIP codes stripped). "
+            "Excludes transfers, credit card payments, income, and other non-merchant categories."
+        ),
+    }
+
+
+# ---------------------------------------------------------------------------
+# get_cash_flow_forecast  (v0.8.0)
+# ---------------------------------------------------------------------------
+
+async def get_cash_flow_forecast(
+    http_session,
+    months: int = 3,
+) -> dict:
+    """
+    Project future monthly cash flow broken into recurring vs. discretionary spending.
+
+    Uses actual recurring charges (from get_recurring_charges) for the fixed
+    cost component and recent transaction history for the discretionary baseline.
+
+    Parameters
+    ----------
+    months : number of months to project (1–6, default 3)
+    """
+    months = min(max(months, 1), 6)
+
+    # Fetch SNB data and recurring charges in parallel
+    snb_task   = _fetch_snb_data(http_session, days=90)
+    recur_task = get_recurring_charges(http_session)
+
+    (txns, ok), recurring_result = await asyncio.gather(snb_task, recur_task)
+
+    if not ok:
+        return {"error": "Could not retrieve SNB transaction data. Try re-syncing Chrome session."}
+
+    now = datetime.now()
+    this_month = now.strftime("%Y-%m")
+
+    # --- Build baseline from complete past months ---
+    month_income:   dict[str, float] = {}
+    month_spending: dict[str, float] = {}
+    months_seen: set[str] = set()
+
+    for t in txns:
+        m = t["date"][:7]
+        months_seen.add(m)
+        if t["is_excluded"]:
+            continue
+        if t["is_income"]:
+            month_income[m]   = round(month_income.get(m, 0)   + t["amount"], 2)
+        else:
+            month_spending[m] = round(month_spending.get(m, 0) + t["amount"], 2)
+
+    complete_months = sorted([m for m in months_seen if m < this_month])[-3:]
+    if not complete_months:
+        return {"error": "Insufficient history (need at least 1 complete month)."}
+
+    avg_income   = round(sum(month_income.get(m, 0)   for m in complete_months) / len(complete_months), 2)
+    avg_spending = round(sum(month_spending.get(m, 0) for m in complete_months) / len(complete_months), 2)
+
+    # --- Recurring fixed costs (from get_recurring_charges result) ---
+    recurring_monthly = 0.0
+    recurring_items = []
+    if "error" not in recurring_result:
+        recurring_monthly = recurring_result.get("total_monthly_est", 0.0)
+        for r in recurring_result.get("all_recurring", []):
+            recurring_items.append({
+                "merchant":   r["merchant"],
+                "monthly_est": r["monthly_cost_est"],
+                "cadence":    r["cadence"],
+            })
+
+    # Discretionary = total spending minus recurring fixed costs
+    discretionary_avg = max(0.0, round(avg_spending - recurring_monthly, 2))
+
+    # --- Build forecast ---
+    forecast = []
+    for i in range(1, months + 1):
+        target_dt   = _month_offset(now, -i)
+        month_label = target_dt.strftime("%Y-%m")
+        proj_income = avg_income
+        proj_recurring = round(recurring_monthly, 2)
+        proj_discretionary = discretionary_avg
+        proj_total_spending = round(proj_recurring + proj_discretionary, 2)
+        proj_net    = round(proj_income - proj_total_spending, 2)
+
+        forecast.append({
+            "month":                month_label,
+            "projected_income":     proj_income,
+            "projected_expenses": {
+                "recurring":        proj_recurring,
+                "discretionary":    proj_discretionary,
+                "total":            proj_total_spending,
+            },
+            "projected_net":        proj_net,
+            "savings_rate_pct":     round(proj_net / proj_income * 100, 1) if proj_income > 0 else None,
+        })
+
+    return {
+        "as_of":            now.strftime("%Y-%m-%d"),
+        "months_ahead":     months,
+        "baseline_months":  complete_months,
+        "avg_monthly_income":       avg_income,
+        "avg_monthly_spending":     avg_spending,
+        "recurring_fixed_monthly":  round(recurring_monthly, 2),
+        "discretionary_avg_monthly": discretionary_avg,
+        "recurring_items":  sorted(recurring_items, key=lambda x: x["monthly_est"], reverse=True),
+        "forecast":         forecast,
+        "note": (
+            "Recurring costs from 120-day charge pattern detection. "
+            "Discretionary = average spending minus recurring. "
+            "Income and spending baselines from the most recent 3 complete months."
+        ),
+    }

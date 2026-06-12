@@ -670,3 +670,168 @@ async def get_dynamic_withdrawal_guardrails(
             "Run this annually (or after a major market move) to keep withdrawals on track."
         ),
     }
+
+
+# ---------------------------------------------------------------------------
+# run_scenario  (v0.8.0)
+# ---------------------------------------------------------------------------
+
+async def run_scenario(
+    http_session,
+    monthly_savings_delta: float = 0.0,
+    target_net_worth: float | None = None,
+    retirement_age: int | None = None,
+    annual_return_pct: float | None = None,
+) -> dict:
+    """
+    Run a what-if scenario alongside a baseline projection and compare results.
+
+    Parameters
+    ----------
+    monthly_savings_delta : change in monthly savings vs. current (e.g. +500 or -200)
+    target_net_worth      : target balance to reach (defaults to retirement goal from Emoney)
+    retirement_age        : override the retirement goal age
+    annual_return_pct     : override the assumed annual return (e.g. 8 for 8%; default 7)
+    """
+    import asyncio as _aio
+
+    accts, savings_result, goals_result = await _aio.gather(
+        get_accounts(http_session),
+        get_savings_rate(http_session, months=6),
+        get_goals(http_session),
+    )
+
+    if "error" in accts:
+        return accts
+
+    current_nw = accts.get("net_worth") or 0
+
+    # Monthly savings baseline
+    if "error" not in savings_result:
+        total_net    = savings_result.get("total_net", 0) or 0
+        months_shown = savings_result.get("months_shown", 6) or 6
+        baseline_monthly_savings = round(total_net / months_shown, 2)
+    else:
+        baseline_monthly_savings = 0.0
+
+    # Retirement target and age from goals
+    ret_goal_start = None
+    if "error" not in goals_result:
+        for g in goals_result.get("retirement_goals", []):
+            if g.get("start_year"):
+                ret_goal_start = g["start_year"]
+                break
+
+    current_year  = datetime.now().year
+    current_month = datetime.now().month
+
+    base_return  = (annual_return_pct / 100) if annual_return_pct else 0.07
+    scen_return  = base_return
+    base_monthly = baseline_monthly_savings
+    scen_monthly = round(baseline_monthly_savings + monthly_savings_delta, 2)
+
+    # Determine the target
+    eff_target = target_net_worth
+    if eff_target is None and ret_goal_start:
+        years_to_ret = max(0, ret_goal_start - current_year)
+        eff_target = round(max(current_nw, 0) * ((1 + base_return) ** years_to_ret), 2)
+
+    def _project(nw, monthly_sav, annual_ret, target):
+        """Month-by-month projection returning yearly snapshots and target hit info."""
+        monthly_ret = annual_ret / 12
+        balance = float(nw)
+        target_hit = None
+        yearly_snaps = []
+
+        _MILESTONES = [500_000, 1_000_000, 2_000_000, 5_000_000]
+        milestones_hit = {}
+
+        for mo in range(1, 50 * 12 + 1):
+            balance = round(balance * (1 + monthly_ret) + monthly_sav, 2)
+            proj_year  = current_year + (current_month + mo - 1) // 12
+            proj_month = (current_month + mo - 1) % 12 + 1
+
+            for ms in _MILESTONES:
+                if ms not in milestones_hit and balance >= ms:
+                    milestones_hit[ms] = {"milestone": ms, "year": proj_year, "years_away": round(mo / 12, 1)}
+
+            if target and target_hit is None and balance >= target:
+                target_hit = {
+                    "target":      target,
+                    "year":        proj_year,
+                    "month":       proj_month,
+                    "years_away":  round(mo / 12, 1),
+                }
+
+            if mo % 12 == 0:
+                yearly_snaps.append({"year": proj_year, "net_worth": round(balance, 2)})
+
+            all_done = len(milestones_hit) == len(_MILESTONES) and (target is None or target_hit is not None)
+            if all_done:
+                break
+
+        return yearly_snaps[:30], target_hit, milestones_hit
+
+    base_snaps,  base_target,  base_ms  = _project(current_nw, base_monthly, base_return, eff_target)
+    scen_snaps,  scen_target,  scen_ms  = _project(current_nw, scen_monthly, scen_return, eff_target)
+
+    # Comparison year: retirement goal start, or retirement_age + offset, or 20y out
+    if ret_goal_start:
+        compare_year = ret_goal_start
+    elif retirement_age:
+        compare_year = current_year + max(0, retirement_age - 40)
+    else:
+        compare_year = current_year + 20
+
+    base_at_compare = next((s["net_worth"] for s in base_snaps if s["year"] >= compare_year), None)
+    scen_at_compare = next((s["net_worth"] for s in scen_snaps if s["year"] >= compare_year), None)
+
+    years_delta = None
+    if base_target and scen_target:
+        years_delta = round(base_target["years_away"] - scen_target["years_away"], 1)
+
+    nw_delta = None
+    if base_at_compare is not None and scen_at_compare is not None:
+        nw_delta = round(scen_at_compare - base_at_compare, 2)
+
+    _MILESTONE_KEYS = [500_000, 1_000_000, 2_000_000, 5_000_000]
+    milestone_comparison = []
+    for ms in _MILESTONE_KEYS:
+        bm = base_ms.get(ms, {})
+        sm = scen_ms.get(ms, {})
+        milestone_comparison.append({
+            "milestone":       ms,
+            "baseline_year":   bm.get("year"),
+            "scenario_year":   sm.get("year"),
+            "years_earlier":   round(bm.get("years_away", 0) - sm.get("years_away", 0), 1)
+                               if bm and sm else None,
+        })
+
+    return {
+        "current_net_worth":       round(current_nw, 2),
+        "baseline": {
+            "monthly_savings":     base_monthly,
+            "annual_return_pct":   round(base_return * 100, 1),
+            "target_reached":      base_target,
+            "net_worth_at_compare_year": base_at_compare,
+        },
+        "scenario": {
+            "monthly_savings_delta": monthly_savings_delta,
+            "monthly_savings":     scen_monthly,
+            "annual_return_pct":   round(scen_return * 100, 1),
+            "target_reached":      scen_target,
+            "net_worth_at_compare_year": scen_at_compare,
+        },
+        "compare_year":            compare_year,
+        "delta": {
+            "years_to_target_earlier":    years_delta,
+            "additional_net_worth_at_compare": nw_delta,
+        },
+        "target_net_worth":        eff_target,
+        "milestone_comparison":    milestone_comparison,
+        "note": (
+            "Projection compounds existing net worth at the assumed annual return "
+            "and adds the monthly savings each month. Does not model inflation, taxes, "
+            "or variable income. monthly_savings_delta adjusts the baseline savings amount."
+        ),
+    }

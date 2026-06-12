@@ -777,6 +777,13 @@ async def list_tools() -> list[Tool]:
 
 @app.call_tool()
 async def call_tool(name: str, arguments: dict) -> list[TextContent]:
+    try:
+        return await _call_tool_inner(name, arguments)
+    except Exception as e:
+        return [TextContent(type="text", text=json.dumps({"error": str(e), "tool": name}, indent=2))]
+
+
+async def _call_tool_inner(name: str, arguments: dict) -> list[TextContent]:
     # Hot-reload scraper module only in development mode.
     # In production (the common case) this is skipped — the thin shim adds
     # no value once the package is installed, and reloading every call adds
@@ -1092,6 +1099,7 @@ async def _search_transactions(
     days: int = 365,
     min_amount: float = 0.0,
     max_amount: float | None = None,
+    max_results: int = 100,
 ) -> dict:
     sess, err = await _get_session_or_err()
     if err:
@@ -1099,6 +1107,7 @@ async def _search_transactions(
     return await scraper.search_transactions(
         sess, query=query, category=category,
         days=days, min_amount=min_amount, max_amount=max_amount,
+        max_results=max_results,
     )
 
 
@@ -1137,11 +1146,11 @@ async def _get_savings_rate(months: int = 6) -> dict:
     return await scraper.get_savings_rate(sess, months=months)
 
 
-async def _get_spending_transactions(days: int = 30) -> dict:
+async def _get_spending_transactions(days: int = 30, max_transactions: int = 100) -> dict:
     sess, err = await _get_session_or_err()
     if err:
         return err
-    return await scraper.get_spending_transactions(sess, days=days)
+    return await scraper.get_spending_transactions(sess, days=days, max_transactions=max_transactions)
 
 
 # ── Help ──────────────────────────────────────────────────────────────────

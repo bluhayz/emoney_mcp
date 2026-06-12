@@ -47,7 +47,8 @@ _SNB_API  = "https://api.emoneyadvisor.com/snb-api"
 # The 5-minute TTL is intentionally aligned with the Anthropic prompt-cache
 # window so warm-cache conversation turns don't trigger redundant fetches.
 _card_cache: dict[int, tuple[float, dict | None]] = {}
-_CARD_CACHE_TTL: int = 300  # seconds
+_CARD_CACHE_TTL: int = 300       # seconds — successful responses
+_CARD_ERROR_TTL: int = 30        # seconds — failed/None responses (shorter so transient errors don't block for 5 min)
 
 
 def clear_card_cache() -> None:
@@ -95,7 +96,8 @@ async def _get_card(http, card_id: int) -> dict | None:
     ts = int(now * 1000)
     resp = await http.get(f"{_CARD_URL}/{card_id}?_={ts}", timeout=20)
     if resp.status_code != 200 or "json" not in resp.headers.get("content-type", ""):
-        _card_cache[card_id] = (now, None)   # cache the miss too (avoids retry storms)
+        # Cache failures with a short TTL so a transient server error doesn't block tools for 5 minutes
+        _card_cache[card_id] = (now - _CARD_CACHE_TTL + _CARD_ERROR_TTL, None)
         return None
     data = resp.json().get("Data")
     _card_cache[card_id] = (now, data)

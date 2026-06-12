@@ -392,3 +392,87 @@ async def explore_emoney_cards(
             "dedicated tool in a future update."
         ),
     }
+
+
+# ---------------------------------------------------------------------------
+# get_available_cards  (v0.8.0)
+# ---------------------------------------------------------------------------
+
+async def get_available_cards(
+    http_session,
+    card_ids: list[int] | None = None,
+) -> dict:
+    """
+    Return a clean inventory of all responding Emoney CardSwitcher card IDs
+    with their top-level data keys and a brief data-shape fingerprint.
+
+    Wraps ``explore_emoney_cards`` with cleaner, more AI-readable output —
+    useful for discovering new data sources without wading through raw payloads.
+
+    Parameters
+    ----------
+    card_ids : list of card IDs to probe
+               (default: all known + common unknown IDs [1–16])
+    """
+    if card_ids is None:
+        card_ids = list(range(1, 17))   # probe cards 1–16 in one call
+
+    raw = await explore_emoney_cards(http_session, card_ids=card_ids)
+
+    inventory = []
+    for cid in card_ids:
+        entry = raw["results"].get(f"card_{cid}") or {}
+        if entry.get("status") == "available":
+            data = entry.get("data") or {}
+            keys = list(data.keys()) if isinstance(data, dict) else []
+            # Brief type hints for each key (str/int/float/list/dict/null)
+            key_types = {}
+            for k, v in data.items():
+                if v is None:
+                    key_types[k] = "null"
+                elif isinstance(v, list):
+                    key_types[k] = f"list[{len(v)}]"
+                elif isinstance(v, dict):
+                    key_types[k] = "dict"
+                elif isinstance(v, bool):
+                    key_types[k] = "bool"
+                elif isinstance(v, float):
+                    key_types[k] = "float"
+                elif isinstance(v, int):
+                    key_types[k] = "int"
+                else:
+                    key_types[k] = "str"
+            inventory.append({
+                "card_id":    cid,
+                "status":     "available",
+                "key_count":  len(keys),
+                "keys":       key_types,
+            })
+        else:
+            inventory.append({
+                "card_id": cid,
+                "status":  "unavailable",
+            })
+
+    available = [r for r in inventory if r["status"] == "available"]
+    return {
+        "probed_range":    f"cards {min(card_ids)}–{max(card_ids)}",
+        "available_count": len(available),
+        "total_probed":    len(card_ids),
+        "inventory":       inventory,
+        "known_cards": {
+            1:  "Account groups with per-account detail",
+            2:  "Financial plan goals",
+            3:  "Investment portfolio value + today's change",
+            4:  "Asset allocation model target",
+            8:  "Net worth history array",
+            9:  "Net worth totals (assets / liabilities)",
+            11: "Net worth change MTD/YTD",
+            13: "Cash flow summary + 5 recent transactions",
+        },
+        "note": (
+            "Cards not listed in known_cards are undocumented. "
+            "If an unknown card returns interesting data, use explore_emoney_cards "
+            "to view its full payload and build a dedicated tool."
+        ),
+    }

@@ -12,15 +12,20 @@ src/emoney_mcp/
 ├── browser.py         # EmoneyHttpSession (curl_cffi + cookie persistence), Chrome cookie extraction, nodriver fallback
 ├── scraper.py         # Backward-compat shim — re-exports scrapers/*; target of importlib.reload() in EMONEY_DEV mode
 └── scrapers/
-    ├── __init__.py    # Exports all public functions + clear_caches()
+    ├── __init__.py    # Exports all public functions + clear_caches() + clear_cache(module)
     ├── _helpers.py    # URL constants, _get_card() (TTL cache), _fmt_dollars()
     ├── accounts.py    # get_accounts, net worth breakdown, debt payoff plan
     ├── investments.py # holdings, allocation, performance, transactions, capital gains
-    ├── spending.py    # SNB API integration: all transaction/budget/cashflow tools (most complex module)
-    ├── goals.py       # get_goals, get_financial_summary, get_financial_health_score, get_quick_status
-    ├── tax.py         # Tax math tools + IRS 2025 constants (update annually: _TAX_YEAR)
-    ├── retirement.py  # Runway, Monte Carlo, withdrawal rate, net worth projection, guardrails
-    └── portfolio.py   # Asset location efficiency, rebalancing targets, explore_emoney_cards
+    ├── spending.py    # SNB API: all transaction/budget/cashflow tools + get_unusual_transactions,
+    │                  #   get_merchant_spending, get_cash_flow_forecast (most complex module)
+    ├── goals.py       # get_goals, get_financial_summary, get_financial_health_score,
+    │                  #   get_quick_status, get_monthly_review
+    ├── tax.py         # Tax math tools + IRS 2025 constants + get_year_end_checklist
+    ├── retirement.py  # Runway, Monte Carlo, withdrawal rate, net worth projection,
+    │                  #   guardrails, run_scenario
+    ├── portfolio.py   # Asset location efficiency, rebalancing targets, explore_emoney_cards,
+    │                  #   get_available_cards
+    └── planning.py    # get_insurance_gap_analysis (new v0.8.0)
 ```
 
 ---
@@ -38,7 +43,7 @@ call_tool(name, args)                  # top-level try/except → JSON error on 
                  └─ returns dict → JSON string via TextContent
 ```
 
-**Adding a new tool requires touching 6 locations:**
+**Adding a new tool requires touching 6 locations** (same as before; if creating a new module, also add to `scrapers/__init__.py` imports before step 2).
 
 | # | File | What to add |
 |---|------|-------------|
@@ -48,6 +53,16 @@ call_tool(name, args)                  # top-level try/except → JSON error on 
 | 4 | `server.py` → `list_tools()` | Add `Tool(name=..., description=..., inputSchema=...)` |
 | 5 | `server.py` → `_call_tool_inner()` | Add `elif name == "get_foo": result = await _get_foo(arg)` |
 | 6 | `server.py` | Add `async def _get_foo(arg): sess, err = await _get_session_or_err(); if err: return err; return await scraper.get_foo(sess, arg)` |
+
+---
+
+## Infrastructure Extras (v0.8.0)
+
+**Selective cache invalidation**: `clear_cache(module)` — accepts `'cards'`, `'spending'`, or `'all'`. Also registered as MCP tool.
+
+**Session health check**: `_get_session_or_err()` in server.py calls `_http_session.is_logged_in()` every 5 minutes. Returns `session_warning` error dict if session is stale before the tool attempt fails.
+
+**`get_available_cards`**: Wraps `explore_emoney_cards` with a clean per-card inventory showing key names and type hints. Probes cards 1–16 by default.
 
 ---
 

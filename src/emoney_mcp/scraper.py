@@ -33,9 +33,19 @@ from .scrapers import (   # make sure private helpers are also importable
     clear_card_cache,
     clear_snb_cache,
     clear_caches,
+    clear_cache,
     # v0.7.0 additions
     run_monte_carlo_retirement,
     get_dynamic_withdrawal_guardrails,
     get_social_security_optimizer,
     get_quarterly_estimated_taxes,
+    # v0.8.0 additions
+    get_monthly_review,
+    get_unusual_transactions,
+    get_merchant_spending,
+    get_cash_flow_forecast,
+    get_year_end_checklist,
+    run_scenario,
+    get_insurance_gap_analysis,
+    get_available_cards,
 )

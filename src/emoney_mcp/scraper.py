@@ -54,6 +54,8 @@ from .scrapers import (   # make sure private helpers are also importable
     apply_transaction_rule,
     get_reports,
     get_report_url,
+    # v0.9.1 — category lookup
+    get_categories,
     # v0.8.0 additions
     get_monthly_review,
     get_unusual_transactions,

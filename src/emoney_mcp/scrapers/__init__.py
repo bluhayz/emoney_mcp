@@ -78,6 +78,7 @@ from .spending import (
     get_merchant_spending,
     get_cash_flow_forecast,
     explore_snb_write_endpoints,
+    get_categories,
     _normalize_merchant,
     _fetch_snb_data,
     _fetch_snb_raw,
@@ -213,6 +214,7 @@ __all__ = [
     "get_recurring_charges", "get_budget_vs_actual", "get_year_over_year",
     "get_cash_flow_projection", "get_unusual_transactions",
     "get_merchant_spending", "explore_snb_write_endpoints", "get_cash_flow_forecast",
+    "get_categories",
     "_normalize_merchant", "_fetch_snb_data", "_fetch_snb_raw", "clear_snb_cache",
     "_INCOME_CATEGORIES", "_EXCLUDE_CATEGORIES", "_NON_MERCHANT_CATEGORIES",
     # goals

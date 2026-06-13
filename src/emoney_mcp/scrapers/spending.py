@@ -1624,3 +1624,141 @@ async def get_cash_flow_forecast(
             "Income and spending baselines from the most recent 3 complete months."
         ),
     }
+
+
+# ---------------------------------------------------------------------------
+# explore_snb_write_endpoints
+# ---------------------------------------------------------------------------
+
+async def explore_snb_write_endpoints(http_session) -> dict:
+    """
+    Probe the SNB API for writable endpoints that might support transaction
+    category updates.
+
+    Strategy
+    --------
+    1. Fetch a real JWT + apiKey from the Spending page (same as reads).
+    2. Pull the first available transaction id and category id from the live
+       transaction list — needed to construct realistic probe payloads.
+    3. Send OPTIONS requests to candidate write endpoints to check whether
+       the server advertises PUT/PATCH/POST methods.
+    4. Attempt a dry-run GET on each candidate endpoint to distinguish
+       404 (endpoint absent) from 401/403/405 (endpoint exists but blocked).
+
+    No data is modified.  Every request is either OPTIONS or a GET that
+    cannot mutate state.
+    """
+    jwt_token, api_key = await _get_snb_credentials(http_session)
+    if not jwt_token:
+        return {"error": "Could not retrieve SNB credentials. Try sync_chrome_session first."}
+
+    http = await http_session.get_http()
+    headers = {
+        "Accept":        "application/json, text/plain, */*",
+        "Authorization": f"Bearer {jwt_token}",
+        "apikey":        api_key,
+        "Origin":        BASE_URL,
+    }
+
+    # Grab a real transaction id + category id to use in probe URLs
+    sample_txn_id  = None
+    sample_cat_id  = None
+    ok, raw_txns, categories = await _fetch_snb_raw(http_session)
+    if ok and raw_txns:
+        t = raw_txns[0]
+        sample_txn_id = t.get("id") or t.get("transactionId") or t.get("Id")
+        sample_cat_id = str(t.get("categoryId") or "")
+
+    # Candidate write endpoints — common REST patterns for transaction management
+    base = _SNB_API
+    candidates = [
+        # Category update patterns
+        f"{base}/api/values/UpdateTransactionCategory",
+        f"{base}/api/values/SetTransactionCategory",
+        f"{base}/api/values/UpdateCategory",
+        f"{base}/api/transaction/category",
+        f"{base}/api/transactions/category",
+        # General transaction update patterns
+        f"{base}/api/values/UpdateTransaction",
+        f"{base}/api/values/EditTransaction",
+        f"{base}/api/values/PatchTransaction",
+        f"{base}/api/transaction",
+        f"{base}/api/transactions",
+        # RESTful with ID
+        *(
+            [
+                f"{base}/api/values/UpdateTransaction/{sample_txn_id}",
+                f"{base}/api/transaction/{sample_txn_id}",
+                f"{base}/api/transactions/{sample_txn_id}",
+                f"{base}/api/transactions/{sample_txn_id}/category",
+            ]
+            if sample_txn_id else []
+        ),
+        # Description / label update
+        f"{base}/api/values/UpdateTransactionDescription",
+        f"{base}/api/values/SetUserDescription",
+        # Split transaction
+        f"{base}/api/values/SplitTransaction",
+        f"{base}/api/values/Split",
+        # Delete / exclude
+        f"{base}/api/values/DeleteTransaction",
+        f"{base}/api/values/ExcludeTransaction",
+        f"{base}/api/values/HideTransaction",
+    ]
+
+    results = []
+    for url in candidates:
+        probe = {"url": url, "options_methods": None, "get_status": None, "assessment": ""}
+
+        # OPTIONS probe — does the server advertise write methods?
+        try:
+            opt_resp = await http.options(url, headers=headers, timeout=10)
+            allow = opt_resp.headers.get("Allow", "") or opt_resp.headers.get("allow", "")
+            probe["options_status"] = opt_resp.status_code
+            probe["options_allow_header"] = allow
+            probe["options_methods"] = [m.strip() for m in allow.split(",") if m.strip()]
+        except Exception as e:
+            probe["options_status"] = f"error: {e}"
+
+        # GET probe — distinguish 404 (missing) from 401/403/405 (present but restricted)
+        try:
+            get_resp = await http.get(url, headers=headers, timeout=10)
+            probe["get_status"] = get_resp.status_code
+            if get_resp.status_code == 404:
+                probe["assessment"] = "endpoint not found"
+            elif get_resp.status_code in (401, 403):
+                probe["assessment"] = "endpoint EXISTS — auth/permission issue (promising)"
+            elif get_resp.status_code == 405:
+                probe["assessment"] = "endpoint EXISTS — GET not allowed, write methods may work"
+            elif get_resp.status_code == 200:
+                probe["assessment"] = "endpoint EXISTS and readable via GET"
+                try:
+                    probe["sample_response"] = get_resp.json()
+                except Exception:
+                    probe["sample_response"] = get_resp.text[:200]
+            else:
+                probe["assessment"] = f"unexpected status {get_resp.status_code}"
+        except Exception as e:
+            probe["get_status"] = f"error: {e}"
+
+        results.append(probe)
+
+    promising = [r for r in results if "EXISTS" in r.get("assessment", "")]
+    write_capable = [
+        r for r in results
+        if any(m in (r.get("options_methods") or []) for m in ["PUT", "PATCH", "POST"])
+    ]
+
+    return {
+        "sample_transaction_id": sample_txn_id,
+        "sample_category_id":    sample_cat_id,
+        "total_endpoints_probed": len(results),
+        "promising_endpoints":   promising,
+        "write_capable_by_options": write_capable,
+        "all_results":           results,
+        "next_steps": (
+            "Endpoints marked 'EXISTS' should be probed with POST/PUT/PATCH next. "
+            "Use the sample_transaction_id and sample_category_id to build a test payload. "
+            "Check options_allow_header on promising endpoints for supported HTTP methods."
+        ),
+    }

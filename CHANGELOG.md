@@ -2,7 +2,14 @@
 
 All notable changes to emoney-mcp are documented here.
 
-## [0.9.1] — 2026-06-13 (current)
+## [0.9.2] — 2026-06-13 (current)
+
+### Changed
+- Version bump to trigger PyPI release of v0.9.1 fixes (transaction_id/category_id in spend transactions, GetRules 500 fix, get_categories tool, 66 new tests).
+
+---
+
+## [0.9.1] — 2026-06-13
 
 ### Fixed
 

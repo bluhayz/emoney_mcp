@@ -97,7 +97,7 @@ Then point Claude Desktop at your local clone:
 
 ---
 
-## Available tools (51 total)
+## Available tools (61 total)
 
 ### 🏠 Overview & Dashboard
 
@@ -191,6 +191,31 @@ Then point Claude Desktop at your local clone:
 | `get_recurring_charges` | Detects subscriptions and recurring bills by analyzing 120 days of transaction patterns. Returns weekly/monthly/quarterly charges and total estimated monthly recurring spend. |
 | `get_unusual_transactions` | **Anomaly detection.** Flags transactions that are unusually large vs. the merchant's or category's historical average. Parameters: `days` (default 90), `threshold_pct` (default 150%) |
 | `get_merchant_spending` | **Spending by merchant.** Aggregated totals grouped by normalized merchant name with transaction count and date range. Parameters: `days` (default 365), `merchant` (substring filter), `limit` (default 25 merchants) |
+
+### ✏️ Transaction Management
+
+| Tool | Description |
+|------|-------------|
+| `update_transaction` | **Edit a spending transaction** — rename it (UserDescription), reassign its category (CategoryID), or both. Required: `transaction_id`. Optional: `description`, `category_id` |
+| `hide_transaction` | **Hide a transaction** from the spending view in Emoney (marks it as excluded from cash flow). Required: `transaction_id` |
+| `get_transaction_splits` | **Get splits for a transaction** — returns existing sub-transactions if the transaction has been split. Required: `transaction_id` |
+| `update_transaction_splits` | **Split a transaction across multiple categories** — pass a list of `{"amount": ..., "category_id": ..., "description": ...}` dicts. Required: `transaction_id`, `splits` |
+
+### 📋 Transaction Rules
+
+| Tool | Description |
+|------|-------------|
+| `get_transaction_rules` | **List all auto-categorization rules** — returns the full rule set Emoney applies to new transactions (merchant match, keyword match, amount range, category assignment) |
+| `add_transaction_rule` | **Create a new categorization rule** — define how Emoney should auto-categorize future transactions. Required: `rule` dict with rule fields (merchant, keyword, category_id, etc.) |
+| `update_transaction_rule` | **Modify an existing rule** — overwrite specific rule fields while keeping others. Required: `rule_id`, `rule` dict with updated fields |
+| `apply_transaction_rule` | **Apply a rule immediately** to existing transactions — re-runs the rule against the transaction history without waiting for new imports. Required: `rule_id` |
+
+### 📊 Reports
+
+| Tool | Description |
+|------|-------------|
+| `get_reports` | **List all available Emoney reports** — returns the full report catalog grouped by family (Liquidity, Asset Tax Type, Estate Transfer, etc.) with report IDs |
+| `get_report_url` | **Get a URL to open a specific report** — POSTs to Emoney to generate a report URL you can open in a browser. Required: `report_id` (from `get_reports`) |
 
 ### 🔧 Debug & Session Management
 
@@ -302,6 +327,17 @@ How concentrated am I in any single stock?
 What are my realized capital gains this year?
 ```
 
+### Transaction Management & Reports
+```
+Rename the Starbucks transaction from yesterday to "Coffee with client".
+Recategorize transaction 12345 as Dining Out.
+Hide the duplicate Amazon charge from last week.
+Split the $200 Target purchase between Groceries and Household Supplies.
+Show me all my Emoney auto-categorization rules.
+What reports are available in Emoney?
+Get me a link to the Liquidity Report.
+```
+
 ### Spending & Cash Flow Detail
 ```
 What did I spend last month vs. what came in?
@@ -379,7 +415,7 @@ Tools with multiple independent data sources use `asyncio.gather()` for parallel
 Claude Desktop
      │  MCP stdio
      ▼
-emoney_mcp/server.py         ← tool registration + dispatch (51 tools)
+emoney_mcp/server.py         ← tool registration + dispatch (61 tools)
 emoney_mcp/scraper.py         ← re-export shim (backward-compatible)
 emoney_mcp/scrapers/          ← domain-split scraping package
   ├── _helpers.py             ←   shared URL constants + TTL-cached _get_card()
@@ -390,7 +426,10 @@ emoney_mcp/scrapers/          ← domain-split scraping package
   ├── tax.py                  ←   2025 IRS tax planning tools
   ├── retirement.py           ←   runway, withdrawal, net worth projection, run_scenario
   ├── portfolio.py            ←   asset location, rebalancing, card discovery
-  └── planning.py             ←   insurance gap analysis
+  ├── planning.py             ←   insurance gap analysis
+  ├── transactions.py         ←   transaction writes, splits, rules engine (v0.9.0)
+  ├── reports.py              ←   report catalog + URL generation (v0.9.0)
+  └── explore.py              ←   Emoney site explorer (dev/discovery tool)
 emoney_mcp/browser.py         ← session management + nodriver login
      │
      ├── curl_cffi AsyncSession  ← Chrome TLS fingerprint for API calls
@@ -437,6 +476,22 @@ The spending module uses a separate REST API authenticated with a short-lived JW
 |----------|------|
 | `api/values/GetFilteredTransactions` | All bank/CC transactions with `categoryId` (full history, client-side filtered) |
 | `api/values/GetCategories` | 114 spending category names mapped by ID |
+
+### CS/Spending (transaction writes, rules, reports)
+
+Write endpoints live on the main emaplan.com host under `/ema/CS/Spending/`. All require an ASP.NET anti-forgery token (`__RequestVerificationToken`) in the POST body and the `X-Requested-With: XMLHttpRequest` header. jQuery bracket notation is used for nested fields (`TransactionID[Value]=...`).
+
+| Endpoint | Operation |
+|----------|-----------|
+| `CS/Spending/UpdateTransaction` | Edit transaction description and/or category |
+| `CS/Spending/HideTransaction` | Exclude a transaction from spending view |
+| `CS/Spending/GetTransactionSplits` | Fetch existing splits for a transaction |
+| `CS/Spending/UpdateTransactionSplits` | Write split sub-transactions |
+| `CS/Spending/GetClassifiableHoldings` | Fetch transaction categorization rules |
+| `CS/Spending/AddRule` | Create a new auto-categorization rule |
+| `CS/Spending/UpdateRule` | Modify an existing rule |
+| `CS/Spending/ApplyRule` | Apply a rule retroactively to history |
+| `CS/Reports/GetReportUrl` | Generate a URL for a named Emoney report |
 
 ---
 

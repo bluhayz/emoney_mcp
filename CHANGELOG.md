@@ -2,7 +2,46 @@
 
 All notable changes to emoney-mcp are documented here.
 
-## [0.7.3] — 2026-06-12 (current)
+## [0.9.1] — 2026-06-13 (current)
+
+### Changed
+- Updated `README.md` and `README_PYPI.md` with 10 new v0.9.0 tools (transaction writes, rules engine, reports), updated tool count to 61, added new example questions section, expanded internal API endpoints table, and added new modules to architecture diagram.
+- Updated `CHANGELOG.md` with full v0.9.0 detail.
+
+---
+
+## [0.9.0] — 2026-06-13
+
+### Added — 10 new tools (61 tools total)
+
+#### Transaction writes (`scrapers/transactions.py`)
+
+- **`update_transaction`** — Edit a bank/CC transaction: rename it (`description`) and/or reassign its spending category (`category_id`). POSTs to `CS/Spending/UpdateTransaction` with jQuery bracket-notation payload and ASP.NET anti-forgery token.
+- **`hide_transaction`** — Exclude a transaction from Emoney's cash flow view. Required: `transaction_id`.
+- **`get_transaction_splits`** — Return existing sub-splits for a transaction. Required: `transaction_id`.
+- **`update_transaction_splits`** — Write a new split configuration: list of `{amount, category_id, description}` dicts that must sum to the original transaction amount. Required: `transaction_id`, `splits`.
+
+#### Rules engine (`scrapers/transactions.py`)
+
+- **`get_transaction_rules`** — Fetch the full auto-categorization rule set Emoney applies to new transaction imports. Returns rule ID, merchant/keyword match criteria, and assigned category for each rule.
+- **`add_transaction_rule`** — Create a new rule. Pass a `rule` dict with fields like `merchantName`, `keyword`, `categoryId`, `amountMin`, `amountMax`. Emoney applies the rule to future imports.
+- **`update_transaction_rule`** — Overwrite specific fields on an existing rule. Required: `rule_id`, `rule` dict with updated fields.
+- **`apply_transaction_rule`** — Re-run an existing rule against the full transaction history. Required: `rule_id`.
+
+#### Reports (`scrapers/reports.py`)
+
+- **`get_reports`** — Parse the Emoney Reports page HTML to extract the full report catalog grouped by family (e.g. `LiquidityReport`, `AssetTaxTypeReport`, `EstateTransferReport`). Returns report IDs, labels, and families.
+- **`get_report_url`** — POST to `CS/Reports/GetReportUrl` to generate a browser-ready URL for a specific report. Required: `report_id` (from `get_reports`).
+
+### Infrastructure
+
+- All write endpoints use `_csrf_post()` helper that appends `__RequestVerificationToken` (reused from `http_session.get_csrf_token()`) and sets `X-Requested-With: XMLHttpRequest`.
+- Nested Emoney form fields use jQuery bracket notation replicated in Python dict keys (e.g. `"TransactionID[Value]"`).
+- Rule payloads use flat `rule[field]` notation (`{f"rule[{k}]": v for k, v in rule.items()}`).
+
+---
+
+## [0.7.3] — 2026-06-12
 
 ### Fixed
 

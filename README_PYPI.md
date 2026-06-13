@@ -151,9 +151,20 @@ How much life insurance do I need?
 Do I have enough set aside for an emergency?
 ```
 
+### Transaction management
+```
+Rename the Starbucks transaction from yesterday to "Coffee with client".
+Recategorize that Amazon charge as Office Supplies.
+Hide the duplicate charge from last week.
+Split the $200 Target purchase between Groceries and Household Supplies.
+Show me all my auto-categorization rules.
+What Emoney reports are available?
+Get me a link to the Liquidity Report.
+```
+
 ---
 
-## Available tools (51 total)
+## Available tools (61 total)
 
 ### Overview & Dashboard
 | Tool | What it answers |
@@ -234,6 +245,28 @@ Do I have enough set aside for an emergency?
 | Tool | What it answers |
 |------|----------------|
 | `get_insurance_gap_analysis` | **New.** Life insurance need, disability coverage need, and emergency fund adequacy from your actual income and assets |
+
+### Transaction Management
+| Tool | What it answers |
+|------|----------------|
+| `update_transaction` | **New.** Rename a transaction or change its category |
+| `hide_transaction` | **New.** Exclude a transaction from your spending view |
+| `get_transaction_splits` | **New.** View how a transaction is split across categories |
+| `update_transaction_splits` | **New.** Split a transaction across multiple categories and amounts |
+
+### Transaction Rules
+| Tool | What it answers |
+|------|----------------|
+| `get_transaction_rules` | **New.** List all Emoney auto-categorization rules |
+| `add_transaction_rule` | **New.** Create a rule to auto-categorize future transactions |
+| `update_transaction_rule` | **New.** Modify an existing categorization rule |
+| `apply_transaction_rule` | **New.** Apply a rule retroactively to existing transactions |
+
+### Reports
+| Tool | What it answers |
+|------|----------------|
+| `get_reports` | **New.** List all available Emoney reports by family |
+| `get_report_url` | **New.** Generate a URL to open a specific Emoney report |
 
 ### Session Management
 | Tool | What it does |

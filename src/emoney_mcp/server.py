@@ -618,6 +618,19 @@ async def list_tools() -> list[Tool]:
             inputSchema={"type": "object", "properties": {}, "required": []},
         ),
         Tool(
+            name="explore_snb_write_endpoints",
+            description=(
+                "Probes the SNB API (api.emoneyadvisor.com/snb-api) for write endpoints that "
+                "might support transaction category updates, description edits, splits, or deletes. "
+                "Sends OPTIONS and GET requests to ~20 candidate endpoint patterns and reports "
+                "which ones exist (401/403/405 = present) vs. are absent (404). "
+                "No data is modified — all probes are read-only. "
+                "Use this to investigate whether transaction recategorization is feasible before "
+                "building a write tool. No parameters required."
+            ),
+            inputSchema={"type": "object", "properties": {}, "required": []},
+        ),
+        Tool(
             name="explore_emoney_cards",
             description=(
                 "Probes unexplored Emoney CardSwitcher endpoints (cards 5, 6, 7, 10, 12, 14–16) "
@@ -1094,6 +1107,8 @@ async def _call_tool_inner(name: str, arguments: dict) -> list[TextContent]:
         )
     elif name == "get_financial_health_score":
         result = await _get_financial_health_score()
+    elif name == "explore_snb_write_endpoints":
+        result = await _explore_snb_write_endpoints()
     elif name == "explore_emoney_cards":
         card_ids = arguments.get("card_ids")
         if card_ids is not None:
@@ -1840,6 +1855,13 @@ async def _get_financial_health_score() -> dict:
     if err:
         return err
     return await scraper.get_financial_health_score(sess)
+
+
+async def _explore_snb_write_endpoints() -> dict:
+    sess, err = await _get_session_or_err()
+    if err:
+        return err
+    return await scraper.explore_snb_write_endpoints(sess)
 
 
 async def _explore_emoney_cards(card_ids: list[int] | None = None) -> dict:

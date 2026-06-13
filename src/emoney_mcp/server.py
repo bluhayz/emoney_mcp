@@ -617,6 +617,175 @@ async def list_tools() -> list[Tool]:
             ),
             inputSchema={"type": "object", "properties": {}, "required": []},
         ),
+        # ── Transaction writes ────────────────────────────────────────────
+        Tool(
+            name="update_transaction",
+            description=(
+                "Update a spending transaction's category and/or user-visible description. "
+                "transaction_id is the SNB transaction ID (visible in get_spending_transactions). "
+                "category_id is the numeric category ID string (e.g. '65' for Food & Dining). "
+                "At least one of category_id or description must be provided. "
+                "Useful for 'Recategorize this charge' or 'Rename this transaction'."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "transaction_id": {"type": "string", "description": "SNB transaction ID"},
+                    "category_id":    {"type": "string", "description": "Numeric category ID to assign (optional)"},
+                    "description":    {"type": "string", "description": "User-visible description override (optional)"},
+                },
+                "required": ["transaction_id"],
+            },
+        ),
+        Tool(
+            name="hide_transaction",
+            description=(
+                "Hide or un-hide a transaction from spending views and reports. "
+                "Hidden transactions are excluded from budgets and category totals. "
+                "Useful for 'Hide this transfer' or 'Exclude this refund from spending'."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "transaction_id": {"type": "string", "description": "SNB transaction ID"},
+                    "hidden":         {"type": "boolean", "description": "True to hide, False to un-hide (default True)"},
+                },
+                "required": ["transaction_id"],
+            },
+        ),
+        Tool(
+            name="get_transaction_splits",
+            description=(
+                "Return the current splits for a transaction — how it is divided "
+                "across multiple categories (e.g. a Costco run split into Groceries and Gas). "
+                "Returns splits array with category and amount per split."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "transaction_id": {"type": "string", "description": "SNB transaction ID"},
+                },
+                "required": ["transaction_id"],
+            },
+        ),
+        Tool(
+            name="update_transaction_splits",
+            description=(
+                "Replace all splits on a transaction — divide one transaction across "
+                "multiple categories with specific amounts. Amounts must sum to the total. "
+                "Each split needs CategoryID (numeric string) and SplitAmount (negative for expenses). "
+                "Useful for 'Split this Costco charge: $80 groceries and $40 gas'."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "transaction_splits": {
+                        "type": "array",
+                        "description": "List of split objects: [{CategoryID:{Value:'65'}, SplitAmount:-80.00, UserDescription:'Groceries'}, ...]",
+                        "items": {"type": "object"},
+                    },
+                },
+                "required": ["transaction_splits"],
+            },
+        ),
+        # ── Rules engine ──────────────────────────────────────────────────
+        Tool(
+            name="get_transaction_rules",
+            description=(
+                "Return all auto-categorization rules. Rules automatically assign a category "
+                "to transactions whose description contains a specific string. "
+                "Each rule has: rule_id, description_contains, category_id, user_description. "
+                "Useful for 'What categorization rules do I have?' or before adding a new rule."
+            ),
+            inputSchema={"type": "object", "properties": {}, "required": []},
+        ),
+        Tool(
+            name="add_transaction_rule",
+            description=(
+                "Create a new auto-categorization rule. Any transaction whose description "
+                "contains description_contains will be assigned the given category. "
+                "Optionally apply to a specific transaction_id that triggered this rule. "
+                "Useful for 'Automatically categorize all Starbucks charges as Coffee'."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "description_contains": {"type": "string", "description": "Substring to match in transaction description (case-insensitive)"},
+                    "category_id":          {"type": "string", "description": "Numeric category ID to assign"},
+                    "user_description":     {"type": "string", "description": "Display label for the rule (defaults to description_contains)"},
+                    "transaction_id":       {"type": "string", "description": "Optional: SNB transaction ID that triggered this rule"},
+                    "min_amount":           {"type": "number", "description": "Optional: only match transactions above this amount"},
+                    "max_amount":           {"type": "number", "description": "Optional: only match transactions below this amount"},
+                },
+                "required": ["description_contains", "category_id"],
+            },
+        ),
+        Tool(
+            name="update_transaction_rule",
+            description=(
+                "Edit an existing auto-categorization rule. Fetches the current rule and "
+                "applies only the fields you provide. "
+                "rule_id comes from get_transaction_rules. "
+                "Useful for 'Change the Starbucks rule to use a different category'."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "rule_id":              {"type": "string", "description": "Rule ID from get_transaction_rules"},
+                    "description_contains": {"type": "string", "description": "New description substring to match (optional)"},
+                    "category_id":          {"type": "string", "description": "New category ID to assign (optional)"},
+                    "user_description":     {"type": "string", "description": "New display label (optional)"},
+                    "min_amount":           {"type": "number", "description": "New minimum amount filter (optional)"},
+                    "max_amount":           {"type": "number", "description": "New maximum amount filter (optional)"},
+                    "transaction_id":       {"type": "string", "description": "Optional context transaction ID"},
+                },
+                "required": ["rule_id"],
+            },
+        ),
+        Tool(
+            name="apply_transaction_rule",
+            description=(
+                "Apply an existing rule to all past transactions that match its description pattern. "
+                "This bulk-recategorizes historical transactions. "
+                "rule_id comes from get_transaction_rules. "
+                "Useful for 'Apply the Starbucks rule to all past transactions'."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "rule_id":        {"type": "string", "description": "Rule ID from get_transaction_rules"},
+                    "transaction_id": {"type": "string", "description": "Optional: limit to a specific transaction"},
+                },
+                "required": ["rule_id"],
+            },
+        ),
+        # ── Reports ───────────────────────────────────────────────────────
+        Tool(
+            name="get_reports",
+            description=(
+                "List all available Emoney reports grouped by family (Investments, Net Worth, "
+                "Tax, Estate, etc.). Each report has a report_id, name, and description. "
+                "Use get_report_url(report_id) to generate a viewable link for any report. "
+                "Useful for 'What reports are available?' or finding a specific report."
+            ),
+            inputSchema={"type": "object", "properties": {}, "required": []},
+        ),
+        Tool(
+            name="get_report_url",
+            description=(
+                "Generate a signed URL to view or download a specific Emoney report as PDF. "
+                "report_id is the identifier string from get_reports() (e.g. 'LiquidityReport'). "
+                "The URL can be opened in a browser to view the report. "
+                "Useful for 'Get me a link to the Asset Allocation report'."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "report_id": {"type": "string", "description": "Report identifier from get_reports (e.g. 'LiquidityReport')"},
+                },
+                "required": ["report_id"],
+            },
+        ),
         Tool(
             name="explore_emoney_site",
             description=(
@@ -1119,6 +1288,51 @@ async def _call_tool_inner(name: str, arguments: dict) -> list[TextContent]:
         )
     elif name == "get_financial_health_score":
         result = await _get_financial_health_score()
+    elif name == "update_transaction":
+        result = await _update_transaction(
+            transaction_id=arguments["transaction_id"],
+            category_id=arguments.get("category_id"),
+            description=arguments.get("description"),
+        )
+    elif name == "hide_transaction":
+        result = await _hide_transaction(
+            transaction_id=arguments["transaction_id"],
+            hidden=bool(arguments.get("hidden", True)),
+        )
+    elif name == "get_transaction_splits":
+        result = await _get_transaction_splits(transaction_id=arguments["transaction_id"])
+    elif name == "update_transaction_splits":
+        result = await _update_transaction_splits(transaction_splits=arguments["transaction_splits"])
+    elif name == "get_transaction_rules":
+        result = await _get_transaction_rules()
+    elif name == "add_transaction_rule":
+        result = await _add_transaction_rule(
+            description_contains=arguments["description_contains"],
+            category_id=str(arguments["category_id"]),
+            user_description=arguments.get("user_description"),
+            transaction_id=arguments.get("transaction_id"),
+            min_amount=float(arguments["min_amount"]) if "min_amount" in arguments else None,
+            max_amount=float(arguments["max_amount"]) if "max_amount" in arguments else None,
+        )
+    elif name == "update_transaction_rule":
+        result = await _update_transaction_rule(
+            rule_id=str(arguments["rule_id"]),
+            description_contains=arguments.get("description_contains"),
+            category_id=str(arguments["category_id"]) if "category_id" in arguments else None,
+            user_description=arguments.get("user_description"),
+            min_amount=float(arguments["min_amount"]) if "min_amount" in arguments else None,
+            max_amount=float(arguments["max_amount"]) if "max_amount" in arguments else None,
+            transaction_id=arguments.get("transaction_id"),
+        )
+    elif name == "apply_transaction_rule":
+        result = await _apply_transaction_rule(
+            rule_id=str(arguments["rule_id"]),
+            transaction_id=arguments.get("transaction_id"),
+        )
+    elif name == "get_reports":
+        result = await _get_reports()
+    elif name == "get_report_url":
+        result = await _get_report_url(report_id=arguments["report_id"])
     elif name == "explore_emoney_site":
         result = await _explore_emoney_site()
     elif name == "explore_snb_write_endpoints":
@@ -2165,6 +2379,119 @@ async def _get_available_cards(card_ids: list[int] | None = None) -> dict:
     if err:
         return err
     return await scraper.get_available_cards(sess, card_ids=card_ids)
+
+
+# ── Transaction writes ─────────────────────────────────────────────────────
+
+async def _update_transaction(
+    transaction_id: str,
+    category_id: str | None = None,
+    description: str | None = None,
+) -> dict:
+    sess, err = await _get_session_or_err()
+    if err:
+        return err
+    return await scraper.update_transaction(sess, transaction_id=transaction_id,
+                                            category_id=category_id, description=description)
+
+
+async def _hide_transaction(transaction_id: str, hidden: bool = True) -> dict:
+    sess, err = await _get_session_or_err()
+    if err:
+        return err
+    return await scraper.hide_transaction(sess, transaction_id=transaction_id, hidden=hidden)
+
+
+async def _get_transaction_splits(transaction_id: str) -> dict:
+    sess, err = await _get_session_or_err()
+    if err:
+        return err
+    return await scraper.get_transaction_splits(sess, transaction_id=transaction_id)
+
+
+async def _update_transaction_splits(transaction_splits: list) -> dict:
+    sess, err = await _get_session_or_err()
+    if err:
+        return err
+    return await scraper.update_transaction_splits(sess, transaction_splits=transaction_splits)
+
+
+# ── Rules engine ───────────────────────────────────────────────────────────
+
+async def _get_transaction_rules() -> dict:
+    sess, err = await _get_session_or_err()
+    if err:
+        return err
+    return await scraper.get_transaction_rules(sess)
+
+
+async def _add_transaction_rule(
+    description_contains: str,
+    category_id: str,
+    user_description: str | None = None,
+    transaction_id: str | None = None,
+    min_amount: float | None = None,
+    max_amount: float | None = None,
+) -> dict:
+    sess, err = await _get_session_or_err()
+    if err:
+        return err
+    return await scraper.add_transaction_rule(
+        sess,
+        description_contains=description_contains,
+        category_id=category_id,
+        user_description=user_description,
+        transaction_id=transaction_id,
+        min_amount=min_amount,
+        max_amount=max_amount,
+    )
+
+
+async def _update_transaction_rule(
+    rule_id: str,
+    description_contains: str | None = None,
+    category_id: str | None = None,
+    user_description: str | None = None,
+    min_amount: float | None = None,
+    max_amount: float | None = None,
+    transaction_id: str | None = None,
+) -> dict:
+    sess, err = await _get_session_or_err()
+    if err:
+        return err
+    return await scraper.update_transaction_rule(
+        sess,
+        rule_id=rule_id,
+        description_contains=description_contains,
+        category_id=category_id,
+        user_description=user_description,
+        min_amount=min_amount,
+        max_amount=max_amount,
+        transaction_id=transaction_id,
+    )
+
+
+async def _apply_transaction_rule(rule_id: str, transaction_id: str | None = None) -> dict:
+    sess, err = await _get_session_or_err()
+    if err:
+        return err
+    return await scraper.apply_transaction_rule(sess, rule_id=rule_id, transaction_id=transaction_id)
+
+
+# ── Reports ────────────────────────────────────────────────────────────────
+
+async def _get_reports() -> dict:
+    sess, err = await _get_session_or_err()
+    if err:
+        return err
+    return await scraper.get_reports(sess)
+
+
+async def _get_report_url(report_id: str) -> dict:
+    sess, err = await _get_session_or_err()
+    if err:
+        return err
+    return await scraper.get_report_url(sess, report_id=report_id)
 
 
 async def main() -> None:

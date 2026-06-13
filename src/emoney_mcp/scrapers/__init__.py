@@ -138,6 +138,22 @@ from .explore import (
     explore_emoney_site,
 )
 
+from .transactions import (
+    update_transaction,
+    hide_transaction,
+    get_transaction_splits,
+    update_transaction_splits,
+    get_transaction_rules,
+    add_transaction_rule,
+    update_transaction_rule,
+    apply_transaction_rule,
+)
+
+from .reports import (
+    get_reports,
+    get_report_url,
+)
+
 
 def clear_caches() -> None:
     """
@@ -222,4 +238,11 @@ __all__ = [
     "get_insurance_gap_analysis",
     # explore
     "explore_emoney_site",
+    # transactions (write)
+    "update_transaction", "hide_transaction",
+    "get_transaction_splits", "update_transaction_splits",
+    "get_transaction_rules", "add_transaction_rule",
+    "update_transaction_rule", "apply_transaction_rule",
+    # reports
+    "get_reports", "get_report_url",
 ]

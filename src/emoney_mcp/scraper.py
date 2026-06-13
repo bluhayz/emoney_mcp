@@ -39,6 +39,8 @@ from .scrapers import (   # make sure private helpers are also importable
     get_dynamic_withdrawal_guardrails,
     get_social_security_optimizer,
     get_quarterly_estimated_taxes,
+    # v0.8.x — SNB write endpoint explorer
+    explore_snb_write_endpoints,
     # v0.8.0 additions
     get_monthly_review,
     get_unusual_transactions,

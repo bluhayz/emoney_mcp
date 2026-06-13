@@ -618,6 +618,18 @@ async def list_tools() -> list[Tool]:
             inputSchema={"type": "object", "properties": {}, "required": []},
         ),
         Tool(
+            name="explore_emoney_site",
+            description=(
+                "Crawls all major Emoney sections (Home, Accounts, Investments, Spending, Cash Flow, "
+                "Goals, Insurance, Tax, Reports, Documents, Tasks, Messages, Estate, Education, "
+                "Scenario, Monte Carlo, Social Security, Profile) using the authenticated session "
+                "and mines each page's HTML/JS for API endpoints, form actions, AJAX URLs, and nav links. "
+                "No data is modified — all requests are GET only. "
+                "Use this to discover new data sources and plan new tools."
+            ),
+            inputSchema={"type": "object", "properties": {}, "required": []},
+        ),
+        Tool(
             name="explore_snb_write_endpoints",
             description=(
                 "Probes the SNB API (api.emoneyadvisor.com/snb-api) for write endpoints that "
@@ -1107,6 +1119,8 @@ async def _call_tool_inner(name: str, arguments: dict) -> list[TextContent]:
         )
     elif name == "get_financial_health_score":
         result = await _get_financial_health_score()
+    elif name == "explore_emoney_site":
+        result = await _explore_emoney_site()
     elif name == "explore_snb_write_endpoints":
         result = await _explore_snb_write_endpoints()
     elif name == "explore_emoney_cards":
@@ -1855,6 +1869,13 @@ async def _get_financial_health_score() -> dict:
     if err:
         return err
     return await scraper.get_financial_health_score(sess)
+
+
+async def _explore_emoney_site() -> dict:
+    sess, err = await _get_session_or_err()
+    if err:
+        return err
+    return await scraper.explore_emoney_site(sess)
 
 
 async def _explore_snb_write_endpoints() -> dict:

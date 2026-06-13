@@ -134,6 +134,10 @@ from .planning import (
     get_insurance_gap_analysis,
 )
 
+from .explore import (
+    explore_emoney_site,
+)
+
 
 def clear_caches() -> None:
     """
@@ -216,4 +220,6 @@ __all__ = [
     "_classify_asset", "_ASSET_EFFICIENCY",
     # planning
     "get_insurance_gap_analysis",
+    # explore
+    "explore_emoney_site",
 ]

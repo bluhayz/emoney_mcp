@@ -200,6 +200,24 @@ def clear_snb_cache() -> None:
     _snb_raw_cache = None
 
 
+async def get_categories(http_session) -> dict:
+    """
+    Return all SNB spending category names mapped to their numeric IDs.
+
+    Source: SNB API GetCategories endpoint (same cache as get_spending_transactions).
+    Use the returned ``id`` values with update_transaction, add_transaction_rule,
+    and update_transaction_rule.
+    """
+    ok, _, categories = await _fetch_snb_raw(http_session)
+    if not ok:
+        return {"error": "Could not retrieve SNB data. Try re-syncing Chrome session."}
+    cats = sorted(
+        [{"id": int(k), "name": v} for k, v in categories.items() if k and v],
+        key=lambda x: x["name"],
+    )
+    return {"category_count": len(cats), "categories": cats}
+
+
 # ---------------------------------------------------------------------------
 # Merchant name normalization
 # ---------------------------------------------------------------------------
@@ -478,12 +496,14 @@ async def get_spending_transactions(
         cat_id  = str(t.get("categoryId") or "")
         cat_name = categories.get(cat_id, "Uncategorized") if cat_id else "Uncategorized"
         transactions.append({
-            "date":        (t.get("date") or "")[:10],
-            "description": desc,
-            "category":    cat_name,
-            "amount":      t.get("value", 0),
-            "is_pending":  t.get("isPending", False),
-            "is_split":    t.get("isSplit", False),
+            "transaction_id": t.get("id") or t.get("transactionId") or t.get("Id"),
+            "date":           (t.get("date") or "")[:10],
+            "description":    desc,
+            "category":       cat_name,
+            "category_id":    int(cat_id) if cat_id else None,
+            "amount":         t.get("value", 0),
+            "is_pending":     t.get("isPending", False),
+            "is_split":       t.get("isSplit", False),
         })
 
     # Summarize by category (over ALL transactions, before truncation)

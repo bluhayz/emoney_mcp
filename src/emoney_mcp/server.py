@@ -690,6 +690,16 @@ async def list_tools() -> list[Tool]:
         ),
         # ── Rules engine ──────────────────────────────────────────────────
         Tool(
+            name="get_categories",
+            description=(
+                "Return all SNB spending category names and their numeric IDs. "
+                "Use this to look up the category_id needed by update_transaction, "
+                "add_transaction_rule, and update_transaction_rule. "
+                "Useful for 'What category ID is Groceries?' or 'List all spending categories.'"
+            ),
+            inputSchema={"type": "object", "properties": {}, "required": []},
+        ),
+        Tool(
             name="get_transaction_rules",
             description=(
                 "Return all auto-categorization rules. Rules automatically assign a category "
@@ -1305,6 +1315,8 @@ async def _call_tool_inner(name: str, arguments: dict) -> list[TextContent]:
         result = await _update_transaction_splits(transaction_splits=arguments["transaction_splits"])
     elif name == "get_transaction_rules":
         result = await _get_transaction_rules()
+    elif name == "get_categories":
+        result = await _get_categories()
     elif name == "add_transaction_rule":
         result = await _add_transaction_rule(
             description_contains=arguments["description_contains"],
@@ -2423,6 +2435,13 @@ async def _get_transaction_rules() -> dict:
     if err:
         return err
     return await scraper.get_transaction_rules(sess)
+
+
+async def _get_categories() -> dict:
+    sess, err = await _get_session_or_err()
+    if err:
+        return err
+    return await scraper.get_categories(sess)
 
 
 async def _add_transaction_rule(

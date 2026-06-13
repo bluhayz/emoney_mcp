@@ -39,7 +39,11 @@ async def _csrf_post(http_session, path: str, data: dict) -> dict | list:
         timeout=20,
     )
     if resp.status_code not in (200, 201):
-        return {"error": f"{path} returned HTTP {resp.status_code}"}
+        try:
+            body_snippet = resp.text[:400]
+        except Exception:
+            body_snippet = ""
+        return {"error": f"{path} returned HTTP {resp.status_code}", "response_body": body_snippet}
     ct = resp.headers.get("content-type", "")
     if "json" not in ct:
         return {"error": f"{path} returned non-JSON response — session may be stale"}
@@ -183,23 +187,34 @@ async def get_transaction_rules(http_session) -> dict:
     Each rule has: rule_id, description_contains, category_id, user_description,
     min_amount, max_amount, start_day, end_day.
     """
-    result = await _csrf_post(http_session, "GetRules", {})
+    result = await _csrf_post(http_session, "GetRules", {"filter": ""})
     if isinstance(result, dict) and "error" in result:
         return result
-    if not isinstance(result, dict):
-        return {"error": f"Unexpected response type: {type(result).__name__}"}
+
+    # API may return a list [{...}, ...] OR a dict {rule_id: {...}, ...}
+    if isinstance(result, list):
+        items = result
+    elif isinstance(result, dict):
+        items = list(result.values())
+    else:
+        return {"error": f"Unexpected response type from GetRules: {type(result).__name__}"}
 
     rules = []
-    for rule_id, rule in result.items():
+    for rule in items:
+        if not isinstance(rule, dict):
+            continue
+        # RuleID and CategoryID may be wrapped {Value, IsValid} or plain scalars
+        rule_id_raw = rule.get("RuleID")
+        cat_id_raw  = rule.get("CategoryID")
         rules.append({
-            "rule_id": rule.get("RuleID", {}).get("Value"),
+            "rule_id":              rule_id_raw.get("Value") if isinstance(rule_id_raw, dict) else rule_id_raw,
             "description_contains": rule.get("DescriptionContains"),
-            "category_id": rule.get("CategoryID", {}).get("Value"),
-            "user_description": rule.get("UserDescription"),
-            "min_amount": rule.get("MinAmount"),
-            "max_amount": rule.get("MaxAmount"),
-            "start_day": rule.get("StartDay"),
-            "end_day": rule.get("EndDay"),
+            "category_id":          cat_id_raw.get("Value")  if isinstance(cat_id_raw,  dict) else cat_id_raw,
+            "user_description":     rule.get("UserDescription"),
+            "min_amount":           rule.get("MinAmount"),
+            "max_amount":           rule.get("MaxAmount"),
+            "start_day":            rule.get("StartDay"),
+            "end_day":              rule.get("EndDay"),
         })
     return {"rules": rules, "count": len(rules)}
 

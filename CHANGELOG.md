@@ -4,9 +4,21 @@ All notable changes to emoney-mcp are documented here.
 
 ## [0.9.1] — 2026-06-13 (current)
 
+### Fixed
+
+- **`get_spending_transactions`** now includes `transaction_id` and `category_id` on every transaction record. Both fields were present in the SNB payload but were being dropped during serialization. `update_transaction` and `add_transaction_rule` require these values, so the previous output was effectively unusable for writes.
+- **`get_transaction_rules`** was returning HTTP 500 consistently. Two fixes applied:
+  - The `GetRules` POST now sends `filter: ""` in the body; an empty POST body appears to trigger a server-side NullReference in the ASP.NET controller.
+  - Response parsing handles both list-shaped (`[{...}]`) and dict-shaped (`{id: {...}}`) responses, and defensively unwraps both `{Value, IsValid}` wrapper objects and plain scalar values for `RuleID`/`CategoryID` fields.
+- **`_csrf_post`** error messages now include the first 400 bytes of the response body (`response_body` key). Previously the status code alone made remote debugging impossible.
+
+### Added
+
+- **`get_categories`** — returns the full SNB category name→ID map (`[{id, name}]`, sorted by name). Backed by the `GetCategories` cache already populated by `_fetch_snb_raw`, so the call is free when any other SNB tool has run in the same conversation turn. Eliminates the need to reverse-engineer category IDs from rules.
+
 ### Changed
-- Updated `README.md` and `README_PYPI.md` with 10 new v0.9.0 tools (transaction writes, rules engine, reports), updated tool count to 61, added new example questions section, expanded internal API endpoints table, and added new modules to architecture diagram.
-- Updated `CHANGELOG.md` with full v0.9.0 detail.
+
+- Updated `CHANGELOG.md` with full v0.9.0 detail (pulled from GitHub 2026-06-13).
 
 ---
 

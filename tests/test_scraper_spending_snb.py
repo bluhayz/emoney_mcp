@@ -18,9 +18,10 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 # Shared SNB fixture data
 # ---------------------------------------------------------------------------
 
-def _make_txn(date_str, description, category_id, value, is_income=False, is_pending=False):
+def _make_txn(date_str, description, category_id, value, is_income=False, is_pending=False, txn_id=None):
     """Build a raw SNB transaction dict."""
     return {
+        "id":              txn_id or f"txn_{abs(int(value * 100))}",
         "date":            date_str,
         "description":     description,
         "cleanDescription": description,
@@ -150,6 +151,123 @@ class TestGetSpendingTransactions:
             from emoney_mcp.scrapers.spending import get_spending_transactions
             result = await get_spending_transactions(session, days=30)
         assert "error" in result
+
+    @pytest.mark.asyncio
+    async def test_transaction_id_present(self):
+        """Every returned transaction must carry a transaction_id (Bug 1 fix)."""
+        session, raw, cats = _make_mock_session_with_snb()
+        with patch("emoney_mcp.scrapers.spending._fetch_snb_raw", return_value=(True, raw, cats)):
+            from emoney_mcp.scrapers.spending import get_spending_transactions
+            result = await get_spending_transactions(session, days=365, max_transactions=0)
+        for t in result["transactions"]:
+            assert "transaction_id" in t, "transaction_id missing from transaction"
+            assert t["transaction_id"] is not None, "transaction_id should not be None"
+
+    @pytest.mark.asyncio
+    async def test_category_id_present(self):
+        """Every returned transaction must carry a numeric category_id (Bug 1 fix)."""
+        session, raw, cats = _make_mock_session_with_snb()
+        with patch("emoney_mcp.scrapers.spending._fetch_snb_raw", return_value=(True, raw, cats)):
+            from emoney_mcp.scrapers.spending import get_spending_transactions
+            result = await get_spending_transactions(session, days=365, max_transactions=0)
+        for t in result["transactions"]:
+            assert "category_id" in t, "category_id missing from transaction"
+            assert isinstance(t["category_id"], int), "category_id must be an int"
+
+    @pytest.mark.asyncio
+    async def test_category_id_matches_category_name(self):
+        """category_id must map back to the category name via the SNB category dict."""
+        session, raw, cats = _make_mock_session_with_snb()
+        with patch("emoney_mcp.scrapers.spending._fetch_snb_raw", return_value=(True, raw, cats)):
+            from emoney_mcp.scrapers.spending import get_spending_transactions
+            result = await get_spending_transactions(session, days=365, max_transactions=0)
+        id_to_name = {int(k): v for k, v in cats.items()}
+        for t in result["transactions"]:
+            expected = id_to_name.get(t["category_id"])
+            if expected is not None:
+                assert t["category"] == expected, (
+                    f"category '{t['category']}' doesn't match category_id {t['category_id']} → '{expected}'"
+                )
+
+    @pytest.mark.asyncio
+    async def test_transaction_id_uses_raw_id_field(self):
+        """transaction_id should reflect the 'id' field from the raw SNB payload."""
+        explicit_id_txns = [
+            {**_make_txn(_days_ago(5), "WHOLE FOODS", "1", -85.50, txn_id="snb-001"), "id": "snb-001"},
+            {**_make_txn(_days_ago(7), "CHIPOTLE",    "2", -22.00, txn_id="snb-002"), "id": "snb-002"},
+        ]
+        session = AsyncMock()
+        with patch("emoney_mcp.scrapers.spending._fetch_snb_raw", return_value=(True, explicit_id_txns, _CATEGORIES)):
+            from emoney_mcp.scrapers.spending import get_spending_transactions
+            result = await get_spending_transactions(session, days=365, max_transactions=0)
+        ids = {t["transaction_id"] for t in result["transactions"]}
+        assert "snb-001" in ids
+        assert "snb-002" in ids
+
+
+# ---------------------------------------------------------------------------
+# get_categories
+# ---------------------------------------------------------------------------
+
+class TestGetCategories:
+
+    @pytest.mark.asyncio
+    async def test_returns_category_list(self):
+        session = AsyncMock()
+        with patch("emoney_mcp.scrapers.spending._fetch_snb_raw", return_value=(True, [], _CATEGORIES)):
+            from emoney_mcp.scrapers.spending import get_categories
+            result = await get_categories(session)
+        assert "categories" in result
+        assert result["category_count"] == len(_CATEGORIES)
+
+    @pytest.mark.asyncio
+    async def test_category_fields_present(self):
+        session = AsyncMock()
+        with patch("emoney_mcp.scrapers.spending._fetch_snb_raw", return_value=(True, [], _CATEGORIES)):
+            from emoney_mcp.scrapers.spending import get_categories
+            result = await get_categories(session)
+        for cat in result["categories"]:
+            assert "id" in cat
+            assert "name" in cat
+            assert isinstance(cat["id"], int)
+            assert isinstance(cat["name"], str)
+
+    @pytest.mark.asyncio
+    async def test_categories_sorted_by_name(self):
+        session = AsyncMock()
+        with patch("emoney_mcp.scrapers.spending._fetch_snb_raw", return_value=(True, [], _CATEGORIES)):
+            from emoney_mcp.scrapers.spending import get_categories
+            result = await get_categories(session)
+        names = [c["name"] for c in result["categories"]]
+        assert names == sorted(names)
+
+    @pytest.mark.asyncio
+    async def test_id_maps_to_correct_name(self):
+        session = AsyncMock()
+        with patch("emoney_mcp.scrapers.spending._fetch_snb_raw", return_value=(True, [], _CATEGORIES)):
+            from emoney_mcp.scrapers.spending import get_categories
+            result = await get_categories(session)
+        by_id = {c["id"]: c["name"] for c in result["categories"]}
+        for str_id, name in _CATEGORIES.items():
+            assert by_id[int(str_id)] == name
+
+    @pytest.mark.asyncio
+    async def test_snb_failure_returns_error(self):
+        session = AsyncMock()
+        with patch("emoney_mcp.scrapers.spending._fetch_snb_raw", return_value=(False, [], {})):
+            from emoney_mcp.scrapers.spending import get_categories
+            result = await get_categories(session)
+        assert "error" in result
+
+    @pytest.mark.asyncio
+    async def test_empty_categories_dict(self):
+        """Edge case: SNB returns success but zero categories."""
+        session = AsyncMock()
+        with patch("emoney_mcp.scrapers.spending._fetch_snb_raw", return_value=(True, [], {})):
+            from emoney_mcp.scrapers.spending import get_categories
+            result = await get_categories(session)
+        assert result["category_count"] == 0
+        assert result["categories"] == []
 
 
 # ---------------------------------------------------------------------------

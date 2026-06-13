@@ -43,6 +43,17 @@ from .scrapers import (   # make sure private helpers are also importable
     explore_snb_write_endpoints,
     # v0.8.x — site explorer
     explore_emoney_site,
+    # v0.9.0 — transaction writes, rules, reports
+    update_transaction,
+    hide_transaction,
+    get_transaction_splits,
+    update_transaction_splits,
+    get_transaction_rules,
+    add_transaction_rule,
+    update_transaction_rule,
+    apply_transaction_rule,
+    get_reports,
+    get_report_url,
     # v0.8.0 additions
     get_monthly_review,
     get_unusual_transactions,

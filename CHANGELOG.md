@@ -2,7 +2,41 @@
 
 All notable changes to emoney-mcp are documented here.
 
-## [0.9.2] — 2026-06-13 (current)
+## [1.0.0] — 2026-06-14 (current)
+
+### Added — 12 new family financial planning tools (76 tools total)
+
+#### Home & Real Estate (`scrapers/planning.py`)
+- **`get_home_equity`** — Returns property values, mortgage balances, equity, and LTV per property, plus equity as % of net worth. Sources data from Card 1 account groups.
+
+#### Financial Independence (`scrapers/planning.py`, `scrapers/retirement.py`)
+- **`get_fire_number`** — Computes the FI number (annual_spending ÷ SWR), gap from current investable assets, percent of the way there, years-to-FI at current savings rate, and monthly savings needed to reach FI in 15/20/25 years. Uses 12-month SNB spend as the baseline.
+- **`get_financial_independence_roadmap`** — Progress against Fidelity's salary-multiple milestones (1× by 30, 3× by 40, 6× by 50, 10× by 65) plus Coast FI calculation. Optional `current_age` and `retirement_age` parameters.
+
+#### Debt & Estate Planning (`scrapers/accounts.py`, `scrapers/planning.py`)
+- **`get_debt_overview`** — Consolidated debt table with type classification (mortgage, credit card, auto, student), estimated APR, monthly interest, annual interest cost, and payoff date at minimum payments.
+- **`get_gifting_and_estate_strategy`** — Estate tax exposure, annual gift exclusion capacity, 529 superfunding opportunity, and prioritized action list. Uses 2025 IRS constants (exemption $13.61M single / $27.22M MFJ, $18k annual exclusion).
+
+#### Spending Analysis (`scrapers/spending.py`)
+- **`get_50_30_20_analysis`** — Classifies all spending categories into Needs/Wants/Savings buckets and compares against the 50/30/20 guideline with status and recommendations.
+- **`get_spending_by_account`** — Groups spending by linked bank/credit card account, showing totals and top categories per account. Useful for families with multiple cards.
+- **`get_upcoming_bills`** — Projects recurring charges expected in the next N days from 120-day charge history. Flags overdue charges (expected but not yet seen in the feed).
+
+#### Portfolio Analysis (`scrapers/portfolio.py`)
+- **`get_portfolio_concentration`** — Flags positions exceeding a concentration threshold (default 10%), scores diversification A-F, and returns single-stock vs. fund breakdown.
+- **`get_net_worth_velocity`** — Rate of net worth growth from Card 8 history: month-over-month change, year-over-year comparison, trend (accelerating/stable/decelerating), and 12-month projection.
+- **`get_tax_drag_analysis`** — Estimates annual dollar cost of holding tax-inefficient assets (bonds, REITs) in taxable accounts. Returns per-position drag and priority swap list.
+
+#### Tax Planning (`scrapers/tax.py`)
+- **`get_annual_tax_advantaged_summary`** — Shows 2025 IRS limits for 401k, IRA, HSA, and 529 alongside current balances, catch-up eligibility by age, and key contribution deadlines.
+
+### Tests
+- 72 new tests across 4 new test files: `test_planning_extended.py`, `test_spending_extended.py`, `test_portfolio_extended.py`, `test_retirement_tax_extended.py`
+- Total test count: 336
+
+---
+
+## [0.9.2] — 2026-06-13
 
 ### Changed
 - Version bump to trigger PyPI release of v0.9.1 fixes (transaction_id/category_id in spend transactions, GetRules 500 fix, get_categories tool, 66 new tests).

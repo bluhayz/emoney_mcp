@@ -835,3 +835,159 @@ async def run_scenario(
             "or variable income. monthly_savings_delta adjusts the baseline savings amount."
         ),
     }
+
+
+async def get_financial_independence_roadmap(
+    http_session,
+    current_age: int | None = None,
+    retirement_age: int = 65,
+) -> dict:
+    """
+    Show progress against Fidelity's salary-multiple retirement milestones and
+    compute the Coast FI number.
+
+    Fidelity benchmarks (investable assets as multiple of gross income):
+      Age 30 → 1×   Age 35 → 2×   Age 40 → 3×
+      Age 45 → 4×   Age 50 → 6×   Age 55 → 7×
+      Age 60 → 8×   Age 65 → 10×
+
+    Coast FI: The portfolio value needed today such that 7% compounding alone
+    reaches the FI number (25× spending) by retirement_age — no further
+    contributions required.
+
+    Parameters
+    ----------
+    current_age   : your current age (optional; enables age-based milestone lookup)
+    retirement_age: target retirement age for Coast FI calculation (default 65)
+    """
+    import asyncio
+    import math
+
+    accts_data, sr_data = await asyncio.gather(
+        get_accounts(http_session),
+        get_savings_rate(http_session, months=6),
+    )
+    from .spending import _fetch_snb_data
+    txns, snb_ok = await _fetch_snb_data(http_session, days=365)
+
+    if "error" in accts_data:
+        return accts_data
+
+    net_worth      = accts_data.get("net_worth") or 0
+
+    # Investable assets (exclude real estate)
+    _ILLIQUID_KW = {"real estate", "property", "home", "house", "land"}
+    illiquid = 0.0
+    for grp in accts_data.get("account_groups", []):
+        for acct in grp.get("accounts", []):
+            nm = (acct.get("name") or "").lower()
+            if any(kw in nm for kw in _ILLIQUID_KW) or "RealEstate" in (acct.get("type") or ""):
+                bal = acct.get("balance") or 0
+                if bal > 0:
+                    illiquid += bal
+    investable = round(net_worth - illiquid, 2)
+
+    # Annual income from SNB
+    annual_income = 0.0
+    annual_spending = 0.0
+    if snb_ok:
+        for t in txns:
+            if t["is_excluded"]:
+                continue
+            if t["is_income"]:
+                annual_income   += t["amount"]
+            else:
+                annual_spending += t["amount"]
+    annual_income   = round(annual_income, 2)
+    annual_spending = round(annual_spending, 2)
+
+    # Monthly savings from savings_rate tool
+    monthly_savings = 0.0
+    if "error" not in sr_data:
+        net_total = sr_data.get("total_net", 0) or 0
+        months_sh = sr_data.get("months_shown", 6) or 6
+        monthly_savings = round(net_total / months_sh, 2)
+
+    # Fidelity benchmarks
+    fidelity_benchmarks = [
+        (30, 1), (35, 2), (40, 3), (45, 4),
+        (50, 6), (55, 7), (60, 8), (65, 10),
+    ]
+    benchmarks_out = []
+    current_milestone = None
+    next_milestone    = None
+
+    for age, multiplier in fidelity_benchmarks:
+        target  = round(annual_income * multiplier, 2) if annual_income > 0 else None
+        gap     = round(investable - target, 2) if target is not None else None
+        on_track = gap is not None and gap >= 0
+
+        entry = {
+            "age":        age,
+            "multiplier": multiplier,
+            "target":     target,
+            "gap":        gap,
+            "on_track":   on_track,
+        }
+        benchmarks_out.append(entry)
+
+        if current_age is not None:
+            if age <= current_age and on_track:
+                current_milestone = entry
+            elif age > current_age and next_milestone is None:
+                next_milestone = entry
+
+    # FI number: 25× spending
+    fi_number = round(annual_spending / 0.04, 2) if annual_spending > 0 else None
+    fi_gap    = round(max(0, fi_number - investable), 2) if fi_number else None
+
+    # Years to FI at current savings (future-value iteration)
+    years_to_fi = None
+    if fi_gap and fi_gap > 0 and monthly_savings > 0:
+        r = 0.07 / 12
+        balance = investable
+        n = 0
+        while balance < fi_number and n < 600:
+            balance = balance * (1 + r) + monthly_savings
+            n += 1
+        if balance >= fi_number:
+            years_to_fi = round(n / 12, 1)
+
+    # Coast FI: amount needed today so growth alone reaches fi_number by retirement_age
+    coast_fi_target = None
+    coast_gap       = None
+    if fi_number and current_age and retirement_age > current_age:
+        years_left    = retirement_age - current_age
+        coast_fi_target = round(fi_number / ((1.07) ** years_left), 2)
+        coast_gap       = round(max(0, coast_fi_target - investable), 2)
+
+    return {
+        "as_of":                   __import__("datetime").datetime.now().strftime("%Y-%m-%d"),
+        "current_age":             current_age,
+        "retirement_age":          retirement_age,
+        "annual_income":           annual_income,
+        "annual_spending":         annual_spending,
+        "investable_assets":       investable,
+        "monthly_savings":         monthly_savings,
+        "fidelity_benchmarks":     benchmarks_out,
+        "current_milestone":       current_milestone,
+        "next_milestone":          next_milestone,
+        "fi_number":               fi_number,
+        "fi_gap":                  fi_gap,
+        "years_to_fi_at_current_pace": years_to_fi,
+        "coast_fi": {
+            "target_today":    coast_fi_target,
+            "current_assets":  investable,
+            "gap":             coast_gap,
+            "description": (
+                f"If you have ${coast_fi_target:,.0f} invested today, 7% growth alone will reach "
+                f"your FI number by age {retirement_age} — no further contributions needed."
+                if coast_fi_target else "Provide current_age to calculate Coast FI."
+            ),
+        },
+        "note": (
+            "Fidelity benchmarks: investable assets as a multiple of gross annual income. "
+            "FI number = 25× annual spending (4% SWR). Coast FI assumes 7% annual return. "
+            "Investable assets exclude real-estate equity."
+        ),
+    }

@@ -1107,6 +1107,205 @@ async def list_tools() -> list[Tool]:
                 "required": [],
             },
         ),
+        # ── v1.0.0 Family Financial Planning Tools ─────────────────────────
+        Tool(
+            name="get_home_equity",
+            description=(
+                "Returns home equity and loan-to-value (LTV) ratio for all real-estate holdings. "
+                "Identifies property accounts and mortgage/HELOC liabilities from Emoney's account list. "
+                "Useful for 'What is our home equity?' or 'What is our mortgage LTV?'"
+            ),
+            inputSchema={"type": "object", "properties": {}, "required": []},
+        ),
+        Tool(
+            name="get_fire_number",
+            description=(
+                "Computes the Financial Independence (FI) number — the portfolio size needed to retire on investment returns alone. "
+                "Uses 12-month actual spending from linked accounts as the baseline. "
+                "Returns the FI number, gap from current investable assets, percent of the way there, "
+                "years-to-FI at current savings rate, and monthly savings needed to FI in 15/20/25 years. "
+                "Optional: swr (safe withdrawal rate, default 0.04), annual_return (default 0.07). "
+                "Useful for 'How far are we from financial independence?' or 'What is our FIRE number?'"
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "swr":           {"type": "number", "description": "Safe withdrawal rate (default 0.04 = 4%)", "default": 0.04},
+                    "annual_return": {"type": "number", "description": "Expected annual portfolio return (default 0.07 = 7%)", "default": 0.07},
+                },
+                "required": [],
+            },
+        ),
+        Tool(
+            name="get_gifting_and_estate_strategy",
+            description=(
+                "Estate snapshot and gifting strategy recommendations using 2025 IRS constants. "
+                "Shows federal estate tax exposure, annual gift exclusion capacity, 529 superfunding opportunity, "
+                "and a prioritized list of estate-reduction strategies. "
+                "Optional: num_recipients (people to gift to, default 2), filing_status ('mfj' or 'single'). "
+                "Useful for 'How much can we gift tax-free?' or 'Are we exposed to estate taxes?'"
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "num_recipients": {"type": "integer", "description": "Number of people to gift to per year (default 2)", "default": 2},
+                    "filing_status":  {"type": "string",  "description": "'mfj' or 'single' (default 'mfj')", "default": "mfj"},
+                },
+                "required": [],
+            },
+        ),
+        Tool(
+            name="get_debt_overview",
+            description=(
+                "Consolidated view of all debts with estimated interest costs and payoff dates. "
+                "Classifies every negative-balance account by type (mortgage, credit card, auto, student, other), "
+                "estimates monthly and annual interest, and projects payoff date at minimum payments. "
+                "Useful for 'How much are we paying in interest each year?' or 'When will each debt be paid off?'"
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "assumed_mortgage_apr": {"type": "number", "description": "APR for mortgage/HELOC (default 0.065)", "default": 0.065},
+                    "assumed_cc_apr":       {"type": "number", "description": "APR for credit cards (default 0.22)", "default": 0.22},
+                    "assumed_auto_apr":     {"type": "number", "description": "APR for auto loans (default 0.07)", "default": 0.07},
+                    "assumed_student_apr":  {"type": "number", "description": "APR for student loans (default 0.055)", "default": 0.055},
+                },
+                "required": [],
+            },
+        ),
+        Tool(
+            name="get_50_30_20_analysis",
+            description=(
+                "Classifies spending into Needs (50%), Wants (30%), and Savings (20%) buckets and compares "
+                "actual percentages against the 50/30/20 guideline. Returns monthly averages per bucket, "
+                "status (on_track / slightly_over / over_target), and actionable recommendations. "
+                "Optional: months (number of complete months to average, default 3). "
+                "Useful for 'Are we following the 50/30/20 rule?' or 'Where should we cut spending?'"
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "months": {"type": "integer", "description": "Months to average (default 3, max 12)", "default": 3},
+                },
+                "required": [],
+            },
+        ),
+        Tool(
+            name="get_spending_by_account",
+            description=(
+                "Breaks down spending by which linked bank or credit card account generated each transaction. "
+                "Useful for families with multiple cards to see which account is being used for which categories. "
+                "Optional: days (look-back window, default 30). "
+                "Useful for 'Which card are we using the most?' or 'How much does each person spend?'"
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "days": {"type": "integer", "description": "Look-back window in days (default 30, max 365)", "default": 30},
+                },
+                "required": [],
+            },
+        ),
+        Tool(
+            name="get_upcoming_bills",
+            description=(
+                "Projects recurring bill charges expected in the next N days based on 120-day charge history. "
+                "Flags any charge that is overdue (expected but not yet seen in the transaction feed). "
+                "Optional: days_ahead (forecast horizon in days, default 30). "
+                "Useful for 'What bills are due this month?' or 'Are any subscriptions overdue?'"
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "days_ahead": {"type": "integer", "description": "Forecast horizon in days (default 30)", "default": 30},
+                },
+                "required": [],
+            },
+        ),
+        Tool(
+            name="get_portfolio_concentration",
+            description=(
+                "Identifies overly concentrated investment positions and scores overall portfolio diversification A-F. "
+                "Flags any single position above the concentration threshold. Returns top-10 holdings by size, "
+                "single-stock vs. fund breakdown, and recommendations. "
+                "Optional: concentration_threshold_pct (default 10%). "
+                "Useful for 'Am I too concentrated in any stock?' or 'How diversified is our portfolio?'"
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "concentration_threshold_pct": {"type": "number", "description": "Flag positions above this % of portfolio (default 10)", "default": 10.0},
+                },
+                "required": [],
+            },
+        ),
+        Tool(
+            name="get_net_worth_velocity",
+            description=(
+                "Computes the rate of net worth growth from Card 8 historical data. "
+                "Returns monthly change, rolling average, year-over-year comparison, trend (accelerating/stable/decelerating), "
+                "and 12-month forward projection at current velocity. "
+                "Optional: months (history to analyse, default 12, max 60). "
+                "Useful for 'Is our net worth growing faster than last year?' or 'How fast are we building wealth?'"
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "months": {"type": "integer", "description": "Months of history to analyse (default 12, max 60)", "default": 12},
+                },
+                "required": [],
+            },
+        ),
+        Tool(
+            name="get_tax_drag_analysis",
+            description=(
+                "Quantifies the annual dollar cost of holding tax-inefficient assets (bonds, REITs) in taxable accounts. "
+                "Estimates annual tax drag per position and shows the highest-priority swaps to tax-deferred accounts. "
+                "Optional: marginal_rate (default 0.32), ltcg_rate (default 0.15). "
+                "Useful for 'How much are misplaced assets costing us in taxes?' or 'What should we move to our IRA?'"
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "marginal_rate": {"type": "number", "description": "Federal marginal ordinary income tax rate (default 0.32)", "default": 0.32},
+                    "ltcg_rate":     {"type": "number", "description": "Long-term capital gains rate (default 0.15)", "default": 0.15},
+                },
+                "required": [],
+            },
+        ),
+        Tool(
+            name="get_financial_independence_roadmap",
+            description=(
+                "Shows progress against Fidelity's salary-multiple retirement milestones (1× by 30, 3× by 40, 6× by 50, 10× by 65) "
+                "and computes the Coast FI number — the portfolio value needed today so growth alone reaches FI. "
+                "Optional: current_age (enables age-specific milestone lookup), retirement_age (default 65). "
+                "Useful for 'Are we on track for retirement by Fidelity benchmarks?' or 'What is our Coast FI number?'"
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "current_age":    {"type": "integer", "description": "Your current age (enables age-based milestone lookup)"},
+                    "retirement_age": {"type": "integer", "description": "Target retirement age for Coast FI (default 65)", "default": 65},
+                },
+                "required": [],
+            },
+        ),
+        Tool(
+            name="get_annual_tax_advantaged_summary",
+            description=(
+                "Shows 2025 IRS annual contribution limits for 401k, IRA, HSA, and 529 alongside current account balances. "
+                "Adjusts for catch-up contributions based on age. Shows key deadlines and remaining days in the tax year. "
+                "Optional: age (determines catch-up eligibility). "
+                "Useful for 'How much can I still contribute to my IRA this year?' or 'Am I maxing out my tax-advantaged accounts?'"
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "age": {"type": "integer", "description": "Your age (determines catch-up contribution eligibility)"},
+                },
+                "required": [],
+            },
+        ),
         Tool(
             name="clear_cache",
             description=(
@@ -1438,6 +1637,55 @@ async def _call_tool_inner(name: str, arguments: dict) -> list[TextContent]:
         result = await _get_insurance_gap_analysis(
             income_multiple=float(arguments.get("income_multiple", 10.0)),
             disability_pct=float(arguments.get("disability_pct", 0.65)),
+        )
+    # ── v1.0.0 ──────────────────────────────────────────────────────────────
+    elif name == "get_home_equity":
+        result = await _get_home_equity()
+    elif name == "get_fire_number":
+        result = await _get_fire_number(
+            swr=float(arguments.get("swr", 0.04)),
+            annual_return=float(arguments.get("annual_return", 0.07)),
+        )
+    elif name == "get_gifting_and_estate_strategy":
+        result = await _get_gifting_and_estate_strategy(
+            num_recipients=int(arguments.get("num_recipients", 2)),
+            filing_status=str(arguments.get("filing_status", "mfj")),
+        )
+    elif name == "get_debt_overview":
+        result = await _get_debt_overview(
+            assumed_mortgage_apr=float(arguments.get("assumed_mortgage_apr", 0.065)),
+            assumed_cc_apr=float(arguments.get("assumed_cc_apr", 0.22)),
+            assumed_auto_apr=float(arguments.get("assumed_auto_apr", 0.07)),
+            assumed_student_apr=float(arguments.get("assumed_student_apr", 0.055)),
+        )
+    elif name == "get_50_30_20_analysis":
+        result = await _get_50_30_20_analysis(months=int(arguments.get("months", 3)))
+    elif name == "get_spending_by_account":
+        result = await _get_spending_by_account(days=int(arguments.get("days", 30)))
+    elif name == "get_upcoming_bills":
+        result = await _get_upcoming_bills(days_ahead=int(arguments.get("days_ahead", 30)))
+    elif name == "get_portfolio_concentration":
+        result = await _get_portfolio_concentration(
+            concentration_threshold_pct=float(arguments.get("concentration_threshold_pct", 10.0)),
+        )
+    elif name == "get_net_worth_velocity":
+        result = await _get_net_worth_velocity(months=int(arguments.get("months", 12)))
+    elif name == "get_tax_drag_analysis":
+        result = await _get_tax_drag_analysis(
+            marginal_rate=float(arguments.get("marginal_rate", 0.32)),
+            ltcg_rate=float(arguments.get("ltcg_rate", 0.15)),
+        )
+    elif name == "get_financial_independence_roadmap":
+        current_age    = arguments.get("current_age")
+        retirement_age = int(arguments.get("retirement_age", 65))
+        result = await _get_financial_independence_roadmap(
+            current_age=int(current_age) if current_age is not None else None,
+            retirement_age=retirement_age,
+        )
+    elif name == "get_annual_tax_advantaged_summary":
+        age_arg = arguments.get("age")
+        result = await _get_annual_tax_advantaged_summary(
+            age=int(age_arg) if age_arg is not None else None,
         )
     elif name == "clear_cache":
         result = _clear_cache(module=arguments.get("module", "all"))
@@ -2380,6 +2628,103 @@ async def _get_insurance_gap_analysis(
     return await scraper.get_insurance_gap_analysis(
         sess, income_multiple=income_multiple, disability_pct=disability_pct
     )
+
+
+# ── v1.0.0 private wrappers ─────────────────────────────────────────────────
+
+async def _get_home_equity() -> dict:
+    sess, err = await _get_session_or_err()
+    if err:
+        return err
+    return await scraper.get_home_equity(sess)
+
+
+async def _get_fire_number(swr: float = 0.04, annual_return: float = 0.07) -> dict:
+    sess, err = await _get_session_or_err()
+    if err:
+        return err
+    return await scraper.get_fire_number(sess, swr=swr, annual_return=annual_return)
+
+
+async def _get_gifting_and_estate_strategy(num_recipients: int = 2, filing_status: str = "mfj") -> dict:
+    sess, err = await _get_session_or_err()
+    if err:
+        return err
+    return await scraper.get_gifting_and_estate_strategy(sess, num_recipients=num_recipients, filing_status=filing_status)
+
+
+async def _get_debt_overview(
+    assumed_mortgage_apr: float = 0.065,
+    assumed_cc_apr: float = 0.22,
+    assumed_auto_apr: float = 0.07,
+    assumed_student_apr: float = 0.055,
+) -> dict:
+    sess, err = await _get_session_or_err()
+    if err:
+        return err
+    return await scraper.get_debt_overview(
+        sess,
+        assumed_mortgage_apr=assumed_mortgage_apr,
+        assumed_cc_apr=assumed_cc_apr,
+        assumed_auto_apr=assumed_auto_apr,
+        assumed_student_apr=assumed_student_apr,
+    )
+
+
+async def _get_50_30_20_analysis(months: int = 3) -> dict:
+    sess, err = await _get_session_or_err()
+    if err:
+        return err
+    return await scraper.get_50_30_20_analysis(sess, months=months)
+
+
+async def _get_spending_by_account(days: int = 30) -> dict:
+    sess, err = await _get_session_or_err()
+    if err:
+        return err
+    return await scraper.get_spending_by_account(sess, days=days)
+
+
+async def _get_upcoming_bills(days_ahead: int = 30) -> dict:
+    sess, err = await _get_session_or_err()
+    if err:
+        return err
+    return await scraper.get_upcoming_bills(sess, days_ahead=days_ahead)
+
+
+async def _get_portfolio_concentration(concentration_threshold_pct: float = 10.0) -> dict:
+    sess, err = await _get_session_or_err()
+    if err:
+        return err
+    return await scraper.get_portfolio_concentration(sess, concentration_threshold_pct=concentration_threshold_pct)
+
+
+async def _get_net_worth_velocity(months: int = 12) -> dict:
+    sess, err = await _get_session_or_err()
+    if err:
+        return err
+    return await scraper.get_net_worth_velocity(sess, months=months)
+
+
+async def _get_tax_drag_analysis(marginal_rate: float = 0.32, ltcg_rate: float = 0.15) -> dict:
+    sess, err = await _get_session_or_err()
+    if err:
+        return err
+    return await scraper.get_tax_drag_analysis(sess, marginal_rate=marginal_rate, ltcg_rate=ltcg_rate)
+
+
+async def _get_financial_independence_roadmap(current_age: int | None = None, retirement_age: int = 65) -> dict:
+    sess, err = await _get_session_or_err()
+    if err:
+        return err
+    return await scraper.get_financial_independence_roadmap(sess, current_age=current_age, retirement_age=retirement_age)
+
+
+async def _get_annual_tax_advantaged_summary(age: int | None = None) -> dict:
+    sess, err = await _get_session_or_err()
+    if err:
+        return err
+    return await scraper.get_annual_tax_advantaged_summary(sess, age=age)
 
 
 def _clear_cache(module: str = "all") -> dict:

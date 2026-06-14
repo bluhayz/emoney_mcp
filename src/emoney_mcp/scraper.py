@@ -56,6 +56,19 @@ from .scrapers import (   # make sure private helpers are also importable
     get_report_url,
     # v0.9.1 — category lookup
     get_categories,
+    # v1.0.0 — family financial planning tools
+    get_home_equity,
+    get_fire_number,
+    get_gifting_and_estate_strategy,
+    get_debt_overview,
+    get_50_30_20_analysis,
+    get_spending_by_account,
+    get_upcoming_bills,
+    get_portfolio_concentration,
+    get_net_worth_velocity,
+    get_tax_drag_analysis,
+    get_financial_independence_roadmap,
+    get_annual_tax_advantaged_summary,
     # v0.8.0 additions
     get_monthly_review,
     get_unusual_transactions,

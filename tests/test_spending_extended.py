@@ -194,7 +194,8 @@ class TestGetSpendingByAccount:
     async def test_groups_by_account(self):
         session = make_mock_http_session()
         with patch("emoney_mcp.scrapers.spending._fetch_snb_raw",
-                   return_value=(True, _RAW_TXNS_WITH_ACCOUNTS, _CATEGORIES)):
+                   return_value=(True, _RAW_TXNS_WITH_ACCOUNTS, _CATEGORIES)), \
+             patch("emoney_mcp.scrapers.spending._fetch_snb_account_map", return_value={}):
             from emoney_mcp.scrapers.spending import get_spending_by_account
             result = await get_spending_by_account(session, days=30)
         account_names = [a["account_name"] for a in result["accounts"]]
@@ -205,7 +206,8 @@ class TestGetSpendingByAccount:
     async def test_income_excluded_from_accounts(self):
         session = make_mock_http_session()
         with patch("emoney_mcp.scrapers.spending._fetch_snb_raw",
-                   return_value=(True, _RAW_TXNS_WITH_ACCOUNTS, _CATEGORIES)):
+                   return_value=(True, _RAW_TXNS_WITH_ACCOUNTS, _CATEGORIES)), \
+             patch("emoney_mcp.scrapers.spending._fetch_snb_account_map", return_value={}):
             from emoney_mcp.scrapers.spending import get_spending_by_account
             result = await get_spending_by_account(session, days=30)
         # Joint Checking only has paycheck (income) — should not appear
@@ -216,7 +218,8 @@ class TestGetSpendingByAccount:
     async def test_top_categories_per_account(self):
         session = make_mock_http_session()
         with patch("emoney_mcp.scrapers.spending._fetch_snb_raw",
-                   return_value=(True, _RAW_TXNS_WITH_ACCOUNTS, _CATEGORIES)):
+                   return_value=(True, _RAW_TXNS_WITH_ACCOUNTS, _CATEGORIES)), \
+             patch("emoney_mcp.scrapers.spending._fetch_snb_account_map", return_value={}):
             from emoney_mcp.scrapers.spending import get_spending_by_account
             result = await get_spending_by_account(session, days=30)
         for acct in result["accounts"]:
@@ -229,7 +232,8 @@ class TestGetSpendingByAccount:
     async def test_accounts_sorted_by_spend_desc(self):
         session = make_mock_http_session()
         with patch("emoney_mcp.scrapers.spending._fetch_snb_raw",
-                   return_value=(True, _RAW_TXNS_WITH_ACCOUNTS, _CATEGORIES)):
+                   return_value=(True, _RAW_TXNS_WITH_ACCOUNTS, _CATEGORIES)), \
+             patch("emoney_mcp.scrapers.spending._fetch_snb_account_map", return_value={}):
             from emoney_mcp.scrapers.spending import get_spending_by_account
             result = await get_spending_by_account(session, days=30)
         totals = [a["total_spent"] for a in result["accounts"]]
@@ -238,7 +242,8 @@ class TestGetSpendingByAccount:
     @pytest.mark.asyncio
     async def test_snb_failure_returns_error(self):
         session = make_mock_http_session()
-        with patch("emoney_mcp.scrapers.spending._fetch_snb_raw", return_value=(False, [], {})):
+        with patch("emoney_mcp.scrapers.spending._fetch_snb_raw", return_value=(False, [], {})), \
+             patch("emoney_mcp.scrapers.spending._fetch_snb_account_map", return_value={}):
             from emoney_mcp.scrapers.spending import get_spending_by_account
             result = await get_spending_by_account(session)
         assert "error" in result

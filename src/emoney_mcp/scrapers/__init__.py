@@ -50,6 +50,8 @@ from .accounts import (
     get_net_worth_breakdown,
     get_debt_payoff_plan,
     get_debt_overview,
+    get_client_profile,
+    get_aggregation_status,
     _calc_investable_assets,
     _build_account_type_map,
     _match_tax_bucket,
@@ -89,6 +91,7 @@ from .spending import (
     _fetch_snb_raw,
     clear_snb_cache,
     _sum_income_spending,
+    _fetch_snb_account_map,
     _INCOME_CATEGORIES,
     _EXCLUDE_CATEGORIES,
     _NON_MERCHANT_CATEGORIES,
@@ -218,7 +221,8 @@ __all__ = [
     # accounts
     "get_accounts", "get_retirement_accounts", "get_net_worth_breakdown",
     "get_debt_payoff_plan", "get_debt_overview",
-    "_build_account_type_map", "_match_tax_bucket", "_TAX_BUCKET",
+    "get_client_profile", "get_aggregation_status",
+    "_calc_investable_assets", "_build_account_type_map", "_match_tax_bucket", "_TAX_BUCKET",
     # investments
     "get_holdings", "get_asset_allocation", "get_net_worth_history",
     "get_performance", "get_transactions", "get_capital_gains",
@@ -230,7 +234,7 @@ __all__ = [
     "get_merchant_spending", "explore_snb_write_endpoints", "get_cash_flow_forecast",
     "get_categories", "get_50_30_20_analysis", "get_spending_by_account", "get_upcoming_bills",
     "_normalize_merchant", "_fetch_snb_data", "_fetch_snb_raw", "clear_snb_cache",
-    "_sum_income_spending",
+    "_sum_income_spending", "_fetch_snb_account_map",
     "_INCOME_CATEGORIES", "_EXCLUDE_CATEGORIES", "_NON_MERCHANT_CATEGORIES",
     # goals
     "get_goals", "get_financial_summary", "get_financial_health_score",

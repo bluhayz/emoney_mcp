@@ -69,6 +69,10 @@ from .scrapers import (   # make sure private helpers are also importable
     get_tax_drag_analysis,
     get_financial_independence_roadmap,
     get_annual_tax_advantaged_summary,
+    # v1.0.2 — live endpoint discoveries
+    get_client_profile,
+    get_aggregation_status,
+    _fetch_snb_account_map,
     # v0.8.0 additions
     get_monthly_review,
     get_unusual_transactions,

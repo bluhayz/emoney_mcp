@@ -27,6 +27,7 @@ from datetime import datetime
 
 from .accounts import get_accounts, _calc_investable_assets
 from .spending import _fetch_snb_data, _INCOME_CATEGORIES, _EXCLUDE_CATEGORIES, _sum_income_spending
+from ._helpers import _get_card
 
 # ---------------------------------------------------------------------------
 # 2025 IRS constants used by get_gifting_and_estate_strategy
@@ -56,11 +57,20 @@ async def get_home_equity(http_session) -> dict:
       equity_pct_of_net_worth
       net_worth        — from Card 9 (for context)
     """
-    accts = await get_accounts(http_session)
+    import asyncio as _asyncio
+
+    # Fetch accounts and Card 10 (cash + credit summary) in parallel
+    accts, card10 = await _asyncio.gather(
+        get_accounts(http_session),
+        _get_card(await http_session.get_http(), 10),
+    )
     if "error" in accts:
         return accts
 
     net_worth = accts.get("net_worth") or 0
+    # Card 10 gives us a more granular cash + credit breakdown
+    liquid_cash  = (card10.get("Cash")   or 0) if card10 else None
+    credit_total = (card10.get("Credit") or 0) if card10 else None
 
     # Classify each account as property, mortgage/heloc, or neither
     _PROPERTY_KEYWORDS  = {"real estate", "property", "home", "house", "land", "realestate"}
@@ -124,8 +134,11 @@ async def get_home_equity(http_session) -> dict:
         "total_equity":             total_equity,
         "equity_pct_of_net_worth":  equity_pct_of_nw,
         "net_worth":                round(net_worth, 2),
+        "liquid_cash":              round(liquid_cash, 2) if liquid_cash is not None else None,
+        "credit_card_balance":      round(credit_total, 2) if credit_total is not None else None,
         "note": (
             "Property values and mortgage balances are pulled from Emoney's account list. "
+            "Liquid cash and credit card total sourced from Card 10. "
             "Values reflect the last sync date shown in your Emoney dashboard."
         ),
     }

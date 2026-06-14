@@ -2,7 +2,40 @@
 
 All notable changes to emoney-mcp are documented here.
 
-## [1.0.1] — 2026-06-14 (current)
+## [1.0.2] — 2026-06-14 (current)
+
+### Added — Live endpoint discoveries (2 new tools + 3 enhancements)
+
+Discovered via live session probing with `explore_emoney_site` + direct API calls.
+
+#### New tools
+
+- **`get_client_profile`** — Returns household profile from `Profile/GetProfileData`: names, dates of birth, computed ages, dependents (Parker), and property entries. The `primary.age` and `primary.birth_year` fields auto-populate retirement and tax tools that previously required manual `age`/`birth_year` parameters.
+
+- **`get_aggregation_status`** — Returns account connection health from CardSwitcher Card 20. Shows which institution connections are `Disconnected` (preventing data refresh), with institution name and status description. Useful for diagnosing stale balances.
+
+#### Enhancements
+
+- **`get_spending_by_account`** now resolves account names using the SNB `GetAccounts` endpoint (`api.emoneyadvisor.com/snb-api/api/values/GetAccounts`). Previously the `accountId` field on raw transactions was an opaque integer ID — now it maps to the actual account name ("Drew Visa", "Lacey MC", etc.). Falls back gracefully if `GetAccounts` fails.
+
+- **`get_portfolio_concentration`** now fetches CardSwitcher Card 6 in parallel with `GetInvestmentData`. Card 6 returns the top holdings with live ticker symbols (VTSAX, SNOW, SPAXX, etc.) in a lightweight format, surfaced as `card6_top_holdings` in the response. This supplements the full holdings breakdown from `GetInvestmentData`.
+
+- **`get_home_equity`** now fetches CardSwitcher Card 10 in parallel with `get_accounts`. Card 10 returns `Cash` and `Credit` totals from a different data path than Card 9, providing more granular liquid cash and credit card totals in the response (`liquid_cash`, `credit_card_balance` fields).
+
+#### Internal
+
+- `_fetch_snb_account_map()` helper added to `spending.py` — TTL-cached SNB account map (account_id → name). Called in parallel with `_fetch_snb_raw` by `get_spending_by_account`.
+- `clear_snb_cache()` now also clears `_snb_account_cache`.
+
+### Tests
+
+- `test_live_endpoint_discoveries.py` — 25 new tests covering all new tools and enhancements
+- Updated `test_spending_extended.py` to mock `_fetch_snb_account_map` in `TestGetSpendingByAccount`
+- Total: **361 tests**
+
+---
+
+## [1.0.1] — 2026-06-14
 
 ### Fixed
 - **`run_scenario` milestone list** was missing the $10M milestone — `_MILESTONES` was silently redefined inside `_project()` with `[500k, 1M, 2M, 5M]` instead of the canonical `[500k, 1M, 2M, 5M, 10M]` used by `get_net_worth_projection`. Results for high-net-worth projections now match between the two tools.

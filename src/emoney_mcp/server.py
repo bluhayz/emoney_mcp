@@ -1306,6 +1306,27 @@ async def list_tools() -> list[Tool]:
                 "required": [],
             },
         ),
+        # ── v1.0.2 Live endpoint discoveries ──────────────────────────────
+        Tool(
+            name="get_client_profile",
+            description=(
+                "Returns household profile: names, dates of birth, ages, and family members "
+                "from Emoney's Profile page. Includes Drew, Lacey, and dependents (e.g. Parker). "
+                "Use the returned age and birth_year values to auto-populate retirement and tax tools "
+                "instead of passing them manually. "
+                "Useful for 'How old is Drew?' or 'What are our dates of birth?'"
+            ),
+            inputSchema={"type": "object", "properties": {}, "required": []},
+        ),
+        Tool(
+            name="get_aggregation_status",
+            description=(
+                "Returns the health and freshness status of all linked account aggregations. "
+                "Shows which institution connections are broken or disconnected, preventing data refresh. "
+                "Useful for 'Why is my Chase balance stale?' or 'Which accounts need re-authentication?'"
+            ),
+            inputSchema={"type": "object", "properties": {}, "required": []},
+        ),
         Tool(
             name="clear_cache",
             description=(
@@ -1687,6 +1708,10 @@ async def _call_tool_inner(name: str, arguments: dict) -> list[TextContent]:
         result = await _get_annual_tax_advantaged_summary(
             age=int(age_arg) if age_arg is not None else None,
         )
+    elif name == "get_client_profile":
+        result = await _get_client_profile()
+    elif name == "get_aggregation_status":
+        result = await _get_aggregation_status()
     elif name == "clear_cache":
         result = _clear_cache(module=arguments.get("module", "all"))
     elif name == "get_available_cards":
@@ -2725,6 +2750,20 @@ async def _get_annual_tax_advantaged_summary(age: int | None = None) -> dict:
     if err:
         return err
     return await scraper.get_annual_tax_advantaged_summary(sess, age=age)
+
+
+async def _get_client_profile() -> dict:
+    sess, err = await _get_session_or_err()
+    if err:
+        return err
+    return await scraper.get_client_profile(sess)
+
+
+async def _get_aggregation_status() -> dict:
+    sess, err = await _get_session_or_err()
+    if err:
+        return err
+    return await scraper.get_aggregation_status(sess)
 
 
 def _clear_cache(module: str = "all") -> dict:

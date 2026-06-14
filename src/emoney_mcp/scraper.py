@@ -30,6 +30,8 @@ from .scrapers import (   # make sure private helpers are also importable
     _INCOME_CATEGORIES,
     _EXCLUDE_CATEGORIES,
     _NON_MERCHANT_CATEGORIES,
+    _INCOME_CATEGORY_IDS,
+    _EXCLUDE_CATEGORY_IDS,
     clear_card_cache,
     clear_snb_cache,
     clear_caches,

@@ -95,6 +95,8 @@ from .spending import (
     _INCOME_CATEGORIES,
     _EXCLUDE_CATEGORIES,
     _NON_MERCHANT_CATEGORIES,
+    _INCOME_CATEGORY_IDS,
+    _EXCLUDE_CATEGORY_IDS,
 )
 
 from .goals import (
@@ -236,6 +238,7 @@ __all__ = [
     "_normalize_merchant", "_fetch_snb_data", "_fetch_snb_raw", "clear_snb_cache",
     "_sum_income_spending", "_fetch_snb_account_map",
     "_INCOME_CATEGORIES", "_EXCLUDE_CATEGORIES", "_NON_MERCHANT_CATEGORIES",
+    "_INCOME_CATEGORY_IDS", "_EXCLUDE_CATEGORY_IDS",
     # goals
     "get_goals", "get_financial_summary", "get_financial_health_score",
     "get_quick_status", "get_college_savings_gap", "get_monthly_review",

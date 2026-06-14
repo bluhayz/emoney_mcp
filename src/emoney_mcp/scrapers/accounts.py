@@ -631,3 +631,151 @@ async def get_debt_overview(
             "For accurate payoff planning, use get_debt_payoff_plan with actual rates."
         ),
     }
+
+
+# ---------------------------------------------------------------------------
+# Profile / identity data
+# ---------------------------------------------------------------------------
+
+async def get_client_profile(http_session) -> dict:
+    """
+    Return household profile: names, dates of birth, family members, and
+    property facts from Emoney's Profile controller.
+
+    Source: GET /ema/CS/Profile/GetProfileData — returns JSON with Clients
+    (primary + spouse), People (dependents), and Property entries.
+
+    Use the returned ``date_of_birth`` and ``age`` fields to auto-populate
+    the ``age``, ``birth_year``, and ``current_age`` parameters required by
+    tax and retirement planning tools.
+    """
+    from datetime import datetime
+
+    from ._helpers import BASE_URL
+    http = await http_session.get_http()
+    resp = await http.get(
+        f"{BASE_URL}/ema/CS/Profile/GetProfileData",
+        headers={"X-Requested-With": "XMLHttpRequest", "Accept": "application/json"},
+        timeout=20,
+    )
+    if resp.status_code != 200 or "json" not in resp.headers.get("content-type", ""):
+        return {"error": f"Profile/GetProfileData returned {resp.status_code}. Session may have expired."}
+
+    data = resp.json()
+    today = datetime.now()
+
+    def _parse_person(raw: dict, is_spouse: bool = False) -> dict:
+        dob_str = raw.get("DateOfBirth") or ""
+        dob = None
+        age  = None
+        birth_year = None
+        if dob_str:
+            try:
+                dob_dt = datetime.strptime(dob_str.split(" ")[0], "%m/%d/%Y")
+                dob    = dob_dt.strftime("%Y-%m-%d")
+                age    = today.year - dob_dt.year - (
+                    (today.month, today.day) < (dob_dt.month, dob_dt.day)
+                )
+                birth_year = dob_dt.year
+            except ValueError:
+                pass
+        return {
+            "name":       raw.get("Name", ""),
+            "is_spouse":  is_spouse,
+            "date_of_birth": dob,
+            "age":        age,
+            "birth_year": birth_year,
+            "email":      raw.get("EmailAddress") or None,
+        }
+
+    clients = []
+    for c in data.get("Clients", []):
+        clients.append(_parse_person(c, is_spouse=bool(c.get("IsSpouse"))))
+
+    dependents = []
+    for p in (data.get("People") or {}).get("People", []):
+        dep = _parse_person(p)
+        dep["is_spouse"] = False
+        dep["is_dependent"] = True
+        dependents.append(dep)
+
+    properties = []
+    for prop in (data.get("Property") or {}).get("Properties", []):
+        properties.append({
+            "name":    prop.get("Name", ""),
+            "fact_id": prop.get("FactID"),
+        })
+
+    # Convenience: primary and spouse objects
+    primary = next((c for c in clients if not c["is_spouse"]), None)
+    spouse  = next((c for c in clients if c["is_spouse"]), None)
+
+    return {
+        "as_of":      today.strftime("%Y-%m-%d"),
+        "primary":    primary,
+        "spouse":     spouse,
+        "dependents": dependents,
+        "properties": properties,
+        "household_size": len(clients) + len(dependents),
+        "note": (
+            "Use primary.age and primary.birth_year as inputs to tax/retirement tools. "
+            "Profile data reflects the last advisor-confirmed sync, not real-time."
+        ),
+    }
+
+
+# ---------------------------------------------------------------------------
+# Account aggregation / connection health
+# ---------------------------------------------------------------------------
+
+async def get_aggregation_status(http_session) -> dict:
+    """
+    Return the health and freshness status of all linked account aggregations.
+
+    Source: CardSwitcher Card 20 — returns BrokenConnections and Accounts with
+    their last-sync timestamps. Useful for diagnosing stale balances or data gaps.
+
+    A broken connection means that account's data may be out of date until
+    re-authenticated in the Emoney portal.
+    """
+    from datetime import datetime
+
+    http = await http_session.get_http()
+    card20 = await _get_card(http, 20)
+    if card20 is None:
+        return {"error": "Card 20 (aggregation status) unavailable. Session may have expired."}
+
+    broken_connections = []
+    for conn in card20.get("BrokenConnections") or []:
+        broken_connections.append({
+            "institution":   conn.get("Name") or conn.get("InstitutionName", "Unknown"),
+            "status":        conn.get("ConnectionStatusName", ""),
+            "level":         conn.get("ConnectionStatusLevel", ""),
+            "description":   conn.get("ConnectionStatusDescription", ""),
+            "connection_id": (conn.get("ConnectionID") or {}).get("Value"),
+        })
+
+    accounts_status = []
+    for acct in card20.get("Accounts") or []:
+        accounts_status.append({
+            "name":           acct.get("Name") or acct.get("AccountName", ""),
+            "institution":    acct.get("InstitutionName", ""),
+            "last_updated":   (acct.get("AsOfDate") or "")[:10] or None,
+            "connection_ok":  acct.get("IsConnected", True),
+        })
+
+    healthy   = len(broken_connections) == 0
+    today_str = datetime.now().strftime("%Y-%m-%d")
+
+    return {
+        "as_of":             today_str,
+        "overall_status":    "healthy" if healthy else "attention_needed",
+        "broken_count":      len(broken_connections),
+        "broken_connections": broken_connections,
+        "accounts_monitored": len(accounts_status),
+        "accounts":          accounts_status,
+        "note": (
+            "Broken connections indicate accounts that cannot refresh automatically. "
+            "Re-authenticate the affected institution in your Emoney portal to restore data flow."
+        ),
+    }

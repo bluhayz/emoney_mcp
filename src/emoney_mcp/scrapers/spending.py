@@ -191,6 +191,7 @@ def clear_snb_cache() -> None:
     """
     global _snb_raw_cache
     _snb_raw_cache = None
+    clear_snb_account_cache()
 
 
 async def get_categories(http_session) -> dict:
@@ -351,6 +352,63 @@ async def _fetch_snb_raw(http_session) -> tuple[bool, list, dict]:
 
     _snb_raw_cache = (now, raw_txns, categories)
     return True, raw_txns, categories
+
+
+# ---------------------------------------------------------------------------
+# SNB account map cache  (id → name)
+# ---------------------------------------------------------------------------
+_snb_account_cache: tuple[float, dict] | None = None
+
+
+async def _fetch_snb_account_map(http_session) -> dict[str, str]:
+    """
+    Fetch the SNB account list and return a dict mapping account_id → account_name.
+
+    The SNB ``GetAccounts`` endpoint returns every linked account with a stable
+    numeric ``id`` that matches the ``accountId`` field on raw transactions.
+    Results are cached for ``_SNB_CACHE_TTL`` seconds alongside the transaction cache.
+
+    Returns an empty dict on failure (callers fall back to the raw accountId string).
+    """
+    global _snb_account_cache
+    now = time.time()
+
+    if _snb_account_cache is not None:
+        cached_ts, cached_map = _snb_account_cache
+        if now - cached_ts < _SNB_CACHE_TTL:
+            return cached_map
+
+    jwt_token, api_key = await _get_snb_credentials(http_session)
+    if not jwt_token:
+        return {}
+
+    http = await http_session.get_http()
+    snb_headers = {
+        "Accept":        "application/json, text/plain, */*",
+        "Authorization": f"Bearer {jwt_token}",
+        "apikey":        api_key,
+        "Origin":        BASE_URL,
+    }
+    try:
+        resp = await http.get(f"{_SNB_API}/api/values/GetAccounts",
+                              headers=snb_headers, timeout=20)
+        if resp.status_code == 200 and "json" in resp.headers.get("content-type", ""):
+            account_map = {
+                str(acct.get("id", "")): acct.get("name", "")
+                for acct in resp.json()
+                if acct.get("id")
+            }
+            _snb_account_cache = (now, account_map)
+            return account_map
+    except Exception:
+        pass
+    return {}
+
+
+def clear_snb_account_cache() -> None:
+    """Purge the SNB account map cache."""
+    global _snb_account_cache
+    _snb_account_cache = None
 
 
 async def _fetch_snb_data(http_session, days: int) -> tuple[list, bool]:
@@ -1973,7 +2031,12 @@ async def get_spending_by_account(http_session, days: int = 30) -> dict:
     """
     days = min(max(days, 1), 365)
 
-    ok, raw_txns, categories = await _fetch_snb_raw(http_session)
+    # Fetch raw transactions and SNB account map in parallel
+    import asyncio as _asyncio
+    (ok, raw_txns, categories), account_map = await _asyncio.gather(
+        _fetch_snb_raw(http_session),
+        _fetch_snb_account_map(http_session),
+    )
     if not ok:
         return {"error": "Could not retrieve SNB transaction data. Try re-syncing Chrome session."}
 
@@ -1988,8 +2051,14 @@ async def get_spending_by_account(http_session, days: int = 30) -> dict:
         if t.get("isDeleted", False):
             continue
 
-        acct_id   = str(t.get("accountId") or t.get("AccountId") or "unknown")
-        acct_name = t.get("accountName") or t.get("AccountName") or acct_id
+        acct_id = str(t.get("accountId") or t.get("AccountId") or "unknown")
+        # Prefer the authoritative account map from GetAccounts; fall back to
+        # any name embedded in the transaction payload, then the raw ID.
+        acct_name = (
+            account_map.get(acct_id)
+            or t.get("accountName") or t.get("AccountName")
+            or acct_id
+        )
 
         cat_id   = str(t.get("categoryId") or "")
         cat_name = categories.get(cat_id, "Uncategorized") if cat_id else "Uncategorized"

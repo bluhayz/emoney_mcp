@@ -506,7 +506,13 @@ async def get_portfolio_concentration(
     ----------
     concentration_threshold_pct : flag positions above this % (default 10%)
     """
-    data, err = await _get_investment_data(http_session)
+    import asyncio as _asyncio
+
+    # Fetch full holdings data and Card 6 (fast top-holdings with tickers) in parallel
+    (data, err), card6 = await _asyncio.gather(
+        _get_investment_data(http_session),
+        _get_card(await http_session.get_http(), 6),
+    )
     if err:
         return err
 
@@ -600,6 +606,14 @@ async def get_portfolio_concentration(
             "above_20pct": len(over_20),
         },
         "recommendations":         recommendations,
+        "card6_top_holdings":      [
+            {
+                "name":   h.get("Name", ""),
+                "ticker": (h.get("Ticker") or "").upper().strip(),
+                "value":  round(h.get("Value") or 0, 2),
+            }
+            for h in (card6.get("Investments") or [] if card6 else [])
+        ],
         "note": (
             "Single stock vs. fund classification uses ticker length and description keywords. "
             "Review concentrated_positions to confirm they are single stocks and not misclassified funds."

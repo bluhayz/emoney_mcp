@@ -483,3 +483,130 @@ def _match_tax_bucket(account_name: str, type_map: dict[str, str]) -> str:
         if mapped_name in key or key in mapped_name:
             return bucket
     return "Unknown"
+
+
+async def get_debt_overview(
+    http_session,
+    assumed_mortgage_apr: float = 0.065,
+    assumed_cc_apr: float = 0.22,
+    assumed_auto_apr: float = 0.07,
+    assumed_student_apr: float = 0.055,
+) -> dict:
+    """
+    Consolidated view of all debts with estimated interest costs and payoff dates.
+
+    Classifies every negative-balance account by debt type using keyword matching,
+    then computes estimated monthly interest, annual interest cost, and approximate
+    months to payoff assuming minimum payments equal to 1% of balance (or 1.5% for
+    credit cards).
+
+    Parameters
+    ----------
+    assumed_mortgage_apr  : assumed APR for mortgage/HELOC accounts (default 6.5%)
+    assumed_cc_apr        : assumed APR for credit card accounts (default 22%)
+    assumed_auto_apr      : assumed APR for auto loan accounts (default 7%)
+    assumed_student_apr   : assumed APR for student loan accounts (default 5.5%)
+    """
+    from datetime import datetime, timedelta
+
+    result = await get_accounts(http_session)
+    if "error" in result:
+        return result
+
+    _DEBT_CLASSIFICATION = [
+        ("mortgage",     {"mortgage", "heloc", "home equity", "home loan"},     assumed_mortgage_apr),
+        ("credit_card",  {"credit", "visa", "mastercard", "amex", "discover",
+                          "card", "citi", "chase", "capital one"},              assumed_cc_apr),
+        ("auto",         {"auto", "car", "vehicle", "truck"},                   assumed_auto_apr),
+        ("student",      {"student", "sallie", "navient", "great lakes",
+                          "nelnet", "fedloan"},                                  assumed_student_apr),
+    ]
+
+    debts = []
+    now = datetime.now()
+
+    for grp in result.get("account_groups", []):
+        for acct in grp.get("accounts", []):
+            bal = acct.get("balance") or 0
+            if bal >= 0:
+                continue
+
+            balance = abs(bal)
+            name_lower = (acct.get("name") or "").lower()
+
+            # Classify
+            debt_type = "other"
+            apr = assumed_mortgage_apr  # conservative default for unknown
+            for dtype, keywords, rate in _DEBT_CLASSIFICATION:
+                if any(kw in name_lower for kw in keywords):
+                    debt_type = dtype
+                    apr = rate
+                    break
+
+            monthly_rate     = apr / 12
+            monthly_interest = round(balance * monthly_rate, 2)
+            annual_interest  = round(monthly_interest * 12, 2)
+
+            # Minimum payment estimate: credit cards 2% of balance, others 1%
+            min_payment_pct  = 0.02 if debt_type == "credit_card" else 0.01
+            min_payment      = max(round(balance * min_payment_pct, 2), 25.0)
+
+            # Months to payoff (assuming fixed minimum payment — approximate)
+            payoff_months = None
+            payoff_date   = None
+            if min_payment > monthly_interest and balance > 0:
+                # n = -log(1 - r*PV/PMT) / log(1+r)
+                try:
+                    import math
+                    n = -math.log(1 - monthly_rate * balance / min_payment) / math.log(1 + monthly_rate)
+                    payoff_months = round(n)
+                    payoff_date   = (now + timedelta(days=payoff_months * 30.44)).strftime("%Y-%m")
+                except Exception:
+                    pass
+
+            debts.append({
+                "name":                  acct.get("name"),
+                "type":                  debt_type,
+                "balance":               round(balance, 2),
+                "assumed_apr_pct":       round(apr * 100, 2),
+                "est_monthly_interest":  monthly_interest,
+                "est_annual_interest":   annual_interest,
+                "est_min_payment":       min_payment,
+                "est_payoff_months":     payoff_months,
+                "est_payoff_date":       payoff_date,
+            })
+
+    debts.sort(key=lambda d: d["balance"], reverse=True)
+
+    total_balance         = round(sum(d["balance"] for d in debts), 2)
+    total_monthly_interest = round(sum(d["est_monthly_interest"] for d in debts), 2)
+    total_annual_interest  = round(total_monthly_interest * 12, 2)
+    total_assets           = result.get("total_assets") or 0
+    debt_to_assets_pct     = round(total_balance / total_assets * 100, 1) if total_assets > 0 else None
+
+    by_type: dict[str, dict] = {}
+    for d in debts:
+        t = d["type"]
+        if t not in by_type:
+            by_type[t] = {"count": 0, "total_balance": 0.0, "total_annual_interest": 0.0}
+        by_type[t]["count"]                += 1
+        by_type[t]["total_balance"]        = round(by_type[t]["total_balance"] + d["balance"], 2)
+        by_type[t]["total_annual_interest"] = round(by_type[t]["total_annual_interest"] + d["est_annual_interest"], 2)
+
+    return {
+        "as_of":  datetime.now().strftime("%Y-%m-%d"),
+        "debts":  debts,
+        "summary": {
+            "total_debt":               total_balance,
+            "total_monthly_interest":   total_monthly_interest,
+            "total_annual_interest":    total_annual_interest,
+            "debt_to_assets_pct":       debt_to_assets_pct,
+            "debt_count":               len(debts),
+        },
+        "by_type":  by_type,
+        "note": (
+            "APRs are estimated by account type — Emoney does not expose actual interest rates. "
+            "Minimum payments are estimated at 1-2% of balance. "
+            "For accurate payoff planning, use get_debt_payoff_plan with actual rates."
+        ),
+    }

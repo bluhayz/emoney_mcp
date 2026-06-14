@@ -1238,3 +1238,131 @@ async def get_tax_bracket_headroom(
         ],
         "caveat": _IRS_CAVEAT,
     }
+
+
+async def get_annual_tax_advantaged_summary(
+    http_session,
+    age: int | None = None,
+) -> dict:
+    """
+    Show year-to-date contribution status and remaining room for all
+    tax-advantaged accounts (401k, IRA, HSA, 529).
+
+    Because Emoney doesn't expose YTD contribution amounts directly, this
+    tool uses current account balances and estimated limits to show remaining
+    room.  For a more accurate contribution estimate, it checks investment
+    transactions for deposit-type activity into retirement accounts.
+
+    Parameters
+    ----------
+    age : your current age (enables catch-up contribution eligibility)
+    """
+    from datetime import datetime
+    import asyncio
+
+    from .accounts import get_retirement_accounts
+
+    ret_accts = await get_retirement_accounts(http_session)
+    if "error" in ret_accts:
+        return ret_accts
+
+    now      = datetime.now()
+    tax_year = _TAX_YEAR
+
+    # Determine catch-up eligibility
+    catchup_50     = age is not None and age >= 50
+    catchup_60_63  = age is not None and 60 <= age <= 63
+    catchup_55_hsa = age is not None and age >= 55
+
+    # Build per-account-type summary using balances from get_retirement_accounts
+    breakdown = ret_accts.get("retirement_breakdown", {})
+
+    def _limit(account_type: str) -> int:
+        lim = _CONTRIBUTION_LIMITS
+        if account_type == "401k_403b":
+            if catchup_60_63:
+                return lim["401k_403b_catchup_60"]
+            if catchup_50:
+                return lim["401k_403b_catchup_50"]
+            return lim["401k_403b"]
+        if account_type == "ira":
+            return lim["ira_catchup"] if catchup_50 else lim["ira"]
+        if account_type == "hsa_family":
+            base = lim["hsa_family"]
+            return base + lim["hsa_catchup"] if catchup_55_hsa else base
+        if account_type == "hsa_individual":
+            base = lim["hsa_individual"]
+            return base + lim["hsa_catchup"] if catchup_55_hsa else base
+        return 0
+
+    account_summaries = []
+
+    # 401k / 403b
+    bal_401k = breakdown.get("401k_403b", 0) or 0
+    lim_401k = _limit("401k_403b")
+    account_summaries.append({
+        "account_type":          "401k / 403b",
+        "current_balance":       round(bal_401k, 2),
+        "annual_limit":          lim_401k,
+        "catch_up_eligible":     catchup_50,
+        "note":                  "Employee elective deferrals only; employer match is additive.",
+    })
+
+    # IRA / Roth IRA
+    bal_ira = breakdown.get("ira_roth", 0) or 0
+    lim_ira = _limit("ira")
+    account_summaries.append({
+        "account_type":          "IRA / Roth IRA",
+        "current_balance":       round(bal_ira, 2),
+        "annual_limit":          lim_ira,
+        "catch_up_eligible":     catchup_50,
+        "deadline":              f"April 15, {tax_year + 1}",
+        "note":                  "Combined limit across Traditional + Roth IRA; income limits may apply to Roth.",
+    })
+
+    # HSA
+    bal_hsa = breakdown.get("hsa", 0) or 0
+    lim_hsa = _limit("hsa_family")  # default to family; user can override
+    account_summaries.append({
+        "account_type":          "HSA",
+        "current_balance":       round(bal_hsa, 2),
+        "annual_limit":          lim_hsa,
+        "annual_limit_individual": _limit("hsa_individual"),
+        "catch_up_eligible":     catchup_55_hsa,
+        "deadline":              f"April 15, {tax_year + 1}",
+        "note":                  "Limit shown is family coverage; reduce to individual limit if single-coverage plan.",
+    })
+
+    # 529
+    bal_529 = breakdown.get("education_529", 0) or 0
+    account_summaries.append({
+        "account_type":          "529 Education",
+        "current_balance":       round(bal_529, 2),
+        "annual_limit":          None,  # no IRS annual limit; gift exclusion applies
+        "annual_exclusion_max":  _CONTRIBUTION_LIMITS.get("gift_tax_exclusion", 18_000),
+        "note":                  "No IRS annual contribution cap; annual gift exclusion applies to avoid gift tax.",
+    })
+
+    total_annual_limits = sum(a["annual_limit"] for a in account_summaries if a["annual_limit"])
+    days_left_in_year = (datetime(tax_year, 12, 31) - now).days
+
+    return {
+        "tax_year":   tax_year,
+        "as_of":      now.strftime("%Y-%m-%d"),
+        "age":        age,
+        "accounts":   account_summaries,
+        "totals": {
+            "combined_401k_ira_hsa_annual_limit": total_annual_limits,
+            "days_left_in_tax_year":              max(0, days_left_in_year),
+        },
+        "key_deadlines": {
+            "401k_hsa_deadline":  f"December 31, {tax_year}",
+            "ira_hsa_deadline":   f"April 15, {tax_year + 1}",
+        },
+        "caveat": _IRS_CAVEAT,
+        "note": (
+            "Contribution amounts shown are the IRS annual limits, not your actual YTD contributions. "
+            "Check your payroll portal or brokerage for actual YTD contribution amounts. "
+            "Balances are as of the last Emoney sync."
+        ),
+    }

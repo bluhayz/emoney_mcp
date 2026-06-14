@@ -1782,3 +1782,354 @@ async def explore_snb_write_endpoints(http_session) -> dict:
             "Check options_allow_header on promising endpoints for supported HTTP methods."
         ),
     }
+
+
+# ---------------------------------------------------------------------------
+# Category → 50/30/20 bucket map
+# ---------------------------------------------------------------------------
+# Every SNB category is classified as "needs", "wants", or "savings".
+# Categories not in either explicit set default to "wants".
+_NEEDS_CATEGORIES = frozenset({
+    "Groceries", "Utilities", "Insurance", "Healthcare", "Medical",
+    "Pharmacy", "Doctor", "Dentist", "Vision", "Auto Insurance",
+    "Home Insurance", "Renters Insurance", "Housing", "Rent",
+    "Mortgage", "HOA", "Property Tax", "Gas/Fuel", "Auto Maintenance",
+    "Auto Repair", "Public Transportation", "Childcare", "Education",
+    "Tuition", "School Fees", "Phone", "Internet",
+    "Minimum Payment", "Debt Payment",
+})
+_SAVINGS_CATEGORIES = frozenset({
+    "Investment", "Savings", "Retirement", "401k", "IRA", "HSA",
+    "529", "Transfer to Savings", "Transfers",
+    "Paycheck/Salary", "Income", "ACH Transfer",
+    "Dividend & Cap Gains", "Interest Income",
+})
+
+
+async def get_50_30_20_analysis(http_session, months: int = 3) -> dict:
+    """
+    Classify spending into Needs / Wants / Savings buckets and compare against
+    the 50/30/20 guideline.
+
+    Needs   (target 50% of income): housing, groceries, utilities, insurance,
+                                     healthcare, transportation, minimum debt payments
+    Wants   (target 30% of income): dining, entertainment, shopping, travel,
+                                     subscriptions, personal care, hobbies
+    Savings (target 20% of income): retirement contributions, savings transfers,
+                                     extra debt payoff
+
+    Parameters
+    ----------
+    months : number of complete months to average (default 3, max 12)
+    """
+    months = min(max(months, 1), 12)
+    days   = months * 31 + 5
+
+    txns, ok = await _fetch_snb_data(http_session, days=days)
+    if not ok:
+        return {"error": "Could not retrieve SNB transaction data. Try re-syncing Chrome session."}
+
+    now = datetime.now()
+    month_labels = []
+    for i in range(months - 1, -1, -1):
+        dt = _month_offset(now, i)
+        month_labels.append(dt.strftime("%Y-%m"))
+    month_set = set(month_labels)
+
+    monthly_income:   dict[str, float] = {m: 0.0 for m in month_labels}
+    monthly_needs:    dict[str, float] = {m: 0.0 for m in month_labels}
+    monthly_wants:    dict[str, float] = {m: 0.0 for m in month_labels}
+    monthly_savings:  dict[str, float] = {m: 0.0 for m in month_labels}
+
+    category_buckets: dict[str, dict[str, float]] = {
+        "needs": {}, "wants": {}, "savings": {},
+    }
+
+    for t in txns:
+        m = t["date"][:7]
+        if m not in month_set or t["is_excluded"]:
+            continue
+        cat = t["category"]
+        amt = t["amount"]
+
+        if t["is_income"]:
+            monthly_income[m] = round(monthly_income[m] + amt, 2)
+            continue
+
+        if cat in _SAVINGS_CATEGORIES:
+            bucket = "savings"
+            monthly_savings[m] = round(monthly_savings[m] + amt, 2)
+        elif cat in _NEEDS_CATEGORIES:
+            bucket = "needs"
+            monthly_needs[m] = round(monthly_needs[m] + amt, 2)
+        else:
+            bucket = "wants"
+            monthly_wants[m] = round(monthly_wants[m] + amt, 2)
+
+        category_buckets[bucket][cat] = round(category_buckets[bucket].get(cat, 0) + amt, 2)
+
+    def _avg(d: dict) -> float:
+        vals = list(d.values())
+        return round(sum(vals) / len(vals), 2) if vals else 0.0
+
+    avg_income  = _avg(monthly_income)
+    avg_needs   = _avg(monthly_needs)
+    avg_wants   = _avg(monthly_wants)
+    avg_savings = _avg(monthly_savings)
+
+    def _pct(val: float) -> float | None:
+        return round(val / avg_income * 100, 1) if avg_income > 0 else None
+
+    def _status(actual_pct: float | None, target_pct: float) -> str:
+        if actual_pct is None:
+            return "unknown"
+        if actual_pct <= target_pct * 1.05:
+            return "on_track"
+        elif actual_pct <= target_pct * 1.20:
+            return "slightly_over"
+        return "over_target"
+
+    def _top_cats(bucket: str, n: int = 5) -> list:
+        return sorted(
+            [{"category": k, "monthly_avg": round(v / months, 2)} for k, v in category_buckets[bucket].items()],
+            key=lambda x: x["monthly_avg"], reverse=True
+        )[:n]
+
+    needs_pct   = _pct(avg_needs)
+    wants_pct   = _pct(avg_wants)
+    savings_pct = _pct(avg_savings)
+
+    recommendations = []
+    if needs_pct and needs_pct > 55:
+        recommendations.append(f"Needs ({needs_pct:.0f}% of income) are above the 50% target — look for ways to reduce fixed costs like housing, insurance, or transportation.")
+    if wants_pct and wants_pct > 35:
+        recommendations.append(f"Wants ({wants_pct:.0f}% of income) are above the 30% target — top categories: {', '.join(c['category'] for c in _top_cats('wants', 3))}.")
+    if savings_pct and savings_pct < 15:
+        recommendations.append(f"Savings ({savings_pct:.0f}% of income) are below the 20% target — consider automating a recurring transfer to savings or increasing 401k deferral.")
+    if not recommendations:
+        recommendations.append("Your 50/30/20 split looks healthy. Keep maintaining the current balance.")
+
+    return {
+        "period_months": months,
+        "as_of":         now.strftime("%Y-%m-%d"),
+        "avg_monthly_income": avg_income,
+        "needs": {
+            "monthly_avg":   avg_needs,
+            "actual_pct":    needs_pct,
+            "target_pct":    50,
+            "status":        _status(needs_pct, 50),
+            "top_categories": _top_cats("needs"),
+        },
+        "wants": {
+            "monthly_avg":   avg_wants,
+            "actual_pct":    wants_pct,
+            "target_pct":    30,
+            "status":        _status(wants_pct, 30),
+            "top_categories": _top_cats("wants"),
+        },
+        "savings": {
+            "monthly_avg":   avg_savings,
+            "actual_pct":    savings_pct,
+            "target_pct":    20,
+            "status":        _status(savings_pct, 20),
+            "top_categories": _top_cats("savings"),
+        },
+        "recommendations": recommendations,
+        "note": (
+            "Category-to-bucket mapping uses standard rules; review top_categories in each bucket "
+            "to confirm the classification fits your situation. "
+            "Savings bucket includes paycheck deposits captured as income — net savings rate may differ."
+        ),
+    }
+
+
+async def get_spending_by_account(http_session, days: int = 30) -> dict:
+    """
+    Break down spending by which linked bank or credit card account generated it.
+
+    Uses the SNB raw transaction payload which includes an account identifier.
+    Useful for families with multiple cards to see which account is being used
+    for which spending categories.
+
+    Parameters
+    ----------
+    days : look-back window (default 30, max 365)
+    """
+    days = min(max(days, 1), 365)
+
+    ok, raw_txns, categories = await _fetch_snb_raw(http_session)
+    if not ok:
+        return {"error": "Could not retrieve SNB transaction data. Try re-syncing Chrome session."}
+
+    cutoff = (datetime.now() - timedelta(days=days)).strftime("%Y-%m-%d")
+
+    account_data: dict[str, dict] = {}
+
+    for t in raw_txns:
+        date_str = (t.get("date") or "")[:10]
+        if date_str < cutoff:
+            continue
+        if t.get("isDeleted", False):
+            continue
+
+        acct_id   = str(t.get("accountId") or t.get("AccountId") or "unknown")
+        acct_name = t.get("accountName") or t.get("AccountName") or acct_id
+
+        cat_id   = str(t.get("categoryId") or "")
+        cat_name = categories.get(cat_id, "Uncategorized") if cat_id else "Uncategorized"
+        amount   = t.get("value", 0) or 0
+
+        # Skip income / excluded categories
+        if cat_name in _INCOME_CATEGORIES or cat_name in _EXCLUDE_CATEGORIES:
+            continue
+
+        if acct_id not in account_data:
+            account_data[acct_id] = {
+                "account_id":   acct_id,
+                "account_name": acct_name,
+                "total_spent":  0.0,
+                "tx_count":     0,
+                "categories":   {},
+            }
+
+        entry = account_data[acct_id]
+        entry["total_spent"] = round(entry["total_spent"] + abs(amount), 2)
+        entry["tx_count"]   += 1
+        entry["categories"][cat_name] = round(entry["categories"].get(cat_name, 0) + abs(amount), 2)
+
+    accounts_out = []
+    for entry in sorted(account_data.values(), key=lambda x: x["total_spent"], reverse=True):
+        top_cats = sorted(
+            [{"category": k, "total": v} for k, v in entry["categories"].items()],
+            key=lambda x: x["total"], reverse=True
+        )[:5]
+        accounts_out.append({
+            "account_id":        entry["account_id"],
+            "account_name":      entry["account_name"],
+            "total_spent":       entry["total_spent"],
+            "transaction_count": entry["tx_count"],
+            "top_categories":    top_cats,
+        })
+
+    no_acct_id = len([a for a in accounts_out if a["account_id"] == "unknown"]) > 0
+
+    return {
+        "period_days": days,
+        "start_date":  (datetime.now() - timedelta(days=days)).strftime("%Y-%m-%d"),
+        "end_date":    datetime.now().strftime("%Y-%m-%d"),
+        "accounts":    accounts_out,
+        "account_count": len(accounts_out),
+        "note": (
+            "Excludes income, transfers, and credit card payments. "
+            + ("Some transactions have no account identifier — shown under 'unknown'. " if no_acct_id else "")
+        ),
+    }
+
+
+async def get_upcoming_bills(http_session, days_ahead: int = 30) -> dict:
+    """
+    Project recurring bill charges expected in the next N days.
+
+    Uses the same cadence-detection logic as get_recurring_charges to identify
+    recurring merchants, then projects when each charge is next expected based
+    on the last observed charge date.
+
+    Parameters
+    ----------
+    days_ahead : forecast horizon in days (default 30)
+    """
+    days_ahead = min(max(days_ahead, 7), 90)
+
+    ok, raw_txns, categories = await _fetch_snb_raw(http_session)
+    if not ok:
+        return {"error": "Could not retrieve SNB transaction data. Try re-syncing Chrome session."}
+
+    now     = datetime.now()
+    cutoff  = (now - timedelta(days=120)).strftime("%Y-%m-%d")
+
+    # Build per-merchant charge history (last 120 days, spending only)
+    merchant_charges: dict[str, list[dict]] = {}
+    for t in raw_txns:
+        date_str = (t.get("date") or "")[:10]
+        if date_str < cutoff or t.get("isDeleted", False):
+            continue
+        cat_id   = str(t.get("categoryId") or "")
+        cat_name = categories.get(cat_id, "Uncategorized") if cat_id else "Uncategorized"
+        if cat_name in _INCOME_CATEGORIES or cat_name in _EXCLUDE_CATEGORIES:
+            continue
+        amount = t.get("value", 0) or 0
+        if amount >= 0:
+            continue  # only outflows
+        key = _normalize_merchant(
+            t.get("userDescription") or t.get("cleanDescription") or t.get("description", "")
+        )
+        if key not in merchant_charges:
+            merchant_charges[key] = []
+        merchant_charges[key].append({"date": date_str, "amount": abs(amount)})
+
+    upcoming = []
+    today_str = now.strftime("%Y-%m-%d")
+
+    for merchant, charges in merchant_charges.items():
+        if len(charges) < 2:
+            continue
+        charges_sorted = sorted(charges, key=lambda c: c["date"])
+        dates  = [c["date"] for c in charges_sorted]
+        amounts = [c["amount"] for c in charges_sorted]
+
+        gaps = []
+        for i in range(1, len(dates)):
+            d1 = datetime.strptime(dates[i - 1], "%Y-%m-%d")
+            d2 = datetime.strptime(dates[i],     "%Y-%m-%d")
+            gaps.append((d2 - d1).days)
+
+        avg_gap    = sum(gaps) / len(gaps)
+        avg_amount = sum(amounts) / len(amounts)
+
+        # Match a cadence
+        cadence_name  = None
+        cadence_days  = None
+        for cname, cdays, ctol in _CADENCES:
+            if abs(avg_gap - cdays) <= ctol:
+                cadence_name = cname
+                cadence_days = cdays
+                break
+        if cadence_name is None:
+            continue
+
+        last_date     = datetime.strptime(dates[-1], "%Y-%m-%d")
+        next_expected = last_date + timedelta(days=round(avg_gap))
+        next_str      = next_expected.strftime("%Y-%m-%d")
+        days_until    = (next_expected - now).days
+
+        overdue = next_str < today_str  # charge expected but not yet seen
+        horizon = (now + timedelta(days=days_ahead)).strftime("%Y-%m-%d")
+
+        if overdue or next_str <= horizon:
+            upcoming.append({
+                "merchant":        merchant,
+                "expected_date":   next_str,
+                "expected_amount": round(avg_amount, 2),
+                "cadence":         cadence_name,
+                "days_until":      days_until,
+                "overdue":         overdue,
+                "last_charge_date": dates[-1],
+            })
+
+    upcoming.sort(key=lambda x: x["expected_date"])
+    total_expected = round(sum(u["expected_amount"] for u in upcoming if not u["overdue"]), 2)
+    overdue_count  = sum(1 for u in upcoming if u["overdue"])
+
+    return {
+        "as_of":                  today_str,
+        "days_ahead":             days_ahead,
+        "upcoming_count":         len(upcoming),
+        "overdue_count":          overdue_count,
+        "total_expected_amount":  total_expected,
+        "upcoming":               upcoming,
+        "note": (
+            "Based on 120 days of charge history. 'Overdue' means the charge was expected "
+            "but has not yet appeared in the transaction feed — it may be processing or "
+            "the subscription may have been cancelled."
+        ),
+    }

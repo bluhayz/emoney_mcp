@@ -164,7 +164,7 @@ Get me a link to the Liquidity Report.
 
 ---
 
-## Available tools (61 total)
+## Available tools (76 total)
 
 ### Overview & Dashboard
 | Tool | What it answers |
@@ -244,7 +244,23 @@ Get me a link to the Liquidity Report.
 ### Planning
 | Tool | What it answers |
 |------|----------------|
-| `get_insurance_gap_analysis` | **New.** Life insurance need, disability coverage need, and emergency fund adequacy from your actual income and assets |
+| `get_insurance_gap_analysis` | Life insurance need, disability coverage need, and emergency fund adequacy from your actual income and assets |
+
+### Family Financial Planning (v1.0.0 — 12 new tools)
+| Tool | What it answers |
+|------|----------------|
+| `get_home_equity` | What is our home equity and LTV? |
+| `get_fire_number` | What is our FI number? How many years until we're financially independent? |
+| `get_financial_independence_roadmap` | Are we on track by Fidelity's retirement benchmarks? What is our Coast FI number? |
+| `get_debt_overview` | How much are we paying in interest each year? When will each debt be paid off? |
+| `get_gifting_and_estate_strategy` | How much can we gift tax-free? Are we exposed to estate taxes? |
+| `get_50_30_20_analysis` | What is our needs/wants/savings split? Are we following the 50/30/20 rule? |
+| `get_spending_by_account` | Which card are we using most? How does each person spend? |
+| `get_upcoming_bills` | What bills are due this month? Are any subscriptions overdue? |
+| `get_portfolio_concentration` | Are we too concentrated in any single stock? How diversified is our portfolio? |
+| `get_net_worth_velocity` | Is our net worth growing faster than last year? |
+| `get_tax_drag_analysis` | How much are misplaced assets costing us in taxes? What should we move to our IRA? |
+| `get_annual_tax_advantaged_summary` | How much can we still contribute to our IRA/401k/HSA this year? |
 
 ### Transaction Management
 | Tool | What it answers |

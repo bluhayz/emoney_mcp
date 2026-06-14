@@ -2,7 +2,7 @@
 
 MCP server for [Emoney Advisor](https://wealth.emaplan.com) — exposes your complete financial picture as tools Claude Desktop can call.
 
-> **Ask Claude:** *"How are my finances looking?"* · *"Am I over budget this month?"* · *"When will I hit $2M?"* · *"What's my year-end tax checklist?"* · *"If I save $500/month more, when can I retire?"* · *"Are there any unusual charges this month?"* · *"What are my odds of not running out of money in retirement?"* · *"Should I claim Social Security at 62 or 70?"*
+> **Ask Claude:** *"How are my finances looking?"* · *"Am I over budget this month?"* · *"When will I hit $2M?"* · *"What's my FIRE number and how far are we from financial independence?"* · *"What is our home equity and LTV?"* · *"Are we on track by Fidelity's retirement benchmarks?"* · *"What's our 50/30/20 split?"* · *"What bills are coming up this month?"* · *"What are my odds of not running out of money in retirement?"* · *"What is our Coast FI number?"* · *"How much can we gift tax-free this year?"* · *"What's our annual interest cost on all debts?"*
 
 ---
 
@@ -97,7 +97,7 @@ Then point Claude Desktop at your local clone:
 
 ---
 
-## Available tools (61 total)
+## Available tools (76 total)
 
 ### 🏠 Overview & Dashboard
 
@@ -166,6 +166,53 @@ Then point Claude Desktop at your local clone:
 | Tool | Description |
 |------|-------------|
 | `get_insurance_gap_analysis` | **Insurance coverage need.** Estimates life insurance need (income multiple minus liquid assets), recommended disability benefit, and emergency fund adequacy from your actual income and balance sheet. Optional: `income_multiple` (default 10×), `disability_pct` (default 65%) |
+
+### 🏠 Home & Real Estate (v1.0.0)
+
+| Tool | Description |
+|------|-------------|
+| `get_home_equity` | **Home equity and LTV.** Returns property value, mortgage balance, equity, and loan-to-value ratio per property, plus equity as % of net worth |
+
+### 🔥 Financial Independence (v1.0.0)
+
+| Tool | Description |
+|------|-------------|
+| `get_fire_number` | **FI number and timeline.** Computes 25× spending FI number, gap from current investable assets, % of the way there, years-to-FI at current savings pace, and monthly savings needed to FI in 15/20/25 years. Optional: `swr` (default 4%), `annual_return` (default 7%) |
+| `get_financial_independence_roadmap` | **Fidelity milestones + Coast FI.** Progress against salary-multiple benchmarks (1× by 30 through 10× by 65) and the Coast FI number — portfolio value needed today so growth alone reaches FI. Optional: `current_age`, `retirement_age` (default 65) |
+
+### 💳 Debt (v1.0.0)
+
+| Tool | Description |
+|------|-------------|
+| `get_debt_overview` | **Consolidated debt picture.** All debts with type classification (mortgage, credit card, auto, student), assumed APR, monthly interest, annual interest cost, and payoff date at minimum payments |
+
+### 🎁 Estate & Gifting (v1.0.0)
+
+| Tool | Description |
+|------|-------------|
+| `get_gifting_and_estate_strategy` | **Estate tax exposure and gifting capacity.** Federal estate tax snapshot, annual gift exclusion capacity, 529 superfunding opportunity, and action list. Uses 2025 IRS constants. Optional: `num_recipients` (default 2), `filing_status` ('mfj' or 'single') |
+
+### 💰 Spending Analysis (v1.0.0)
+
+| Tool | Description |
+|------|-------------|
+| `get_50_30_20_analysis` | **Needs/Wants/Savings split.** Classifies all spending categories into the 50/30/20 framework buckets and compares actual vs. target with status and recommendations. Optional: `months` (default 3) |
+| `get_spending_by_account` | **Spending per linked account.** Groups spending by bank or credit card account — useful for families with multiple cards to see which account is used for which categories. Optional: `days` (default 30) |
+| `get_upcoming_bills` | **Bill calendar.** Projects recurring charges due in the next N days from 120-day charge history. Flags overdue charges. Optional: `days_ahead` (default 30) |
+
+### 📊 Portfolio Analysis (v1.0.0)
+
+| Tool | Description |
+|------|-------------|
+| `get_portfolio_concentration` | **Concentration risk.** Flags positions above the threshold (default 10%), grades diversification A-F, and shows single-stock vs. fund breakdown. Optional: `concentration_threshold_pct` (default 10%) |
+| `get_net_worth_velocity` | **Net worth growth rate.** Month-over-month changes, year-over-year comparison, trend (accelerating/stable/decelerating), and 12-month projection at current velocity. Optional: `months` (default 12, max 60) |
+| `get_tax_drag_analysis` | **Tax drag from asset misplacement.** Estimates annual dollar cost of holding bonds/REITs in taxable accounts and returns the highest-priority swaps to tax-deferred. Optional: `marginal_rate` (default 32%), `ltcg_rate` (default 15%) |
+
+### 📅 Contribution Tracking (v1.0.0)
+
+| Tool | Description |
+|------|-------------|
+| `get_annual_tax_advantaged_summary` | **Annual contribution limits.** Shows 2025 IRS limits for 401k, IRA, HSA, and 529 alongside current balances, catch-up eligibility by age, and key deadlines. Optional: `age` |
 
 ### ⚖️ Portfolio Analysis
 
@@ -415,7 +462,7 @@ Tools with multiple independent data sources use `asyncio.gather()` for parallel
 Claude Desktop
      │  MCP stdio
      ▼
-emoney_mcp/server.py         ← tool registration + dispatch (61 tools)
+emoney_mcp/server.py         ← tool registration + dispatch (76 tools)
 emoney_mcp/scraper.py         ← re-export shim (backward-compatible)
 emoney_mcp/scrapers/          ← domain-split scraping package
   ├── _helpers.py             ←   shared URL constants + TTL-cached _get_card()

@@ -49,6 +49,7 @@ from .accounts import (
     get_retirement_accounts,
     get_net_worth_breakdown,
     get_debt_payoff_plan,
+    get_debt_overview,
     _build_account_type_map,
     _match_tax_bucket,
     _TAX_BUCKET,
@@ -79,6 +80,9 @@ from .spending import (
     get_cash_flow_forecast,
     explore_snb_write_endpoints,
     get_categories,
+    get_50_30_20_analysis,
+    get_spending_by_account,
+    get_upcoming_bills,
     _normalize_merchant,
     _fetch_snb_data,
     _fetch_snb_raw,
@@ -108,6 +112,7 @@ from .tax import (
     get_social_security_optimizer,
     get_quarterly_estimated_taxes,
     get_year_end_checklist,
+    get_annual_tax_advantaged_summary,
     _compute_tax,
     _marginal_rate,
     _ltcg_rate,
@@ -120,6 +125,7 @@ from .retirement import (
     run_monte_carlo_retirement,
     get_dynamic_withdrawal_guardrails,
     run_scenario,
+    get_financial_independence_roadmap,
 )
 
 from .portfolio import (
@@ -127,12 +133,18 @@ from .portfolio import (
     get_rebalancing_targets,
     explore_emoney_cards,
     get_available_cards,
+    get_portfolio_concentration,
+    get_net_worth_velocity,
+    get_tax_drag_analysis,
     _classify_asset,
     _ASSET_EFFICIENCY,
 )
 
 from .planning import (
     get_insurance_gap_analysis,
+    get_home_equity,
+    get_fire_number,
+    get_gifting_and_estate_strategy,
 )
 
 from .explore import (
@@ -203,7 +215,7 @@ __all__ = [
     "clear_caches", "clear_cache",
     # accounts
     "get_accounts", "get_retirement_accounts", "get_net_worth_breakdown",
-    "get_debt_payoff_plan",
+    "get_debt_payoff_plan", "get_debt_overview",
     "_build_account_type_map", "_match_tax_bucket", "_TAX_BUCKET",
     # investments
     "get_holdings", "get_asset_allocation", "get_net_worth_history",
@@ -214,7 +226,7 @@ __all__ = [
     "get_recurring_charges", "get_budget_vs_actual", "get_year_over_year",
     "get_cash_flow_projection", "get_unusual_transactions",
     "get_merchant_spending", "explore_snb_write_endpoints", "get_cash_flow_forecast",
-    "get_categories",
+    "get_categories", "get_50_30_20_analysis", "get_spending_by_account", "get_upcoming_bills",
     "_normalize_merchant", "_fetch_snb_data", "_fetch_snb_raw", "clear_snb_cache",
     "_INCOME_CATEGORIES", "_EXCLUDE_CATEGORIES", "_NON_MERCHANT_CATEGORIES",
     # goals
@@ -226,18 +238,21 @@ __all__ = [
     "get_roth_conversion_analysis", "get_capital_gains_exposure",
     "get_rmd_estimate", "get_tax_bracket_headroom",
     "get_social_security_optimizer", "get_quarterly_estimated_taxes",
-    "get_year_end_checklist",
+    "get_year_end_checklist", "get_annual_tax_advantaged_summary",
     "_compute_tax", "_marginal_rate", "_ltcg_rate",
     # retirement
     "get_retirement_runway", "get_withdrawal_rate_analysis",
     "get_net_worth_projection", "run_monte_carlo_retirement",
     "get_dynamic_withdrawal_guardrails", "run_scenario",
+    "get_financial_independence_roadmap",
     # portfolio
     "get_asset_location_efficiency", "get_rebalancing_targets",
     "explore_emoney_cards", "get_available_cards",
+    "get_portfolio_concentration", "get_net_worth_velocity", "get_tax_drag_analysis",
     "_classify_asset", "_ASSET_EFFICIENCY",
     # planning
     "get_insurance_gap_analysis",
+    "get_home_equity", "get_fire_number", "get_gifting_and_estate_strategy",
     # explore
     "explore_emoney_site",
     # transactions (write)

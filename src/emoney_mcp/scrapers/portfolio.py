@@ -476,3 +476,354 @@ async def get_available_cards(
             "to view its full payload and build a dedicated tool."
         ),
     }
+
+
+async def get_portfolio_concentration(
+    http_session,
+    concentration_threshold_pct: float = 10.0,
+) -> dict:
+    """
+    Identify overly concentrated positions and score overall diversification.
+
+    Flags any single position that represents more than `concentration_threshold_pct`
+    percent of the total portfolio.  Scores the portfolio A-F based on how many
+    positions exceed 5%, 10%, and 20% thresholds.
+
+    Parameters
+    ----------
+    concentration_threshold_pct : flag positions above this % (default 10%)
+    """
+    import time
+    ts  = int(time.time() * 1000)
+    http = await _get_card.__wrapped__(None, None) if False else None
+
+    # Fetch investment data
+    from ._helpers import _INV_URL
+    http = await http_session.get_http()
+    resp = await http.get(f"{_INV_URL}/GetInvestmentData?_={int(time.time()*1000)}", timeout=30)
+    if resp.status_code != 200 or "json" not in resp.headers.get("content-type", ""):
+        return {"error": f"GetInvestmentData returned {resp.status_code}. Session may have expired."}
+
+    data = resp.json()
+    total_value = 0.0
+    all_positions: list[dict] = []
+
+    for acct in data.get("Accounts", []):
+        for h in acct.get("Holdings", []):
+            val = h.get("Value") or 0.0
+            total_value += val
+            ticker = (h.get("Ticker") or "").upper().strip()
+            desc   = h.get("Description") or h.get("Name") or ticker
+
+            # Is it a fund or a single stock? Rough heuristic
+            is_fund = (
+                any(kw in desc.lower() for kw in ("fund", "etf", "index", "trust", "portfolio"))
+                or (len(ticker) > 4)
+                or ticker in ("SPY", "QQQ", "VTI", "VTSAX", "FSKAX", "BND", "AGG", "VXUS")
+            )
+            all_positions.append({
+                "ticker":      ticker,
+                "description": desc,
+                "value":       round(val, 2),
+                "is_fund":     is_fund,
+                "account":     acct.get("AccountName") or acct.get("Name", ""),
+            })
+
+    if total_value <= 0:
+        return {"error": "No investment positions found."}
+
+    # Annotate with percentages
+    for p in all_positions:
+        p["pct_of_portfolio"] = round(p["value"] / total_value * 100, 2)
+
+    all_positions.sort(key=lambda x: x["value"], reverse=True)
+    top_10 = all_positions[:10]
+
+    # Concentration analysis
+    threshold = max(1.0, concentration_threshold_pct)
+    concentrated = [p for p in all_positions if p["pct_of_portfolio"] >= threshold]
+    over_20      = [p for p in all_positions if p["pct_of_portfolio"] >= 20]
+    over_10      = [p for p in all_positions if p["pct_of_portfolio"] >= 10]
+    over_5       = [p for p in all_positions if p["pct_of_portfolio"] >= 5]
+
+    # Grade: A = no position > 5%, B = 1 position 5-10%, C = any >10%, D = any >20%, F = any >33%
+    if any(p["pct_of_portfolio"] >= 33 for p in all_positions):
+        grade = "F"
+    elif over_20:
+        grade = "D"
+    elif over_10:
+        grade = "C"
+    elif over_5:
+        grade = "B"
+    else:
+        grade = "A"
+
+    single_stock_pct = round(
+        sum(p["value"] for p in all_positions if not p["is_fund"]) / total_value * 100, 1
+    )
+    fund_pct = round(100 - single_stock_pct, 1)
+
+    recommendations = []
+    for p in over_20:
+        if not p["is_fund"]:
+            recommendations.append(
+                f"Consider trimming {p['ticker']} ({p['pct_of_portfolio']:.1f}% of portfolio) — "
+                "single-stock positions above 20% create significant concentration risk."
+            )
+    if single_stock_pct > 25:
+        recommendations.append(
+            f"Single stocks represent {single_stock_pct:.0f}% of the portfolio. "
+            "Diversifying into broad index funds would reduce idiosyncratic risk."
+        )
+    if not recommendations:
+        recommendations.append("Portfolio concentration looks healthy — no single position dominates.")
+
+    return {
+        "as_of":                   __import__("datetime").datetime.now().strftime("%Y-%m-%d"),
+        "total_portfolio_value":   round(total_value, 2),
+        "position_count":          len(all_positions),
+        "diversification_grade":   grade,
+        "concentrated_positions":  concentrated,
+        "top_10_positions":        top_10,
+        "asset_type_breakdown": {
+            "single_stocks_pct": single_stock_pct,
+            "funds_pct":         fund_pct,
+        },
+        "thresholds_exceeded": {
+            "above_5pct":  len(over_5),
+            "above_10pct": len(over_10),
+            "above_20pct": len(over_20),
+        },
+        "recommendations":         recommendations,
+        "note": (
+            "Single stock vs. fund classification uses ticker length and description keywords. "
+            "Review concentrated_positions to confirm they are single stocks and not misclassified funds."
+        ),
+    }
+
+
+async def get_net_worth_velocity(http_session, months: int = 12) -> dict:
+    """
+    Compute the rate of net worth growth from historical Card 8 data.
+
+    Returns month-over-month changes, rolling average growth rate, year-over-year
+    comparison, and a 12-month-forward projection at current velocity.
+
+    Parameters
+    ----------
+    months : months of history to analyse (default 12, max 60)
+    """
+    from datetime import datetime
+    months = min(max(months, 3), 60)
+
+    http   = await http_session.get_http()
+    card8  = await _get_card(http, 8)
+    if card8 is None:
+        return {"error": "Card 8 (net worth history) unavailable. Session may have expired."}
+
+    # Card 8 returns a bare list of net worth values, newest first
+    raw_history = card8 if isinstance(card8, list) else (
+        card8.get("History") or card8.get("NetWorthHistory") or []
+    )
+    if not raw_history:
+        return {"error": "No net worth history data found in Card 8."}
+
+    # Label each month working backwards from now
+    now = datetime.now()
+    labelled = []
+    for i, val in enumerate(raw_history[:months]):
+        month_offset_dt = _month_offset_local(now, i)
+        labelled.append({"month": month_offset_dt.strftime("%Y-%m"), "net_worth": val})
+
+    labelled.reverse()  # oldest first
+
+    # Compute month-over-month changes
+    history_out = []
+    for i, entry in enumerate(labelled):
+        prev_val = labelled[i - 1]["net_worth"] if i > 0 else None
+        change      = round(entry["net_worth"] - prev_val, 2) if prev_val is not None else None
+        change_pct  = round(change / abs(prev_val) * 100, 2) if (prev_val and change is not None) else None
+        history_out.append({
+            "month":       entry["month"],
+            "net_worth":   round(entry["net_worth"], 2),
+            "change":      change,
+            "change_pct":  change_pct,
+        })
+
+    current_nw = round(labelled[-1]["net_worth"], 2)
+
+    # Rolling averages
+    monthly_changes = [h["change"] for h in history_out if h["change"] is not None]
+    avg_monthly_gain = round(sum(monthly_changes) / len(monthly_changes), 2) if monthly_changes else 0
+    avg_annual_rate  = round(avg_monthly_gain * 12 / abs(current_nw) * 100, 2) if current_nw != 0 else None
+
+    # YoY: compare last 12 months vs prior 12 months
+    this_year_gain = last_year_gain = None
+    yoy_accel      = None
+    if len(monthly_changes) >= 12:
+        this_year_gain = round(sum(monthly_changes[-12:]), 2)
+    if len(monthly_changes) >= 24:
+        last_year_gain = round(sum(monthly_changes[-24:-12]), 2)
+    if this_year_gain is not None and last_year_gain is not None and last_year_gain != 0:
+        yoy_accel = round((this_year_gain - last_year_gain) / abs(last_year_gain) * 100, 1)
+
+    # Trend
+    if len(monthly_changes) >= 6:
+        first_half  = sum(monthly_changes[:len(monthly_changes) // 2])
+        second_half = sum(monthly_changes[len(monthly_changes) // 2:])
+        trend = "accelerating" if second_half > first_half * 1.05 else (
+                "decelerating" if second_half < first_half * 0.95 else "stable")
+    else:
+        trend = "insufficient_data"
+
+    # 12-month projection
+    projected_12mo     = round(current_nw + avg_monthly_gain * 12, 2)
+    proj_date          = _month_offset_local(now, -12).strftime("%Y-%m")
+
+    return {
+        "as_of":                       now.strftime("%Y-%m-%d"),
+        "months_analyzed":             len(labelled),
+        "current_net_worth":           current_nw,
+        "avg_monthly_gain":            avg_monthly_gain,
+        "avg_annual_gain_rate_pct":    avg_annual_rate,
+        "this_year_gain":              this_year_gain,
+        "last_year_gain":              last_year_gain,
+        "yoy_acceleration_pct":        yoy_accel,
+        "trend":                       trend,
+        "projected_net_worth_12mo":    projected_12mo,
+        "projected_12mo_date":         proj_date,
+        "monthly_history":             history_out,
+        "note": (
+            "Net worth history sourced from CardSwitcher Card 8 (up to 60 months). "
+            "Projection assumes constant monthly growth equal to the historical average."
+        ),
+    }
+
+
+def _month_offset_local(base_date, months_back: int):
+    """Return the first day of the month that is months_back calendar months before base_date."""
+    from datetime import datetime
+    month = base_date.month - months_back
+    year  = base_date.year + (month - 1) // 12
+    month = ((month - 1) % 12) + 1
+    return base_date.replace(year=year, month=month, day=1)
+
+
+async def get_tax_drag_analysis(
+    http_session,
+    marginal_rate: float = 0.32,
+    ltcg_rate: float = 0.15,
+) -> dict:
+    """
+    Quantify the annual dollar cost of holding tax-inefficient assets in taxable accounts.
+
+    Builds on the asset location logic in get_asset_location_efficiency to compute
+    estimated annual tax drag — the extra tax owed because bonds, REITs, and high-
+    distribution funds are in taxable brokerage accounts instead of tax-deferred
+    or Roth accounts.
+
+    Parameters
+    ----------
+    marginal_rate : federal marginal ordinary income tax rate (default 32%)
+    ltcg_rate     : long-term capital gains tax rate (default 15%)
+    """
+    import time
+    from ._helpers import _INV_URL
+    from .accounts import _build_account_type_map, _match_tax_bucket
+
+    marginal_rate = max(0.10, min(marginal_rate, 0.50))
+    ltcg_rate     = max(0.0,  min(ltcg_rate, 0.238))
+
+    http      = await http_session.get_http()
+    type_map  = await _build_account_type_map(http_session)
+
+    resp = await http.get(f"{_INV_URL}/GetInvestmentData?_={int(time.time()*1000)}", timeout=30)
+    if resp.status_code != 200 or "json" not in resp.headers.get("content-type", ""):
+        return {"error": f"GetInvestmentData returned {resp.status_code}. Session may have expired."}
+
+    data = resp.json()
+
+    # Estimated distribution yields by asset class (conservative estimates)
+    _YIELD_BY_CLASS: dict[str, float] = {
+        "bond_fund":             0.045,  # 4.5% yield → ordinary income
+        "reit":                  0.040,  # 4% distribution → ordinary income
+        "tips":                  0.035,
+        "money_market":          0.050,
+        "dividend_equity":       0.025,  # qualified dividends (lower rate)
+        "balanced":              0.025,
+        "domestic_equity_index": 0.015,  # mostly qualified dividends
+        "international_equity":  0.020,
+        "growth_equity":         0.005,
+        "muni_bond":             0.035,  # tax-exempt — no drag
+        "cash":                  0.050,
+        "other":                 0.015,
+    }
+    # Is distribution ordinary income (True) or qualified dividend (False)?
+    _ORDINARY_INCOME_CLASS = {
+        "bond_fund", "reit", "tips", "money_market", "cash",
+    }
+
+    misplaced  = []
+    well_placed = 0
+    total_drag  = 0.0
+    total_value = 0.0
+
+    for acct in data.get("Accounts", []):
+        acct_name   = acct.get("AccountName") or acct.get("Name", "")
+        tax_bucket  = _match_tax_bucket(acct_name, type_map)
+
+        for h in acct.get("Holdings", []):
+            val    = h.get("Value") or 0.0
+            ticker = (h.get("Ticker") or "").upper().strip()
+            desc   = h.get("Description") or h.get("Name") or ticker
+            total_value += val
+
+            asset_class = _classify_asset(ticker, desc)
+            efficiency  = _ASSET_EFFICIENCY.get(asset_class, 5)
+            yield_rate  = _YIELD_BY_CLASS.get(asset_class, 0.015)
+            is_ordinary = asset_class in _ORDINARY_INCOME_CLASS
+
+            # Drag only applies when tax-inefficient asset is in taxable account
+            if tax_bucket == "Taxable" and efficiency <= 4 and val > 0:
+                tax_rate        = marginal_rate if is_ordinary else ltcg_rate
+                sheltered_rate  = 0.0  # what it would be in tax-deferred
+                annual_income   = val * yield_rate
+                annual_drag     = round(annual_income * (tax_rate - sheltered_rate), 2)
+                total_drag      = round(total_drag + annual_drag, 2)
+
+                misplaced.append({
+                    "ticker":              ticker,
+                    "description":         desc,
+                    "account":             acct_name,
+                    "account_type":        tax_bucket,
+                    "asset_class":         asset_class,
+                    "value":               round(val, 2),
+                    "est_yield_pct":       round(yield_rate * 100, 1),
+                    "annual_drag_est":     annual_drag,
+                    "income_type":         "ordinary" if is_ordinary else "qualified_dividend",
+                    "recommended_account": "Tax-Deferred or Tax-Free",
+                })
+            else:
+                well_placed += 1
+
+    misplaced.sort(key=lambda x: x["annual_drag_est"], reverse=True)
+    drag_as_pct = round(total_drag / total_value * 100, 3) if total_value > 0 else 0.0
+
+    return {
+        "as_of":                       __import__("datetime").datetime.now().strftime("%Y-%m-%d"),
+        "total_annual_tax_drag_est":   total_drag,
+        "total_drag_as_pct_portfolio": drag_as_pct,
+        "misplaced_position_count":    len(misplaced),
+        "well_placed_position_count":  well_placed,
+        "misplaced_positions":         misplaced,
+        "priority_swaps":              misplaced[:5],
+        "assumptions": {
+            "marginal_rate":    marginal_rate,
+            "ltcg_rate":        ltcg_rate,
+        },
+        "note": (
+            "Tax drag is estimated using typical asset class yields and your marginal rates. "
+            "Actual drag depends on your specific fund distributions, holding period, and tax situation. "
+            "Swapping bond funds / REITs from taxable to tax-deferred accounts is generally the highest-impact action."
+        ),
+    }

@@ -2,7 +2,36 @@
 
 All notable changes to emoney-mcp are documented here.
 
-## [1.0.2] — 2026-06-14 (current)
+## [1.0.3] — 2026-06-14 (current)
+
+### Fixed — Category classification correctness
+
+**Phase 1: Corrected name-based classification sets to use real Emoney category names**
+
+All hardcoded category name sets in `spending.py` had a mix of phantom names (strings that don't exist in the actual Emoney category list) and missing real categories, causing silent misclassification.
+
+- `_INCOME_CATEGORIES` — Added `Net Salary`, `Bonus`, `Investment Income`, `Other Income`, `Tax Refund`. Removed `ACH Transfer` and `Dividend & Cap Gains` (phantom names). Fixed `Dividend` (was wrong). Now covers all 9 real income category types.
+- `_EXCLUDE_CATEGORIES` — Added `Excluded` (Emoney's `-1` hidden category). Removed `Internal Transfer` (phantom). Now 3 correct entries.
+- `_NON_MERCHANT_CATEGORIES` — Replaced phantom names (`ACH Transfer`, `Internal Transfer`, `Investment`, `Dividend & Cap Gains`) with real equivalents. Added all tax payment categories and savings/investment contribution categories.
+- `_NEEDS_CATEGORIES` (50/30/20) — Completely rebuilt with real Emoney names. Was using `"Healthcare"`, `"Utilities"`, `"Mortgage"`, `"Gas/Fuel"`, `"Auto Maintenance"` etc. (none of which exist). Now maps to actual categories: `"Health & Fitness"`, `"Bills & Utilities"`, `"Mortgage & Rent"`, `"Gas & Fuel"`, `"Auto Service"`, etc. Added 30+ correctly-named categories.
+- `_SAVINGS_CATEGORIES` (50/30/20) — Replaced `"Investment"`, `"Retirement"`, `"401k"`, `"IRA"`, `"529"` (phantom) with real categories: `"Investment Savings"`, `"Retirement Savings"`, `"College Savings"`, `"Savings"`. Removed income categories from savings bucket (they belong in the income denominator, not the bucket).
+
+**Phase 2: ID-based income and exclude classification in `_fetch_snb_data`**
+
+- Added `_INCOME_CATEGORY_IDS` and `_EXCLUDE_CATEGORY_IDS` frozensets using numeric IDs (immune to category renames).
+- `_fetch_snb_data` now classifies `is_income` and `is_excluded` using integer `categoryId` from the raw SNB payload, not string category name lookup. This prevents `Bonus`, `Net Salary`, and other income categories from being counted as spending.
+- Added `category_id` field to normalized transaction dicts returned by `_fetch_snb_data`.
+- `get_spending_by_account` and `get_upcoming_bills` also switched to ID-based income/exclude filtering.
+
+**Practical impact of the bugs fixed:**
+- `Bonus` income was being counted as spending in savings rate, FIRE number, and insurance gap calculations
+- `Net Salary` was being counted as spending  
+- `get_50_30_20_analysis` needs/savings buckets were almost entirely wrong (phantom names never matched real transactions)
+- `Excluded` transactions (-1) were not being excluded from analytics
+
+---
+
+## [1.0.2] — 2026-06-14
 
 ### Added — Live endpoint discoveries (2 new tools + 3 enhancements)
 

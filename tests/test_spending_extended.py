@@ -41,12 +41,13 @@ def _two_months_ago(day: int = 10) -> str:
 
 
 _CATEGORIES = {
-    "1": "Groceries",
-    "2": "Dining",
-    "3": "Paycheck/Salary",
-    "4": "Transfers",
-    "5": "Entertainment",
-    "6": "Utilities",
+    "22": "Groceries",          # real Emoney ID
+    "21": "Restaurants/Dining", # real Emoney ID
+    "36": "Paycheck/Salary",    # real Emoney ID
+    "63": "Transfers",          # real Emoney ID
+    "11": "Entertainment",      # real Emoney ID
+    "70": "Bills & Utilities",  # real Emoney ID
+    "84": "Shopping",           # real Emoney ID
 }
 
 # Normalized txns for functions that use _fetch_snb_data
@@ -80,16 +81,16 @@ _NORM_TXNS = [
 # Raw SNB transactions for get_spending_by_account
 _RAW_TXNS_WITH_ACCOUNTS = [
     {"id": "t1", "date": _days_ago(5), "userDescription": "WHOLE FOODS",
-     "categoryId": "1", "value": -200.0, "accountId": "acc-001",
+     "categoryId": "22", "value": -200.0, "accountId": "acc-001",     # 22 = Groceries
      "accountName": "Drew Visa", "isDeleted": False, "isPending": False},
     {"id": "t2", "date": _days_ago(3), "userDescription": "CHIPOTLE",
-     "categoryId": "2", "value": -50.0, "accountId": "acc-001",
+     "categoryId": "21", "value": -50.0, "accountId": "acc-001",      # 21 = Restaurants/Dining
      "accountName": "Drew Visa", "isDeleted": False, "isPending": False},
     {"id": "t3", "date": _days_ago(4), "userDescription": "AMAZON",
-     "categoryId": "5", "value": -80.0, "accountId": "acc-002",
+     "categoryId": "84", "value": -80.0, "accountId": "acc-002",      # 84 = Shopping
      "accountName": "Lacey MC", "isDeleted": False, "isPending": False},
     {"id": "t4", "date": _days_ago(1), "userDescription": "PAYCHECK",
-     "categoryId": "3", "value": 5000.0, "accountId": "acc-003",
+     "categoryId": "36", "value": 5000.0, "accountId": "acc-003",     # 36 = Paycheck/Salary
      "accountName": "Joint Checking", "isDeleted": False, "isPending": False},
 ]
 
@@ -107,8 +108,8 @@ def _make_recurring_raw(merchant: str, cat_id: str, amount: float, interval_days
     return txns
 
 _RECURRING_RAW = (
-    _make_recurring_raw("NETFLIX", "5", 15.99, 30, 4)
-    + _make_recurring_raw("COMCAST", "6", 99.00, 30, 4)
+    _make_recurring_raw("NETFLIX", "105", 15.99, 30, 4)   # 105 = Subscriptions
+    + _make_recurring_raw("COMCAST", "70", 99.00, 30, 4)  # 70 = Bills & Utilities
 )
 
 

@@ -126,22 +126,81 @@ _ZIP_CODE = re.compile(r"\s+\d{5}(?:-\d{4})?$")
 # Categories that represent internal financial flows rather than real merchants.
 # Merchant-level rollups (top_merchants) skip these categories entirely.
 _NON_MERCHANT_CATEGORIES = {
-    "Transfers", "Credit Card Payment", "Paycheck/Salary",
-    "Income", "ACH Transfer", "Internal Transfer", "Investment",
-    "Dividend & Cap Gains", "Interest Income",
+    # Internal flows
+    "Transfers",           # 63
+    "Credit Card Payment", # 9
+    # Income
+    "Paycheck/Salary",     # 36
+    "Net Salary",          # 37
+    "Bonus",               # 31
+    "Income",              # 30
+    "Dividend",            # 32
+    "Interest Income",     # 34
+    "Investment Income",   # 35
+    "Other Income",        # 33
+    "Tax Refund",          # 38
+    # Tax payments
+    "Federal Tax",         # 77
+    "State Tax",           # 62
+    "Local Tax",           # 78
+    "Taxes",               # 76
+    "Social Security Tax", # 61
+    "Medicare Tax",        # 79
+    "SDI Tax",             # 60
+    # Savings / investment contributions
+    "Savings",             # 56
+    "Investment Savings",  # 57
+    "Retirement Savings",  # 58
+    "College Savings",     # 110
 }
 
 # Categories that count as income (credits into the account).
-# ACH Transfer is included because it usually represents direct deposit.
+# These name-based sets are used by planning.py and other callers that work with
+# normalized transaction dicts.  _fetch_snb_data itself uses the ID-based sets
+# below (more robust to category renames).
 _INCOME_CATEGORIES = frozenset({
-    "Paycheck/Salary", "Income", "Dividend & Cap Gains", "Interest Income",
-    "ACH Transfer",
+    "Paycheck/Salary",   # 36
+    "Net Salary",        # 37
+    "Bonus",             # 31
+    "Income",            # 30
+    "Dividend",          # 32
+    "Interest Income",   # 34
+    "Investment Income", # 35
+    "Other Income",      # 33
+    "Tax Refund",        # 38
 })
 
 # Pure internal flows excluded from both the income and spending totals.
 # Including these would double-count money moving between your own accounts.
 _EXCLUDE_CATEGORIES = frozenset({
-    "Transfers", "Credit Card Payment", "Internal Transfer",
+    "Transfers",           # 63
+    "Credit Card Payment", # 9
+    "Excluded",            # -1  (manually hidden in Emoney)
+})
+
+# ---------------------------------------------------------------------------
+# ID-based classification sets (Phase 2)
+# ---------------------------------------------------------------------------
+# These are the authoritative sets used by _fetch_snb_data.  Matching on the
+# numeric categoryId is immune to category rename, which breaks string matching.
+# The string-based sets above are kept for callers (planning.py, 50/30/20, etc.)
+# that work with the normalised category name field.
+_INCOME_CATEGORY_IDS = frozenset({
+    30,   # Income
+    31,   # Bonus
+    32,   # Dividend
+    33,   # Other Income
+    34,   # Interest Income
+    35,   # Investment Income
+    36,   # Paycheck/Salary
+    37,   # Net Salary
+    38,   # Tax Refund
+})
+
+_EXCLUDE_CATEGORY_IDS = frozenset({
+    -1,   # Excluded (manually hidden in Emoney)
+    9,    # Credit Card Payment
+    63,   # Transfers
 })
 
 # ---------------------------------------------------------------------------
@@ -420,7 +479,8 @@ async def _fetch_snb_data(http_session, days: int) -> tuple[list, bool]:
     share a single HTTP round-trip to the SNB API.
 
     Each returned transaction dict has:
-      date, description, category, amount, is_income, is_excluded, is_pending
+      date, description, category, category_id, amount,
+      is_income, is_excluded, is_pending
     Returns ``([], False)`` on auth failure.
     """
     ok, raw_txns, categories = await _fetch_snb_raw(http_session)
@@ -433,16 +493,19 @@ async def _fetch_snb_data(http_session, days: int) -> tuple[list, bool]:
         date_str = (t.get("date") or "")[:10]
         if date_str < cutoff:
             continue
-        desc     = t.get("userDescription") or t.get("cleanDescription") or t.get("description", "")
-        cat_id   = str(t.get("categoryId") or "")
-        category = categories.get(cat_id, "Uncategorized") if cat_id else "Uncategorized"
+        desc        = t.get("userDescription") or t.get("cleanDescription") or t.get("description", "")
+        cat_id_str  = str(t.get("categoryId") or "")
+        cat_id_int  = int(cat_id_str) if cat_id_str else 0
+        category    = categories.get(cat_id_str, "Uncategorized") if cat_id_str else "Uncategorized"
         result.append({
             "date":        date_str,
             "description": desc,
             "category":    category,
+            "category_id": cat_id_int or None,
             "amount":      abs(t.get("value", 0) or 0),
-            "is_income":   category in _INCOME_CATEGORIES,
-            "is_excluded": category in _EXCLUDE_CATEGORIES,
+            # ID-based classification — immune to category renames
+            "is_income":   cat_id_int in _INCOME_CATEGORY_IDS,
+            "is_excluded": cat_id_int in _EXCLUDE_CATEGORY_IDS,
             "is_pending":  t.get("isPending", False),
         })
 
@@ -1864,19 +1927,74 @@ async def explore_snb_write_endpoints(http_session) -> dict:
 # Every SNB category is classified as "needs", "wants", or "savings".
 # Categories not in either explicit set default to "wants".
 _NEEDS_CATEGORIES = frozenset({
-    "Groceries", "Utilities", "Insurance", "Healthcare", "Medical",
-    "Pharmacy", "Doctor", "Dentist", "Vision", "Auto Insurance",
-    "Home Insurance", "Renters Insurance", "Housing", "Rent",
-    "Mortgage", "HOA", "Property Tax", "Gas/Fuel", "Auto Maintenance",
-    "Auto Repair", "Public Transportation", "Childcare", "Education",
-    "Tuition", "School Fees", "Phone", "Internet",
-    "Minimum Payment", "Debt Payment",
+    # Food & grocery staples
+    "Groceries",              # 22
+    # Housing
+    "Home",                   # 25
+    "Mortgage & Rent",        # 50
+    "Mortgage Interest",      # 52
+    "Mortgage Principal",     # 51
+    "Mortgage Escrow",        # 53
+    "Household Services",     # 27
+    "Home Improvement/Maintenance",  # 28
+    # Utilities
+    "Bills & Utilities",      # 70
+    "Energy, Gas & Electric", # 72
+    "Phone, Internet & Cable",# 71
+    "Water",                  # 75
+    "Garbage & Recycling",    # 73
+    "Sewer",                  # 74
+    # Insurance
+    "Insurance",              # 39
+    "Health Insurance",       # 44
+    "Auto Insurance",         # 46
+    "Homeowner Insurance",    # 41
+    "Life Insurance",         # 42
+    "Disability Insurance",   # 40
+    "LTC Insurance",          # 43
+    "Umbrella Insurance",     # 45
+    "Whole Life Insurance",   # 101
+    # Healthcare
+    "Health & Fitness",       # 24
+    "Medical",                # 48
+    "Doctor",                 # 89
+    "Dentist",                # 88
+    "Pharmacy",               # 90
+    "Vision",                 # 109
+    # Transportation (commuting needs)
+    "Auto & Transport",       # 64
+    "Gas & Fuel",             # 65
+    "Auto Service",           # 66
+    "Auto Payment",           # 67
+    "Auto Registration",      # 68
+    "Public Transport",       # 83
+    "Parking",                # 111
+    "Tolls",                  # 113
+    # Family & education
+    "Childcare & Daycare",    # 5
+    "Education",              # 10
+    "Tuition",                # 104
+    "Kids",                   # 4
+    # Debt minimums (non-mortgage)
+    "Loan",                   # 47
+    "Student Loan",           # 108
+    # Taxes
+    "Property Tax",           # 81
+    "Federal Tax",            # 77
+    "State Tax",              # 62
+    "Local Tax",              # 78
+    "Taxes",                  # 76
+    "Social Security Tax",    # 61
+    "Medicare Tax",           # 79
+    "SDI Tax",                # 60
 })
+
 _SAVINGS_CATEGORIES = frozenset({
-    "Investment", "Savings", "Retirement", "401k", "IRA", "HSA",
-    "529", "Transfer to Savings", "Transfers",
-    "Paycheck/Salary", "Income", "ACH Transfer",
-    "Dividend & Cap Gains", "Interest Income",
+    # Direct savings / investment contributions
+    "Savings",             # 56
+    "Investment Savings",  # 57
+    "Retirement Savings",  # 58
+    "College Savings",     # 110
 })
 
 
@@ -2064,8 +2182,9 @@ async def get_spending_by_account(http_session, days: int = 30) -> dict:
         cat_name = categories.get(cat_id, "Uncategorized") if cat_id else "Uncategorized"
         amount   = t.get("value", 0) or 0
 
-        # Skip income / excluded categories
-        if cat_name in _INCOME_CATEGORIES or cat_name in _EXCLUDE_CATEGORIES:
+        # Skip income / excluded categories (ID-based for robustness)
+        cat_id_int = int(cat_id) if cat_id else 0
+        if cat_id_int in _INCOME_CATEGORY_IDS or cat_id_int in _EXCLUDE_CATEGORY_IDS:
             continue
 
         if acct_id not in account_data:
@@ -2138,9 +2257,11 @@ async def get_upcoming_bills(http_session, days_ahead: int = 30) -> dict:
         date_str = (t.get("date") or "")[:10]
         if date_str < cutoff or t.get("isDeleted", False):
             continue
-        cat_id   = str(t.get("categoryId") or "")
-        cat_name = categories.get(cat_id, "Uncategorized") if cat_id else "Uncategorized"
-        if cat_name in _INCOME_CATEGORIES or cat_name in _EXCLUDE_CATEGORIES:
+        cat_id     = str(t.get("categoryId") or "")
+        cat_name   = categories.get(cat_id, "Uncategorized") if cat_id else "Uncategorized"
+        cat_id_int = int(cat_id) if cat_id else 0
+        # Skip income / excluded (ID-based for robustness)
+        if cat_id_int in _INCOME_CATEGORY_IDS or cat_id_int in _EXCLUDE_CATEGORY_IDS:
             continue
         amount = t.get("value", 0) or 0
         if amount >= 0:

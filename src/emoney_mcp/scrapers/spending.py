@@ -82,15 +82,8 @@ import re
 import time
 from datetime import datetime, timedelta
 
-from ._helpers import BASE_URL, _SNB_API, _get_card
+from ._helpers import BASE_URL, _SNB_API, _get_card, _month_offset
 
-
-def _month_offset(base_date: datetime, months_back: int) -> datetime:
-    """Return the first day of the month that is ``months_back`` calendar months before base_date."""
-    month = base_date.month - months_back
-    year = base_date.year + (month - 1) // 12
-    month = ((month - 1) % 12) + 1
-    return base_date.replace(year=year, month=month, day=1)
 
 # ---------------------------------------------------------------------------
 # US state abbreviations — used by _normalize_merchant to strip trailing
@@ -397,6 +390,29 @@ async def _fetch_snb_data(http_session, days: int) -> tuple[list, bool]:
 
     result.sort(key=lambda t: t["date"], reverse=True)
     return result, True
+
+
+# ---------------------------------------------------------------------------
+# Shared SNB analytics helpers
+# ---------------------------------------------------------------------------
+
+def _sum_income_spending(txns: list) -> tuple[float, float]:
+    """
+    Sum income and spending amounts from a list of normalized SNB transactions.
+
+    Skips excluded transactions (transfers, credit card payments).
+    Returns (annual_income, annual_spending) both as positive floats.
+    """
+    income   = 0.0
+    spending = 0.0
+    for t in txns:
+        if t.get("is_excluded"):
+            continue
+        if t.get("is_income"):
+            income   += t.get("amount", 0)
+        else:
+            spending += t.get("amount", 0)
+    return round(income, 2), round(spending, 2)
 
 
 # ---------------------------------------------------------------------------

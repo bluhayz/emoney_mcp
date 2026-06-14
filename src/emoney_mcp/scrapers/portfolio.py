@@ -34,8 +34,9 @@ _ASSET_EFFICIENCY
 """
 
 import time
+from datetime import datetime
 
-from ._helpers import _get_card, _INV_URL
+from ._helpers import _get_card, _INV_URL, _month_offset
 from .accounts import _build_account_type_map, _match_tax_bucket
 
 # ---------------------------------------------------------------------------
@@ -112,6 +113,24 @@ def _classify_asset(ticker: str, description: str) -> str:
     return "domestic_equity_index"   # conservative default
 
 
+# ---------------------------------------------------------------------------
+# Shared investment data fetch helper
+# ---------------------------------------------------------------------------
+
+async def _get_investment_data(http_session) -> tuple[dict | None, dict | None]:
+    """
+    Fetch GetInvestmentData and return (data_dict, error_dict).
+
+    On success: (data, None).  On failure: (None, {"error": "..."}).
+    Callers should check the second element first.
+    """
+    http = await http_session.get_http()
+    resp = await http.get(f"{_INV_URL}/GetInvestmentData?_={int(time.time()*1000)}", timeout=30)
+    if resp.status_code != 200 or "json" not in resp.headers.get("content-type", ""):
+        return None, {"error": f"GetInvestmentData returned {resp.status_code}. Session may have expired."}
+    return resp.json(), None
+
+
 async def get_asset_location_efficiency(http_session) -> dict:
     """
     Grade how well assets are positioned across account types for tax efficiency.
@@ -125,13 +144,10 @@ async def get_asset_location_efficiency(http_session) -> dict:
     """
     type_map = await _build_account_type_map(http_session)
 
-    ts = int(time.time() * 1000)
-    http = await http_session.get_http()
-    resp = await http.get(f"{_INV_URL}/GetInvestmentData?_={ts}", timeout=30)
-    if resp.status_code != 200 or "json" not in resp.headers.get("content-type", ""):
-        return {"error": f"GetInvestmentData returned {resp.status_code}."}
+    data, err = await _get_investment_data(http_session)
+    if err:
+        return err
 
-    data  = resp.json()
     total = (data.get("Holdings") or 0) + (data.get("Cash") or 0)
 
     scored_positions = []
@@ -241,13 +257,10 @@ async def get_rebalancing_targets(
         target_bond_pct   = round(target_bond_pct   / total_target * 100, 1)
         target_cash_pct   = round(100 - target_equity_pct - target_bond_pct, 1)
 
-    ts = int(time.time() * 1000)
-    http = await http_session.get_http()
-    resp = await http.get(f"{_INV_URL}/GetInvestmentData?_={ts}", timeout=30)
-    if resp.status_code != 200 or "json" not in resp.headers.get("content-type", ""):
-        return {"error": f"GetInvestmentData returned {resp.status_code}."}
+    data, err = await _get_investment_data(http_session)
+    if err:
+        return err
 
-    data  = resp.json()
     portfolio_total = (data.get("Holdings") or 0) + (data.get("Cash") or 0)
 
     equity_value = 0.0
@@ -493,18 +506,10 @@ async def get_portfolio_concentration(
     ----------
     concentration_threshold_pct : flag positions above this % (default 10%)
     """
-    import time
-    ts  = int(time.time() * 1000)
-    http = await _get_card.__wrapped__(None, None) if False else None
+    data, err = await _get_investment_data(http_session)
+    if err:
+        return err
 
-    # Fetch investment data
-    from ._helpers import _INV_URL
-    http = await http_session.get_http()
-    resp = await http.get(f"{_INV_URL}/GetInvestmentData?_={int(time.time()*1000)}", timeout=30)
-    if resp.status_code != 200 or "json" not in resp.headers.get("content-type", ""):
-        return {"error": f"GetInvestmentData returned {resp.status_code}. Session may have expired."}
-
-    data = resp.json()
     total_value = 0.0
     all_positions: list[dict] = []
 
@@ -579,7 +584,7 @@ async def get_portfolio_concentration(
         recommendations.append("Portfolio concentration looks healthy — no single position dominates.")
 
     return {
-        "as_of":                   __import__("datetime").datetime.now().strftime("%Y-%m-%d"),
+        "as_of":                   datetime.now().strftime("%Y-%m-%d"),
         "total_portfolio_value":   round(total_value, 2),
         "position_count":          len(all_positions),
         "diversification_grade":   grade,
@@ -613,7 +618,6 @@ async def get_net_worth_velocity(http_session, months: int = 12) -> dict:
     ----------
     months : months of history to analyse (default 12, max 60)
     """
-    from datetime import datetime
     months = min(max(months, 3), 60)
 
     http   = await http_session.get_http()
@@ -632,7 +636,7 @@ async def get_net_worth_velocity(http_session, months: int = 12) -> dict:
     now = datetime.now()
     labelled = []
     for i, val in enumerate(raw_history[:months]):
-        month_offset_dt = _month_offset_local(now, i)
+        month_offset_dt = _month_offset(now, i)
         labelled.append({"month": month_offset_dt.strftime("%Y-%m"), "net_worth": val})
 
     labelled.reverse()  # oldest first
@@ -678,7 +682,7 @@ async def get_net_worth_velocity(http_session, months: int = 12) -> dict:
 
     # 12-month projection
     projected_12mo     = round(current_nw + avg_monthly_gain * 12, 2)
-    proj_date          = _month_offset_local(now, -12).strftime("%Y-%m")
+    proj_date          = _month_offset(now, -12).strftime("%Y-%m")
 
     return {
         "as_of":                       now.strftime("%Y-%m-%d"),
@@ -700,14 +704,6 @@ async def get_net_worth_velocity(http_session, months: int = 12) -> dict:
     }
 
 
-def _month_offset_local(base_date, months_back: int):
-    """Return the first day of the month that is months_back calendar months before base_date."""
-    from datetime import datetime
-    month = base_date.month - months_back
-    year  = base_date.year + (month - 1) // 12
-    month = ((month - 1) % 12) + 1
-    return base_date.replace(year=year, month=month, day=1)
-
 
 async def get_tax_drag_analysis(
     http_session,
@@ -727,21 +723,13 @@ async def get_tax_drag_analysis(
     marginal_rate : federal marginal ordinary income tax rate (default 32%)
     ltcg_rate     : long-term capital gains tax rate (default 15%)
     """
-    import time
-    from ._helpers import _INV_URL
-    from .accounts import _build_account_type_map, _match_tax_bucket
-
     marginal_rate = max(0.10, min(marginal_rate, 0.50))
     ltcg_rate     = max(0.0,  min(ltcg_rate, 0.238))
 
-    http      = await http_session.get_http()
     type_map  = await _build_account_type_map(http_session)
-
-    resp = await http.get(f"{_INV_URL}/GetInvestmentData?_={int(time.time()*1000)}", timeout=30)
-    if resp.status_code != 200 or "json" not in resp.headers.get("content-type", ""):
-        return {"error": f"GetInvestmentData returned {resp.status_code}. Session may have expired."}
-
-    data = resp.json()
+    data, err = await _get_investment_data(http_session)
+    if err:
+        return err
 
     # Estimated distribution yields by asset class (conservative estimates)
     _YIELD_BY_CLASS: dict[str, float] = {
@@ -810,7 +798,7 @@ async def get_tax_drag_analysis(
     drag_as_pct = round(total_drag / total_value * 100, 3) if total_value > 0 else 0.0
 
     return {
-        "as_of":                       __import__("datetime").datetime.now().strftime("%Y-%m-%d"),
+        "as_of":                       datetime.now().strftime("%Y-%m-%d"),
         "total_annual_tax_drag_est":   total_drag,
         "total_drag_as_pct_portfolio": drag_as_pct,
         "misplaced_position_count":    len(misplaced),

@@ -25,9 +25,7 @@ _build_account_type_map(http_session) — {account_name_lower: tax_bucket}
 _match_tax_bucket(name, type_map)     — fuzzy lookup in type_map
 """
 
-import time
-
-from ._helpers import _get_card, _CARD_URL
+from ._helpers import _get_card
 
 # ---------------------------------------------------------------------------
 # Tax-bucket classification map
@@ -50,28 +48,25 @@ _TAX_BUCKET: dict[str, str] = {
 
 async def get_accounts(http_session) -> dict:
     """Fetch net worth and all accounts via the CardSwitcher API."""
-    ts = int(time.time() * 1000)
     http = await http_session.get_http()
 
-    r9 = await http.get(f"{_CARD_URL}/9?_={ts}", timeout=20)
-    if r9.status_code != 200 or "json" not in r9.headers.get("content-type", ""):
-        return {"error": f"Card 9 returned {r9.status_code}. Session may have expired — call reset_session."}
+    nw_data = await _get_card(http, 9)
+    if nw_data is None:
+        return {"error": "Card 9 unavailable. Session may have expired — call reset_session."}
 
-    nw_data = r9.json().get("Data", {})
     net_worth    = nw_data.get("NetWorth")
     total_assets = nw_data.get("Assets")
     total_liab   = nw_data.get("Liabilities")
 
-    r1 = await http.get(f"{_CARD_URL}/1?_={ts}", timeout=20)
-    if r1.status_code != 200 or "json" not in r1.headers.get("content-type", ""):
+    card1 = await _get_card(http, 1)
+    if card1 is None:
         return {
             "net_worth": net_worth,
             "total_assets": total_assets,
             "total_liabilities": total_liab,
-            "error": f"Card 1 (accounts) returned {r1.status_code}",
+            "error": "Card 1 (accounts) unavailable",
         }
 
-    card1 = r1.json().get("Data", {})
     groups = []
     for grp in card1.get("AccountGroups", []):
         accounts = []
@@ -97,6 +92,32 @@ async def get_accounts(http_session) -> dict:
         "account_groups":    groups,
         "account_count":     sum(len(g["accounts"]) for g in groups),
     }
+
+
+_ILLIQUID_ACCOUNT_KEYWORDS = frozenset({"real estate", "property", "home", "house", "land"})
+
+
+def _calc_investable_assets(accts_data: dict) -> float:
+    """
+    Return net worth minus illiquid real-estate equity.
+
+    Investable assets = net worth − (sum of positive-balance accounts whose
+    name or MajorType indicates real estate).  Used by FI/FIRE calculations
+    that need a deployable portfolio estimate.
+    """
+    net_worth = accts_data.get("net_worth") or 0
+    illiquid  = 0.0
+    for grp in accts_data.get("account_groups", []):
+        for acct in grp.get("accounts", []):
+            bal       = acct.get("balance") or 0
+            name_lower = (acct.get("name") or "").lower()
+            acct_type  = acct.get("type") or ""
+            if bal > 0 and (
+                any(kw in name_lower for kw in _ILLIQUID_ACCOUNT_KEYWORDS)
+                or "RealEstate" in acct_type
+            ):
+                illiquid += bal
+    return round(net_worth - illiquid, 2)
 
 
 async def get_retirement_accounts(http_session) -> dict:

@@ -114,3 +114,11 @@ def _fmt_dollars(v) -> str | None:
     if v is None:
         return None
     return f"${v:,.2f}"
+
+
+def _month_offset(base_date, months_back: int):
+    """Return the first day of the month that is ``months_back`` calendar months before base_date."""
+    month = base_date.month - months_back
+    year  = base_date.year + (month - 1) // 12
+    month = ((month - 1) % 12) + 1
+    return base_date.replace(year=year, month=month, day=1)

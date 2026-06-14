@@ -2,7 +2,25 @@
 
 All notable changes to emoney-mcp are documented here.
 
-## [1.0.0] — 2026-06-14 (current)
+## [1.0.1] — 2026-06-14 (current)
+
+### Fixed
+- **`run_scenario` milestone list** was missing the $10M milestone — `_MILESTONES` was silently redefined inside `_project()` with `[500k, 1M, 2M, 5M]` instead of the canonical `[500k, 1M, 2M, 5M, 10M]` used by `get_net_worth_projection`. Results for high-net-worth projections now match between the two tools.
+
+### Refactored
+- **`get_accounts` now uses `_get_card()` cache** — previously bypassed the TTL cache with raw HTTP calls, causing duplicate card 9 and card 1 requests on multi-tool turns. All account tools now share the 5-minute card cache.
+- **`_month_offset` moved to `_helpers.py`** — eliminated a byte-for-byte duplicate (`_month_offset_local`) that existed in `portfolio.py`. Both `spending.py` and `portfolio.py` now import from the single canonical definition.
+- **`_get_investment_data()` helper in `portfolio.py`** — the 4-line `GetInvestmentData` HTTP fetch + error check was duplicated across `get_asset_location_efficiency`, `get_rebalancing_targets`, `get_portfolio_concentration`, and `get_tax_drag_analysis`. All four now delegate to the new helper.
+- **`_calc_investable_assets()` helper in `accounts.py`** — the investable-assets calculation (net worth minus real-estate equity) was duplicated in `get_fire_number` and `get_financial_independence_roadmap`. Both now use the shared helper.
+- **`_sum_income_spending()` helper in `spending.py`** — the SNB transaction income/spending accumulation loop was duplicated across `get_fire_number`, `get_insurance_gap_analysis`, and `get_financial_independence_roadmap`. All three now use the shared helper.
+- **Removed dead code** — `if False` unreachable branch in `portfolio.get_portfolio_concentration`.
+- **Replaced `__import__("datetime")` antipattern** with proper module-level `from datetime import datetime` imports in `portfolio.py` and `retirement.py`.
+- **Removed redundant in-function imports** — 14 instances of `import asyncio`, `import math`, `from ._helpers import _INV_URL`, etc. that duplicated module-level imports across `portfolio.py` and `retirement.py`.
+- **Test isolation** — added `autouse` fixture in `conftest.py` to clear the card cache between tests, preventing cross-test pollution from the now-shared `_get_card()` cache.
+
+---
+
+## [1.0.0] — 2026-06-14
 
 ### Added — 12 new family financial planning tools (76 tools total)
 

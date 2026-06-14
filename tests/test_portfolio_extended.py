@@ -236,7 +236,7 @@ class TestGetTaxDragAnalysis:
     @pytest.mark.asyncio
     async def test_misplaced_bonds_generate_drag(self):
         session = _make_inv_session(_BOND_IN_TAXABLE_DATA)
-        with patch("emoney_mcp.scrapers.accounts._build_account_type_map", return_value=_TYPE_MAP):
+        with patch("emoney_mcp.scrapers.portfolio._build_account_type_map", return_value=_TYPE_MAP):
             from emoney_mcp.scrapers.portfolio import get_tax_drag_analysis
             result = await get_tax_drag_analysis(session)
         assert result["total_annual_tax_drag_est"] > 0
@@ -250,7 +250,7 @@ class TestGetTaxDragAnalysis:
         ])
         ira_type_map = {"drew ira": "Tax-Deferred"}
         session = _make_inv_session(ira_only)
-        with patch("emoney_mcp.scrapers.accounts._build_account_type_map", return_value=ira_type_map):
+        with patch("emoney_mcp.scrapers.portfolio._build_account_type_map", return_value=ira_type_map):
             from emoney_mcp.scrapers.portfolio import get_tax_drag_analysis
             result = await get_tax_drag_analysis(session)
         assert result["total_annual_tax_drag_est"] == 0
@@ -267,7 +267,7 @@ class TestGetTaxDragAnalysis:
     @pytest.mark.asyncio
     async def test_higher_marginal_rate_increases_drag(self):
         session = _make_inv_session(_BOND_IN_TAXABLE_DATA)
-        with patch("emoney_mcp.scrapers.accounts._build_account_type_map", return_value=_TYPE_MAP):
+        with patch("emoney_mcp.scrapers.portfolio._build_account_type_map", return_value=_TYPE_MAP):
             from emoney_mcp.scrapers.portfolio import get_tax_drag_analysis
             r22 = await get_tax_drag_analysis(session, marginal_rate=0.22)
             r37 = await get_tax_drag_analysis(session, marginal_rate=0.37)
@@ -276,7 +276,7 @@ class TestGetTaxDragAnalysis:
     @pytest.mark.asyncio
     async def test_all_required_keys_present(self):
         session = _make_inv_session(_BOND_IN_TAXABLE_DATA)
-        with patch("emoney_mcp.scrapers.accounts._build_account_type_map", return_value=_TYPE_MAP):
+        with patch("emoney_mcp.scrapers.portfolio._build_account_type_map", return_value=_TYPE_MAP):
             from emoney_mcp.scrapers.portfolio import get_tax_drag_analysis
             result = await get_tax_drag_analysis(session)
         for key in ("total_annual_tax_drag_est", "misplaced_positions",

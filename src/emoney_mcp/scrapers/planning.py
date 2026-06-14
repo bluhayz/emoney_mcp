@@ -25,8 +25,8 @@ import asyncio
 import math
 from datetime import datetime
 
-from .accounts import get_accounts
-from .spending import _fetch_snb_data, _INCOME_CATEGORIES, _EXCLUDE_CATEGORIES
+from .accounts import get_accounts, _calc_investable_assets
+from .spending import _fetch_snb_data, _INCOME_CATEGORIES, _EXCLUDE_CATEGORIES, _sum_income_spending
 
 # ---------------------------------------------------------------------------
 # 2025 IRS constants used by get_gifting_and_estate_strategy
@@ -166,37 +166,11 @@ async def get_fire_number(
     if "error" in accts:
         return accts
 
-    net_worth = accts.get("net_worth") or 0
-
-    # Investable assets = net worth minus illiquid (real estate / property value)
+    investable_assets = _calc_investable_assets(accts)
     total_liab = accts.get("total_liabilities") or 0
-    _ILLIQUID_KEYWORDS = {"real estate", "property", "home", "house", "land"}
-    illiquid = 0.0
-    for grp in accts.get("account_groups", []):
-        for acct in grp.get("accounts", []):
-            name_lower = (acct.get("name") or "").lower()
-            type_lower = (acct.get("type") or "").lower()
-            bal = acct.get("balance") or 0
-            if bal > 0 and (
-                any(kw in name_lower for kw in _ILLIQUID_KEYWORDS)
-                or "RealEstate" in (acct.get("type") or "")
-            ):
-                illiquid += bal
-    investable_assets = round(net_worth - illiquid, 2)
 
     # 12-month spend from SNB
-    annual_spending = 0.0
-    annual_income   = 0.0
-    if snb_ok:
-        for t in txns:
-            if t["is_excluded"]:
-                continue
-            if t["is_income"]:
-                annual_income   += t["amount"]
-            else:
-                annual_spending += t["amount"]
-    annual_spending = round(annual_spending, 2)
-    annual_income   = round(annual_income, 2)
+    annual_income, annual_spending = _sum_income_spending(txns) if snb_ok else (0.0, 0.0)
     monthly_savings = round((annual_income - annual_spending) / 12, 2) if annual_income > annual_spending else 0
 
     fi_number      = round(annual_spending / swr, 2) if annual_spending > 0 else 0
@@ -313,20 +287,8 @@ async def get_insurance_gap_analysis(
         liquid_assets = total_assets * 0.10
 
     # Annual income and monthly expenses from SNB
-    annual_income   = 0.0
-    annual_spending = 0.0
-    if snb_ok:
-        for t in txns:
-            if t["is_excluded"]:
-                continue
-            if t["is_income"]:
-                annual_income   += t["amount"]
-            else:
-                annual_spending += t["amount"]
-
-    annual_income   = round(annual_income, 2)
-    annual_spending = round(annual_spending, 2)
-    monthly_income  = round(annual_income / 12, 2)
+    annual_income, annual_spending = _sum_income_spending(txns) if snb_ok else (0.0, 0.0)
+    monthly_income   = round(annual_income / 12, 2)
     monthly_expenses = round(annual_spending / 12, 2)
 
     # --- Life insurance need ---

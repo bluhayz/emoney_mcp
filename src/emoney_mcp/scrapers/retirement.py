@@ -35,14 +35,15 @@ get_dynamic_withdrawal_guardrails(http_session, ...)
     withdrawal amounts.
 """
 
+import asyncio
 import math
 import random
 import statistics
 from datetime import datetime, timedelta
 
-from .accounts import get_accounts
+from .accounts import get_accounts, _calc_investable_assets
 from .goals import get_goals
-from .spending import _fetch_snb_data, get_savings_rate
+from .spending import _fetch_snb_data, get_savings_rate, _sum_income_spending
 
 
 async def get_retirement_runway(
@@ -245,8 +246,6 @@ async def get_net_worth_projection(
     annual_return          : assumed annual portfolio return (default 7%)
     annual_savings_override: override the inferred annual savings amount
     """
-    import asyncio
-
     # Fetch accounts and savings rate in parallel
     accts, savings_result = await asyncio.gather(
         get_accounts(http_session),
@@ -693,9 +692,7 @@ async def run_scenario(
     retirement_age        : override the retirement goal age
     annual_return_pct     : override the assumed annual return (e.g. 8 for 8%; default 7)
     """
-    import asyncio as _aio
-
-    accts, savings_result, goals_result = await _aio.gather(
+    accts, savings_result, goals_result = await asyncio.gather(
         get_accounts(http_session),
         get_savings_rate(http_session, months=6),
         get_goals(http_session),
@@ -743,7 +740,7 @@ async def run_scenario(
         target_hit = None
         yearly_snaps = []
 
-        _MILESTONES = [500_000, 1_000_000, 2_000_000, 5_000_000]
+        _MILESTONES = [500_000, 1_000_000, 2_000_000, 5_000_000, 10_000_000]
         milestones_hit = {}
 
         for mo in range(1, 50 * 12 + 1):
@@ -860,9 +857,6 @@ async def get_financial_independence_roadmap(
     current_age   : your current age (optional; enables age-based milestone lookup)
     retirement_age: target retirement age for Coast FI calculation (default 65)
     """
-    import asyncio
-    import math
-
     accts_data, sr_data = await asyncio.gather(
         get_accounts(http_session),
         get_savings_rate(http_session, months=6),
@@ -873,33 +867,10 @@ async def get_financial_independence_roadmap(
     if "error" in accts_data:
         return accts_data
 
-    net_worth      = accts_data.get("net_worth") or 0
+    investable = _calc_investable_assets(accts_data)
 
-    # Investable assets (exclude real estate)
-    _ILLIQUID_KW = {"real estate", "property", "home", "house", "land"}
-    illiquid = 0.0
-    for grp in accts_data.get("account_groups", []):
-        for acct in grp.get("accounts", []):
-            nm = (acct.get("name") or "").lower()
-            if any(kw in nm for kw in _ILLIQUID_KW) or "RealEstate" in (acct.get("type") or ""):
-                bal = acct.get("balance") or 0
-                if bal > 0:
-                    illiquid += bal
-    investable = round(net_worth - illiquid, 2)
-
-    # Annual income from SNB
-    annual_income = 0.0
-    annual_spending = 0.0
-    if snb_ok:
-        for t in txns:
-            if t["is_excluded"]:
-                continue
-            if t["is_income"]:
-                annual_income   += t["amount"]
-            else:
-                annual_spending += t["amount"]
-    annual_income   = round(annual_income, 2)
-    annual_spending = round(annual_spending, 2)
+    # Annual income and spending from SNB
+    annual_income, annual_spending = _sum_income_spending(txns) if snb_ok else (0.0, 0.0)
 
     # Monthly savings from savings_rate tool
     monthly_savings = 0.0
@@ -962,7 +933,7 @@ async def get_financial_independence_roadmap(
         coast_gap       = round(max(0, coast_fi_target - investable), 2)
 
     return {
-        "as_of":                   __import__("datetime").datetime.now().strftime("%Y-%m-%d"),
+        "as_of":                   datetime.now().strftime("%Y-%m-%d"),
         "current_age":             current_age,
         "retirement_age":          retirement_age,
         "annual_income":           annual_income,

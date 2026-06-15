@@ -182,6 +182,7 @@ class TestGetTransactionSplits:
     @pytest.mark.asyncio
     async def test_returns_splits_list(self):
         session = make_mock_http_session()
+        # API may return dict-wrapped or list directly; test both shapes via the dict form
         api_response = {
             "Splits": [
                 {"TransactionSplitID": "s1", "CategoryID": {"Value": "1"}, "SplitAmount": 50.0},
@@ -193,8 +194,27 @@ class TestGetTransactionSplits:
             from emoney_mcp.scrapers.transactions import get_transaction_splits
             result = await get_transaction_splits(session, transaction_id="txn-split")
         assert result["transaction_id"] == "txn-split"
-        assert len(result["splits"]) == 2
-        assert result["total"] == 85.0
+        assert result["split_count"] == 2
+        assert result["is_split"] is True
+        assert result["total_amount"] == 85.0
+        assert result["splits"][0]["category_id"] == "1"
+        assert result["splits"][1]["category_id"] == "2"
+
+    @pytest.mark.asyncio
+    async def test_list_response_shape(self):
+        """API returns a bare list — code must handle it without crashing."""
+        session = make_mock_http_session()
+        api_response = [
+            {"CategoryID": {"Value": "21"}, "SplitAmount": -40.01,
+             "Description": "TST* PURA VIDA", "UserDescription": None},
+        ]
+        with _make_csrf_mock(api_response):
+            from emoney_mcp.scrapers.transactions import get_transaction_splits
+            result = await get_transaction_splits(session, transaction_id="txn-list")
+        assert result["split_count"] == 1
+        assert result["is_split"] is False
+        assert result["total_amount"] == -40.01
+        assert result["splits"][0]["category_id"] == "21"
 
     @pytest.mark.asyncio
     async def test_csrf_error_propagates(self):
@@ -348,8 +368,8 @@ class TestGetTransactionRules:
         assert "error" in result
 
     @pytest.mark.asyncio
-    async def test_filter_param_sent_in_payload(self):
-        """GetRules POST must include filter='' to avoid server-side 500 (Bug 2 fix)."""
+    async def test_empty_payload_sent(self):
+        """GetRules POST must send an empty data dict — JS uses data:{} and filter='' triggers 500."""
         session = make_mock_http_session()
         captured_data = {}
 
@@ -361,7 +381,7 @@ class TestGetTransactionRules:
             from emoney_mcp.scrapers.transactions import get_transaction_rules
             await get_transaction_rules(session)
 
-        assert "filter" in captured_data, "GetRules must send filter param to avoid server 500"
+        assert "filter" not in captured_data, "GetRules must NOT send filter — JS sends data:{} and filter='' causes 500"
 
     @pytest.mark.asyncio
     async def test_all_rule_fields_present(self):
@@ -504,18 +524,36 @@ class TestUpdateTransactionRule:
 # ===========================================================================
 
 class TestApplyTransactionRule:
+    """
+    apply_transaction_rule sends {ruleID, transactionID} directly to ApplyRule.
+    It does NOT look up the rule first — that is intentional (matches JS signature).
+    """
 
     @pytest.mark.asyncio
     async def test_apply_rule_success(self):
         session = make_mock_http_session()
-        with patch("emoney_mcp.scrapers.transactions.get_transaction_rules",
-                   new=AsyncMock(return_value=_EXISTING_RULES_RESPONSE)):
-            with _make_csrf_mock({"Success": True, "Updated": 7}):
-                from emoney_mcp.scrapers.transactions import apply_transaction_rule
-                result = await apply_transaction_rule(session, rule_id="10")
+        with _make_csrf_mock({"Success": True, "Updated": 7}):
+            from emoney_mcp.scrapers.transactions import apply_transaction_rule
+            result = await apply_transaction_rule(session, rule_id="10")
         assert result["success"] is True
         assert result["rule_id"] == "10"
-        assert "COSTCO" in result["description"]
+
+    @pytest.mark.asyncio
+    async def test_apply_sends_rule_id_in_payload(self):
+        """ApplyRule POST must contain ruleID (not a full rule object)."""
+        session = make_mock_http_session()
+        captured_data = {}
+
+        async def capture(http_session, path, data):
+            captured_data.update(data)
+            return {"Success": True}
+
+        with patch("emoney_mcp.scrapers.transactions._csrf_post", side_effect=capture):
+            from emoney_mcp.scrapers.transactions import apply_transaction_rule
+            await apply_transaction_rule(session, rule_id="10")
+
+        assert captured_data.get("ruleID") == "10"
+        assert "rule[RuleID][Value]" not in captured_data, "Must not send full rule object"
 
     @pytest.mark.asyncio
     async def test_apply_with_transaction_id(self):
@@ -526,29 +564,17 @@ class TestApplyTransactionRule:
             captured_data.update(data)
             return {"Success": True}
 
-        with patch("emoney_mcp.scrapers.transactions.get_transaction_rules",
-                   new=AsyncMock(return_value=_EXISTING_RULES_RESPONSE)):
-            with patch("emoney_mcp.scrapers.transactions._csrf_post", side_effect=capture):
-                from emoney_mcp.scrapers.transactions import apply_transaction_rule
-                await apply_transaction_rule(session, rule_id="10", transaction_id="txn-555")
-
-        assert captured_data.get("transactionID") == "txn-555"
-
-    @pytest.mark.asyncio
-    async def test_rule_not_found_returns_error(self):
-        session = make_mock_http_session()
-        with patch("emoney_mcp.scrapers.transactions.get_transaction_rules",
-                   new=AsyncMock(return_value={"rules": [], "count": 0})):
+        with patch("emoney_mcp.scrapers.transactions._csrf_post", side_effect=capture):
             from emoney_mcp.scrapers.transactions import apply_transaction_rule
-            result = await apply_transaction_rule(session, rule_id="999")
-        assert "error" in result
+            await apply_transaction_rule(session, rule_id="10", transaction_id="txn-555")
+
+        assert captured_data.get("ruleID") == "10"
+        assert captured_data.get("transactionID") == "txn-555"
 
     @pytest.mark.asyncio
     async def test_csrf_error_propagates(self):
         session = make_mock_http_session()
-        with patch("emoney_mcp.scrapers.transactions.get_transaction_rules",
-                   new=AsyncMock(return_value=_EXISTING_RULES_RESPONSE)):
-            with _make_csrf_mock({"error": "ApplyRule returned HTTP 500", "response_body": ""}):
-                from emoney_mcp.scrapers.transactions import apply_transaction_rule
-                result = await apply_transaction_rule(session, rule_id="10")
+        with _make_csrf_mock({"error": "ApplyRule returned HTTP 500", "response_body": ""}):
+            from emoney_mcp.scrapers.transactions import apply_transaction_rule
+            result = await apply_transaction_rule(session, rule_id="10")
         assert "error" in result

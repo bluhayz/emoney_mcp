@@ -195,7 +195,8 @@ class TestGetAnnualTaxAdvantagedSummary:
             from emoney_mcp.scrapers.tax import get_annual_tax_advantaged_summary
             result = await get_annual_tax_advantaged_summary(session)
         assert "tax_year" in result
-        assert result["tax_year"] == 2025
+        from emoney_mcp.scrapers.tax import _TAX_YEAR
+        assert result["tax_year"] == _TAX_YEAR
 
     @pytest.mark.asyncio
     async def test_key_deadlines_present(self):

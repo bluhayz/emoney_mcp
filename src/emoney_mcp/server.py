@@ -394,7 +394,7 @@ async def list_tools() -> list[Tool]:
         Tool(
             name="get_contribution_room",
             description=(
-                "Shows 2025 IRS annual contribution limits for all tax-advantaged accounts "
+                "Shows 2026 IRS annual contribution limits for all tax-advantaged accounts "
                 "(401k, IRA, HSA, SIMPLE IRA, SEP IRA, 529) alongside your current balances. "
                 "Adjusts for catch-up contributions based on age. "
                 "Parameters: age (integer, optional), filing_status ('single', 'mfj', 'hoh', default 'mfj'). "
@@ -1140,7 +1140,7 @@ async def list_tools() -> list[Tool]:
         Tool(
             name="get_gifting_and_estate_strategy",
             description=(
-                "Estate snapshot and gifting strategy recommendations using 2025 IRS constants. "
+                "Estate snapshot and gifting strategy recommendations using 2026 IRS constants. "
                 "Shows federal estate tax exposure, annual gift exclusion capacity, 529 superfunding opportunity, "
                 "and a prioritized list of estate-reduction strategies. "
                 "Optional: num_recipients (people to gift to, default 2), filing_status ('mfj' or 'single'). "
@@ -1294,7 +1294,7 @@ async def list_tools() -> list[Tool]:
         Tool(
             name="get_annual_tax_advantaged_summary",
             description=(
-                "Shows 2025 IRS annual contribution limits for 401k, IRA, HSA, and 529 alongside current account balances. "
+                "Shows 2026 IRS annual contribution limits for 401k, IRA, HSA, and 529 alongside current account balances. "
                 "Adjusts for catch-up contributions based on age. Shows key deadlines and remaining days in the tax year. "
                 "Optional: age (determines catch-up eligibility). "
                 "Useful for 'How much can I still contribute to my IRA this year?' or 'Am I maxing out my tax-advantaged accounts?'"
@@ -1920,7 +1920,7 @@ def _get_features() -> dict:
                         "parameters": "filing_status ('mfj', 'single', 'hoh'), annual_income (optional)",
                     },
                     "get_contribution_room": {
-                        "description": "Shows 2025 IRS contribution limits for all tax-advantaged accounts alongside current balances.",
+                        "description": "Shows 2026 IRS contribution limits for all tax-advantaged accounts alongside current balances.",
                         "examples": ["How much can I still contribute to my IRA?", "Am I maxing out my HSA?"],
                         "parameters": "age (optional), filing_status (default 'mfj')",
                     },

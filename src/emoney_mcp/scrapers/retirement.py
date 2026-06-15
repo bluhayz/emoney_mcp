@@ -39,7 +39,7 @@ import asyncio
 import math
 import random
 import statistics
-from datetime import datetime, timedelta
+from datetime import datetime
 
 from .accounts import get_accounts, _calc_investable_assets
 from .goals import get_goals
@@ -68,7 +68,7 @@ async def get_retirement_runway(
         return accts
     total_assets     = accts.get("total_assets") or 0
     total_liabilities = accts.get("total_liabilities") or 0
-    net_worth         = accts.get("net_worth") or 0
+    accts.get("net_worth") or 0
 
     investable = max(0.0, total_assets - total_liabilities)
 
@@ -154,7 +154,7 @@ async def get_withdrawal_rate_analysis(http_session) -> dict:
     goals_result = await get_goals(http_session)
     retirement_goals = goals_result.get("retirement_goals", []) if "error" not in goals_result else []
 
-    net_worth   = accts.get("net_worth") or 0
+    accts.get("net_worth") or 0
     total_assets = accts.get("total_assets") or 0
     total_liab   = accts.get("total_liabilities") or 0
     investable   = max(0.0, total_assets - total_liab)

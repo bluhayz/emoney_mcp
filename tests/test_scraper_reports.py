@@ -7,7 +7,7 @@ HTML responses are mocked at the HTTP layer — no live network calls.
 import json
 import sys
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 

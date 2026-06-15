@@ -28,6 +28,13 @@ jobs:
           python -m pip install --upgrade pip
           pip install -e ".[dev]"
 
+      - name: Lint (ruff)
+        run: ruff check src/ scripts/ tests/
+
+      - name: Type check (mypy, advisory)
+        run: mypy src/emoney_mcp
+        continue-on-error: true  # advisory until the existing type errors are triaged
+
       - name: Syntax check (all source files)
         run: |
           python -m py_compile src/emoney_mcp/server.py
@@ -60,6 +67,34 @@ jobs:
       - name: Audit dependencies for known CVEs
         run: pip-audit --ignore-vuln PYSEC-2022-42969
         continue-on-error: true  # Advisory only — don't fail the build
+
+  version-guard:
+    name: Require version bump for src changes
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0  # need history to diff against the base
+
+      - name: Fail if src/ changed without a version bump
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            git fetch origin "${{ github.base_ref }}" --depth=1
+            BASE="origin/${{ github.base_ref }}"
+          else
+            BASE="HEAD~1"
+          fi
+          SRC_CHANGED=$(git diff --name-only "$BASE" HEAD -- src/emoney_mcp/ | wc -l | tr -d ' ')
+          CUR=$(grep '^version' pyproject.toml | head -1 | sed 's/.*= *"\(.*\)"/\1/')
+          PREV=$(git show "$BASE:pyproject.toml" 2>/dev/null | grep '^version' | head -1 | sed 's/.*= *"\(.*\)"/\1/' || echo "none")
+          echo "src files changed vs $BASE: $SRC_CHANGED"
+          echo "version: $PREV -> $CUR"
+          if [ "$SRC_CHANGED" -gt 0 ] && [ "$CUR" = "$PREV" ]; then
+            echo "::error::Files under src/emoney_mcp/ changed but the pyproject.toml version was not bumped ($CUR). Bump the version so the package is republished to PyPI and picked up by Claude Desktop."
+            exit 1
+          fi
+          echo "Version-bump guard OK."
 
   publish:
     name: Build and publish to PyPI

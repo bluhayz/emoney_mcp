@@ -2,7 +2,27 @@
 
 All notable changes to emoney-mcp are documented here.
 
-## [1.0.6] — 2026-06-15 (current)
+## [1.0.7] — 2026-06-15 (current)
+
+### Fixed
+
+- **`scrapers/_helpers.py`** — `_get_card` no longer crashes with `AttributeError` when a card returns a JSON `null` or non-object body. Previously `resp.json().get("Data")` raised on such responses; `get_available_cards` (which probes undocumented card IDs 1–16) hit this on the live account. Now guards the payload type before `.get`. **Found by the new live smoke harness (#20).**
+
+### Added
+
+- **`scripts/smoke.py`** (#20) — opt-in live smoke test that runs all 46 read-only tools against a real session and cross-checks for shape/ordering bugs (e.g. `velocity.current_net_worth == get_accounts.net_worth`, chronological history). Not part of CI; run via `uv run python scripts/smoke.py`.
+- **`browser.py`** (#25) — macOS Chrome cookie extraction (Keychain `Chrome Safe Storage` key + PBKDF2-HMAC-SHA1 → AES-128-CBC). `sync_chrome_session` now works natively on macOS instead of always falling back to the nodriver window.
+- **ruff + mypy** (#21) — `ruff` (pyflakes/F + E9) is now a hard CI gate; `mypy` runs as an advisory step. Cleaned 98 lint findings (unused imports/vars, empty f-strings). Re-export shims (`scraper.py`, `scrapers/__init__.py`) are excluded from F401/F403.
+
+### Changed
+
+- **`scrapers/transactions.py`, `scrapers/reports.py`** (#24) — `add_transaction_rule`, `apply_transaction_rule`, and `get_report_url` no longer leak raw Emoney payloads by default. The `raw` field is included only when `EMONEY_DEV` is set (via a `_maybe_raw` helper); the unrecognized-response paths now return a clean error.
+
+### CI
+
+- **Version-bump guard** (#22) — a new CI job fails any push/PR that changes `src/emoney_mcp/` without bumping the `pyproject.toml` version, so a code change can't silently skip the PyPI release.
+
+## [1.0.6] — 2026-06-15
 
 ### Security
 

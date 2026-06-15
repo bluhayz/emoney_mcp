@@ -479,21 +479,7 @@ class TestFetchSnbAccountMap:
 
     @pytest.mark.asyncio
     async def test_returns_id_to_name_map(self):
-        session = _make_session_with_get({
-            "Spending/Transactions": {"JwtToken": "jwt-xxx", "apiKey": "key-yyy"},
-            "GetAccounts": _SNB_ACCOUNTS,
-        })
-        # Need credentials endpoint + GetAccounts
-        async def mock_get(url, **kwargs):
-            if "Spending/Transactions" in url:
-                return _make_http_resp(
-                    {}, status=200, content_type="text/html"
-                )
-            if "GetAccounts" in url:
-                return _make_http_resp(_SNB_ACCOUNTS)
-            return _make_http_resp({}, status=404)
-
-        from emoney_mcp.scrapers.spending import _fetch_snb_account_map, _snb_account_cache
+        from emoney_mcp.scrapers.spending import _fetch_snb_account_map
         # Bypass cache by resetting it
         import emoney_mcp.scrapers.spending as sp_mod
         sp_mod._snb_account_cache = None

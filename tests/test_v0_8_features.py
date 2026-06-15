@@ -1,14 +1,14 @@
 """Tests for v0.8.0 new features."""
 
 import pytest
-from unittest.mock import AsyncMock, patch, MagicMock
+from unittest.mock import patch
 from datetime import datetime, timedelta
 
 import sys
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
-from helpers import make_mock_http_session, load_fixture
+from helpers import make_mock_http_session
 
 
 # ---------------------------------------------------------------------------
@@ -220,7 +220,7 @@ class TestGetCashFlowForecast:
 
     @pytest.mark.asyncio
     async def test_returns_forecast_rows(self):
-        from emoney_mcp.scrapers.spending import get_cash_flow_forecast, get_recurring_charges
+        from emoney_mcp.scrapers.spending import get_cash_flow_forecast
 
         session = make_mock_http_session()
         with patch("emoney_mcp.scrapers.spending._fetch_snb_raw",

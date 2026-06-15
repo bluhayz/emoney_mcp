@@ -330,7 +330,6 @@ async def get_debt_payoff_plan(
     assumed_credit_card_apr  : default APR for credit cards (default 22%)
     assumed_loan_apr         : default APR for other loans (default 7%)
     """
-    import math
 
     result = await get_accounts(http_session)
     if "error" in result:

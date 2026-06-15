@@ -10,11 +10,19 @@ get_report_url(report_id) to get a link to view or download the report.
 """
 
 import json
+import os
 import re
 
 from ._helpers import BASE_URL
 
 _REPORTS_URL = f"{BASE_URL}/ema/CS/Reports"
+
+
+def _maybe_raw(out: dict, raw) -> dict:
+    """Attach the unprocessed API response only when EMONEY_DEV is set."""
+    if os.environ.get("EMONEY_DEV"):
+        out["raw"] = raw
+    return out
 
 
 async def get_reports(http_session) -> dict:
@@ -133,6 +141,14 @@ async def get_report_url(http_session, report_id: str) -> dict:
             return {"report_id": report_id, "url": url}
         if not data.get("Success", True):
             return {"error": data.get("Message", "GetReportUrl failed"), "report_id": report_id}
-        return {"report_id": report_id, "raw": data}
+        return _maybe_raw(
+            {"report_id": report_id,
+             "error": "GetReportUrl returned no recognizable URL field"},
+            data,
+        )
 
-    return {"report_id": report_id, "raw": data}
+    return _maybe_raw(
+        {"report_id": report_id,
+         "error": "GetReportUrl returned an unexpected response type"},
+        data,
+    )

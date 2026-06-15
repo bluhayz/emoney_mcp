@@ -287,7 +287,7 @@ class TestGetGiftingAndEstateStrategy:
             from emoney_mcp.scrapers.planning import get_gifting_and_estate_strategy
             result = await get_gifting_and_estate_strategy(session, filing_status="mfj")
         # MFJ: $18k × 2 donors × 5 years = $180k per beneficiary
-        assert result["529_superfunding"]["max_per_beneficiary"] == 18_000 * 2 * 5
+        assert result["529_superfunding"]["max_per_beneficiary"] == 19_000 * 2 * 5
 
 
 # ===========================================================================

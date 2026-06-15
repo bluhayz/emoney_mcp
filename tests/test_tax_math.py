@@ -16,7 +16,7 @@ from emoney_mcp.scrapers.tax import _compute_tax, _marginal_rate, _ltcg_rate
 # ---------------------------------------------------------------------------
 
 class TestComputeTax:
-    """Verify federal income tax calculation against 2025 IRS brackets."""
+    """Verify federal income tax calculation against 2026 IRS brackets."""
 
     def test_zero_income_returns_zero(self):
         assert _compute_tax(0, "mfj") == 0.0
@@ -31,33 +31,33 @@ class TestComputeTax:
 
     def test_mfj_straddles_10_and_12_pct_brackets(self):
         # $23,850 × 10% + ($50,000 - $23,850) × 12%
-        expected = 23_850 * 0.10 + (50_000 - 23_850) * 0.12
+        expected = 24_800 * 0.10 + (50_000 - 24_800) * 0.12
         assert _compute_tax(50_000, "mfj") == pytest.approx(expected, rel=1e-6)
 
     def test_mfj_straddles_12_and_22_pct_brackets(self):
         # $23,850 × 10% + ($96,950 - $23,850) × 12% + ($120,000 - $96,950) × 22%
         expected = (
-            23_850 * 0.10
-            + (96_950 - 23_850) * 0.12
-            + (120_000 - 96_950) * 0.22
+            24_800 * 0.10
+            + (100_800 - 24_800) * 0.12
+            + (120_000 - 100_800) * 0.22
         )
         assert _compute_tax(120_000, "mfj") == pytest.approx(expected, rel=1e-6)
 
     def test_mfj_at_top_of_10pct_bracket(self):
         # Exactly at first bracket ceiling — all taxed at 10%
-        assert _compute_tax(23_850, "mfj") == pytest.approx(23_850 * 0.10)
+        assert _compute_tax(24_800, "mfj") == pytest.approx(24_800 * 0.10)
 
     def test_single_entirely_in_10pct_bracket(self):
         # single: 10% to $11,925
         assert _compute_tax(8_000, "single") == pytest.approx(800.0)
 
     def test_single_straddles_10_and_12_pct(self):
-        expected = 11_925 * 0.10 + (30_000 - 11_925) * 0.12
+        expected = 12_400 * 0.10 + (30_000 - 12_400) * 0.12
         assert _compute_tax(30_000, "single") == pytest.approx(expected, rel=1e-6)
 
     def test_hoh_bracket(self):
         # hoh: 10% to $17,000
-        assert _compute_tax(17_000, "hoh") == pytest.approx(17_000 * 0.10)
+        assert _compute_tax(17_700, "hoh") == pytest.approx(17_700 * 0.10)
 
     def test_unknown_filing_status_falls_back_to_mfj(self):
         """Invalid filing_status should silently use mfj brackets."""
@@ -91,10 +91,10 @@ class TestMarginalRate:
 
     def test_income_exactly_at_bracket_ceiling_uses_that_brackets_rate(self):
         # At $23,850 (top of mfj 10% bracket) the rate is still 10%
-        assert _marginal_rate(23_850, "mfj") == 0.10
+        assert _marginal_rate(24_800, "mfj") == 0.10
 
     def test_income_just_above_first_bracket_ceiling(self):
-        assert _marginal_rate(23_851, "mfj") == 0.12
+        assert _marginal_rate(24_801, "mfj") == 0.12
 
     def test_income_in_22pct_bracket(self):
         assert _marginal_rate(150_000, "mfj") == 0.22
@@ -126,10 +126,10 @@ class TestLtcgRate:
         assert _ltcg_rate(50_000, "mfj") == 0.0
 
     def test_mfj_income_exactly_at_0pct_threshold(self):
-        assert _ltcg_rate(96_700, "mfj") == 0.0
+        assert _ltcg_rate(98_900, "mfj") == 0.0
 
     def test_mfj_income_just_above_0pct_threshold(self):
-        assert _ltcg_rate(96_701, "mfj") == 0.15
+        assert _ltcg_rate(98_901, "mfj") == 0.15
 
     def test_mfj_income_in_15pct_band(self):
         assert _ltcg_rate(300_000, "mfj") == 0.15

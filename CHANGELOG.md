@@ -2,7 +2,21 @@
 
 All notable changes to emoney-mcp are documented here.
 
-## [1.0.9] — 2026-06-15 (current)
+## [1.0.10] — 2026-06-15 (current)
+
+### Changed — IRS tables updated to 2026 (#29)
+
+- **`scrapers/tax.py`** — refreshed all hardcoded IRS figures from 2025 to 2026 (`_TAX_YEAR = 2026`):
+  - **Brackets** (`_BRACKETS`) — 2026 ordinary-income thresholds for single/MFJ/HOH (Rev. Proc. 2025-32).
+  - **Standard deduction** (`_STD_DEDUCTION`) — $16,100 single / $32,200 MFJ / $24,150 HOH.
+  - **LTCG thresholds** (`_LTCG_THRESHOLDS`) — 0%/15%/20% boundaries per filing status.
+  - **Contribution limits** (`_CONTRIBUTION_LIMITS`, Notice 2025-67 + Rev. Proc. 2025-19) — 401(k)/403(b) $24,500 (catch-up 50: $32,500; super catch-up 60–63: $35,750), IRA $7,500 (catch-up $8,600), SIMPLE $17,000 (catch-up $21,000), HSA $4,400 self / $8,750 family ($1,000 catch-up), SEP/§415(c) $72,000. Gift exclusion unchanged at $19,000.
+  - NIIT thresholds ($200k/$250k) and the RMD Uniform Lifetime Table are unchanged (statutory / set by regulation).
+- **`scrapers/planning.py`** — `_ANNUAL_GIFT_EXCLUSION` corrected from a stale **2024** value ($18,000) to the current $19,000.
+- Tool descriptions/docstrings updated from "2025 IRS" to "2026 IRS" across `tax.py`, `planning.py`, and `server.py`.
+- Tests updated to 2026 boundaries; `test_tax_year_in_result` now asserts against the `_TAX_YEAR` constant so it can't silently drift. Verified end-to-end on the live session (`get_contribution_room` returns 2026 limits).
+
+## [1.0.9] — 2026-06-15
 
 ### Changed (Tier 3 cleanup)
 

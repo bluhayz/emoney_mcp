@@ -29,9 +29,9 @@ from .spending import _fetch_snb_data, _sum_income_spending
 from ._helpers import _get_card
 
 # ---------------------------------------------------------------------------
-# 2025 IRS constants used by get_gifting_and_estate_strategy
+# 2026 IRS constants used by get_gifting_and_estate_strategy
 # ---------------------------------------------------------------------------
-_ANNUAL_GIFT_EXCLUSION  = 18_000        # per recipient per year
+_ANNUAL_GIFT_EXCLUSION  = 19_000        # per recipient per year (2026)
 _ESTATE_EXEMPTION_SINGLE = 13_610_000   # federal estate/gift tax exemption (2025)
 _ESTATE_EXEMPTION_MFJ    = 27_220_000   # married — each spouse has their own exemption
 _ESTATE_TOP_RATE         = 0.40         # federal estate tax top marginal rate
@@ -392,7 +392,7 @@ async def get_gifting_and_estate_strategy(
     """
     Estate snapshot and gifting strategy recommendations.
 
-    Uses net worth from Card 9 + 2025 IRS estate and gift tax constants to
+    Uses net worth from Card 9 + 2026 IRS estate and gift tax constants to
     show current estate tax exposure, available annual exclusion gifting
     capacity, and 529 superfunding opportunity.
 
@@ -484,7 +484,7 @@ async def get_gifting_and_estate_strategy(
         "strategies":   strategies,
         "caveat": (
             "Estate and gift tax rules are complex and change with legislation. "
-            "This analysis uses 2025 IRS constants and does not account for state estate taxes, "
+            "This analysis uses 2026 IRS constants and does not account for state estate taxes, "
             "step-up in basis considerations, or existing trust structures. "
             "Consult an estate planning attorney for a formal plan."
         ),

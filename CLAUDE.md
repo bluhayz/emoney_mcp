@@ -2,7 +2,7 @@
 
 MCP server bridging Claude (and other MCP clients) to Emoney Advisor (`emaplan.com`). Emoney has no public API; this server uses reverse-engineered internal JSON endpoints + Chrome cookie extraction for auth.
 
-**Current version: 1.0.6 · 82 MCP tools.** Read-only data tools (cards + SNB + Profile), transaction/rules **write** tools, report links, and a large set of pure-Python planning/tax calculators.
+**Current version: 1.0.10 · 82 MCP tools.** Read-only data tools (cards + SNB + Profile), transaction/rules **write** tools, report links, and a large set of pure-Python planning/tax calculators (IRS 2026 figures).
 
 ---
 
@@ -27,7 +27,7 @@ src/emoney_mcp/
     │                  #   get_upcoming_bills, get_categories, explore_snb_write_endpoints (largest module)
     ├── goals.py       # get_goals, get_financial_summary, get_financial_health_score, get_quick_status,
     │                  #   get_college_savings_gap, get_monthly_review
-    ├── tax.py         # Tax math tools + IRS 2025 constants — get_tax_loss_harvesting, get_contribution_room,
+    ├── tax.py         # Tax math tools + IRS 2026 constants — get_tax_loss_harvesting, get_contribution_room,
     │                  #   get_roth_conversion_analysis, get_capital_gains_exposure, get_rmd_estimate,
     │                  #   get_tax_bracket_headroom, get_social_security_optimizer, get_quarterly_estimated_taxes,
     │                  #   get_year_end_checklist, get_annual_tax_advantaged_summary
@@ -227,7 +227,7 @@ Run tests: `pytest tests/ -v --tb=short`
 
 ## Important Constraints
 
-- **Tax constants are hardcoded for 2025** (`_TAX_YEAR` in `tax.py`). Update `_BRACKETS`, `_CONTRIBUTION_LIMITS`, `_STD_DEDUCTION`, `_LTCG_THRESHOLDS`, `_NIIT_THRESHOLD` each January.
+- **Tax constants are hardcoded for 2026** (`_TAX_YEAR` in `tax.py`). Update `_BRACKETS`, `_CONTRIBUTION_LIMITS`, `_STD_DEDUCTION`, `_LTCG_THRESHOLDS`, `_NIIT_THRESHOLD` each January.
 - **Card 8 `History` is oldest-first**; current value is the `NetWorth` field. Don't assume newest-first.
 - **CS/Spending writes go through the Nexus backend**, which can be in maintenance (`IsNexusAvailable:false`) — surface the error, don't treat it as a code bug.
 - **`nodriver` runs in its own OS thread** with a separate event loop — do not `await` it from the main async context.

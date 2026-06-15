@@ -2,7 +2,7 @@
 Tax planning tools — loss harvesting, contribution limits, Roth conversion,
 capital gains exposure, and Required Minimum Distribution estimates.
 
-All calculations use 2025 IRS figures (see ``_TAX_YEAR``).  Update the
+All calculations use 2026 IRS figures (see ``_TAX_YEAR``).  Update the
 constants section each year.  Every tool appends ``_IRS_CAVEAT`` reminding
 users to verify with a qualified tax professional.
 
@@ -15,7 +15,7 @@ get_tax_loss_harvesting(http_session)
     and 23.8% (20% LTCG + 3.8% NIIT) rates.
 
 get_contribution_room(http_session, age, filing_status)
-    Displays 2025 IRS annual contribution limits for 401k/403b, IRA, HSA,
+    Displays 2026 IRS annual contribution limits for 401k/403b, IRA, HSA,
     SIMPLE IRA, SEP IRA, and 529 alongside current account balances.  Adjusts
     limits upward for catch-up eligibility at age 50, 55, and 60–63.
 
@@ -50,69 +50,72 @@ from .accounts import get_retirement_accounts, _build_account_type_map, _match_t
 from .spending import get_income_summary
 
 # ===========================================================================
-# IRS CONSTANTS  (2025 — update annually)
+# IRS CONSTANTS  (2026 — update annually)
+#   Sources: Rev. Proc. 2025-32 (brackets, standard deduction, LTCG, gift
+#   exclusion); Notice 2025-67 (retirement-plan limits, §415(c)); Rev. Proc.
+#   2025-19 (HSA). NIIT thresholds are statutory, not inflation-adjusted.
 # ===========================================================================
 
-_TAX_YEAR = 2025
+_TAX_YEAR = 2026
 _IRS_CAVEAT = (
-    "Figures use 2025 IRS limits and tax brackets. "
+    "Figures use 2026 IRS limits and tax brackets. "
     "Consult a qualified tax professional before acting on any estimates."
 )
 
 _CONTRIBUTION_LIMITS = {
-    "401k_403b":              23_500,
-    "401k_403b_catchup_50":   31_000,   # age 50-59 and 64+
-    "401k_403b_catchup_60":   34_750,   # SECURE 2.0 super catch-up age 60-63
-    "ira":                     7_000,
-    "ira_catchup":             8_000,   # age 50+
-    "hsa_individual":          4_300,
-    "hsa_family":              8_550,
+    "401k_403b":              24_500,
+    "401k_403b_catchup_50":   32_500,   # 24,500 + 8,000 (age 50-59 and 64+)
+    "401k_403b_catchup_60":   35_750,   # 24,500 + 11,250 super catch-up age 60-63
+    "ira":                     7_500,
+    "ira_catchup":             8_600,   # 7,500 + 1,100 (age 50+)
+    "hsa_individual":          4_400,
+    "hsa_family":              8_750,
     "hsa_catchup":             1_000,   # age 55+
-    "simple_ira":             16_500,
-    "simple_ira_catchup":     20_000,   # age 50+
+    "simple_ira":             17_000,
+    "simple_ira_catchup":     21_000,   # 17,000 + 4,000 (age 50+)
     "sep_ira_pct":             0.25,
-    "sep_ira_max":            70_000,
-    "gift_tax_exclusion":     19_000,   # per beneficiary (529 / gifting)
+    "sep_ira_max":            72_000,   # §415(c) annual additions limit
+    "gift_tax_exclusion":     19_000,   # per beneficiary (529 / gifting), unchanged
 }
 
-_STD_DEDUCTION = {"single": 15_000, "mfj": 30_000, "hoh": 22_500}
+_STD_DEDUCTION = {"single": 16_100, "mfj": 32_200, "hoh": 24_150}
 
 # Ordinary income brackets — (upper bound of bracket, rate)
 _BRACKETS: dict[str, list[tuple[float, float]]] = {
     "single": [
-        (11_925,       0.10),
-        (48_475,       0.12),
-        (103_350,      0.22),
-        (197_300,      0.24),
-        (250_525,      0.32),
-        (626_350,      0.35),
+        (12_400,       0.10),
+        (50_400,       0.12),
+        (105_700,      0.22),
+        (201_775,      0.24),
+        (256_225,      0.32),
+        (640_600,      0.35),
         (float("inf"), 0.37),
     ],
     "mfj": [
-        (23_850,       0.10),
-        (96_950,       0.12),
-        (206_700,      0.22),
-        (394_600,      0.24),
-        (501_050,      0.32),
-        (751_600,      0.35),
+        (24_800,       0.10),
+        (100_800,      0.12),
+        (211_400,      0.22),
+        (403_550,      0.24),
+        (512_450,      0.32),
+        (768_700,      0.35),
         (float("inf"), 0.37),
     ],
     "hoh": [
-        (17_000,       0.10),
-        (64_850,       0.12),
-        (103_350,      0.22),
-        (197_300,      0.24),
-        (250_500,      0.32),
-        (626_350,      0.35),
+        (17_700,       0.10),
+        (67_450,       0.12),
+        (105_700,      0.22),
+        (201_775,      0.24),
+        (256_200,      0.32),
+        (640_600,      0.35),
         (float("inf"), 0.37),
     ],
 }
 
 # LTCG thresholds — (upper bound of 0% / 15% bracket, rate)
 _LTCG_THRESHOLDS: dict[str, list[tuple[float, float]]] = {
-    "single": [(48_350,  0.0), (533_400,  0.15), (float("inf"), 0.20)],
-    "mfj":    [(96_700,  0.0), (600_050,  0.15), (float("inf"), 0.20)],
-    "hoh":    [(64_750,  0.0), (566_700,  0.15), (float("inf"), 0.20)],
+    "single": [(49_450,  0.0), (545_500,  0.15), (float("inf"), 0.20)],
+    "mfj":    [(98_900,  0.0), (613_700,  0.15), (float("inf"), 0.20)],
+    "hoh":    [(66_200,  0.0), (579_600,  0.15), (float("inf"), 0.20)],
 }
 
 # NIIT (3.8%) kicks in above these thresholds

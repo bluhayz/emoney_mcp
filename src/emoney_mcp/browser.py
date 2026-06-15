@@ -20,7 +20,6 @@ import os
 import sqlite3
 import tempfile
 import threading
-import time
 from pathlib import Path
 
 from curl_cffi.requests import AsyncSession
@@ -103,11 +102,103 @@ def _copy_locked_file(src: Path, dst: str) -> bool:
     return bool(ctypes.windll.kernel32.CopyFileW(str(src), dst, False))
 
 
+# ---------------------------------------------------------------------------
+# macOS Chrome cookie extraction (Keychain + AES-128-CBC)
+# ---------------------------------------------------------------------------
+
+_MACOS_CHROME_COOKIE_SRC = (
+    Path.home() / "Library/Application Support/Google/Chrome/Default/Cookies"
+)
+
+
+def _get_chrome_macos_key() -> bytes | None:
+    """Derive Chrome's AES-128 cookie key on macOS.
+
+    The key is PBKDF2-HMAC-SHA1(password, salt="saltysalt", iterations=1003,
+    dkLen=16) where ``password`` is the "Chrome Safe Storage" secret stored in
+    the login Keychain. Reading it via the ``security`` CLI triggers a one-time
+    Keychain access prompt the user must approve.
+    """
+    try:
+        import subprocess
+        from Cryptodome.Protocol.KDF import PBKDF2
+
+        proc = subprocess.run(
+            ["security", "find-generic-password", "-w",
+             "-s", "Chrome Safe Storage", "-a", "Chrome"],
+            capture_output=True, text=True, timeout=15,
+        )
+        if proc.returncode != 0 or not proc.stdout:
+            return None
+        password = proc.stdout.strip().encode("utf-8")
+        # pycryptodome PBKDF2 defaults to HMAC-SHA1, which is what Chrome uses.
+        return PBKDF2(password, b"saltysalt", dkLen=16, count=1003)
+    except Exception:
+        return None
+
+
+def _decrypt_macos_cookie(enc_val: bytes, key: bytes) -> str | None:
+    """Decrypt a single macOS Chrome ``v10`` cookie value (AES-128-CBC)."""
+    try:
+        from Cryptodome.Cipher import AES
+
+        if enc_val[:3] != b"v10":
+            return None
+        iv = b" " * 16
+        dec = AES.new(key, AES.MODE_CBC, iv).decrypt(enc_val[3:])
+        # Strip PKCS7 padding.
+        pad = dec[-1]
+        if 1 <= pad <= 16:
+            dec = dec[:-pad]
+        # Chrome 80+ prepends a 32-byte SHA256(domain) to the plaintext.
+        dec = dec[32:]
+        for enc in ("ascii", "utf-8"):
+            try:
+                s = dec.decode(enc)
+                return s or None
+            except UnicodeDecodeError:
+                continue
+        return None
+    except Exception:
+        return None
+
+
+def _extract_macos_cookies() -> dict:
+    """Read + decrypt emaplan.com cookies from macOS Chrome. {} on any failure."""
+    if not _MACOS_CHROME_COOKIE_SRC.exists():
+        return {}
+    key = _get_chrome_macos_key()
+    if key is None:
+        return {}
+    try:
+        # Open immutable so Chrome's lock on the live DB doesn't block the read.
+        conn = sqlite3.connect(f"file:{_MACOS_CHROME_COOKIE_SRC}?immutable=1", uri=True)
+        rows = conn.execute(
+            "SELECT name, encrypted_value, host_key FROM cookies "
+            "WHERE host_key LIKE '%emaplan%'"
+        ).fetchall()
+        conn.close()
+    except Exception:
+        return {}
+
+    cookies: dict = {}
+    for name, enc_val, host in rows:
+        val = _decrypt_macos_cookie(bytes(enc_val), key)
+        if val is not None:
+            cookies[name] = val
+    return cookies
+
+
 def extract_chrome_emaplan_cookies() -> dict:
     """
-    Copy Chrome's cookie DB, decrypt emaplan.com cookies, return as dict.
-    Returns {} on any failure.
+    Read Chrome's cookie DB, decrypt emaplan.com cookies, return as dict.
+    Dispatches by platform (macOS Keychain/CBC vs Windows DPAPI/GCM).
+    Returns {} on any failure (caller falls back to nodriver login).
     """
+    import sys
+    if sys.platform == "darwin":
+        return _extract_macos_cookies()
+
     if not _CHROME_COOKIE_SRC.exists():
         return {}
 
@@ -282,7 +373,7 @@ class EmoneyLoginSession:
         asyncio.set_event_loop(loop)
         try:
             loop.run_until_complete(self._async_main())
-        except Exception as exc:
+        except Exception:
             import traceback
             traceback.print_exc()
         finally:
@@ -303,8 +394,8 @@ class EmoneyLoginSession:
             browser_executable_path=chrome if os.path.exists(chrome) else None,
         )
         log("browser started, navigating to login")
-        tab = await browser.get(LOGIN_URL)
-        log(f"on login page")
+        await browser.get(LOGIN_URL)  # navigate (returned tab is unused; tabs are polled below)
+        log("on login page")
 
         # Poll ALL open tabs until one leaves the signin/OAuth flow (up to 10 min)
         for i in range(300):
@@ -398,7 +489,6 @@ class EmoneyLoginSession:
 
     def _read_profile_cookies(self, browser) -> dict:
         """Read cookies from nodriver's temporary Chrome profile (not locked)."""
-        import glob as _glob
 
         # nodriver stores temp profile in a predictable location
         profile_dir = None

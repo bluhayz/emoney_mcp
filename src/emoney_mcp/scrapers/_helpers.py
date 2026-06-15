@@ -108,7 +108,10 @@ async def _get_card(http, card_id: int) -> dict | None:
         # Cache failures with a short TTL so a transient server error doesn't block tools for 5 minutes
         _card_cache[card_id] = (now - _CARD_CACHE_TTL + _CARD_ERROR_TTL, None)
         return None
-    data = resp.json().get("Data")
+    # Some (often undocumented) cards return a JSON `null` or a non-object body.
+    # Guard against that so a probe of unknown card IDs can't crash the caller.
+    payload = resp.json()
+    data = payload.get("Data") if isinstance(payload, dict) else None
     _card_cache[card_id] = (now, data)
     return data
 

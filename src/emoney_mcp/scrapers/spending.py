@@ -2258,7 +2258,7 @@ async def get_upcoming_bills(http_session, days_ahead: int = 30) -> dict:
         if date_str < cutoff or t.get("isDeleted", False):
             continue
         cat_id     = str(t.get("categoryId") or "")
-        cat_name   = categories.get(cat_id, "Uncategorized") if cat_id else "Uncategorized"
+        categories.get(cat_id, "Uncategorized") if cat_id else "Uncategorized"
         cat_id_int = int(cat_id) if cat_id else 0
         # Skip income / excluded (ID-based for robustness)
         if cat_id_int in _INCOME_CATEGORY_IDS or cat_id_int in _EXCLUDE_CATEGORY_IDS:
@@ -2294,11 +2294,9 @@ async def get_upcoming_bills(http_session, days_ahead: int = 30) -> dict:
 
         # Match a cadence
         cadence_name  = None
-        cadence_days  = None
         for cname, cdays, ctol in _CADENCES:
             if abs(avg_gap - cdays) <= ctol:
                 cadence_name = cname
-                cadence_days = cdays
                 break
         if cadence_name is None:
             continue

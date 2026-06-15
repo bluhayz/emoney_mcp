@@ -22,11 +22,10 @@ get_gifting_and_estate_strategy(http_session, num_recipients, filing_status)
 """
 
 import asyncio
-import math
 from datetime import datetime
 
 from .accounts import get_accounts, _calc_investable_assets
-from .spending import _fetch_snb_data, _INCOME_CATEGORIES, _EXCLUDE_CATEGORIES, _sum_income_spending
+from .spending import _fetch_snb_data, _sum_income_spending
 from ._helpers import _get_card
 
 # ---------------------------------------------------------------------------
@@ -180,7 +179,7 @@ async def get_fire_number(
         return accts
 
     investable_assets = _calc_investable_assets(accts)
-    total_liab = accts.get("total_liabilities") or 0
+    accts.get("total_liabilities") or 0
 
     # 12-month spend from SNB
     annual_income, annual_spending = _sum_income_spending(txns) if snb_ok else (0.0, 0.0)
@@ -216,7 +215,7 @@ async def get_fire_number(
     now_year = datetime.now().year
     monthly_needed: dict[str, float | None] = {}
     for target_age_offset in (55, 60, 65):
-        years_left = target_age_offset - (now_year % 100)  # rough heuristic without knowing age
+        target_age_offset - (now_year % 100)  # rough heuristic without knowing age
         # Instead express as years: 15, 20, 25 years from now as illustrative targets
     for label, yr in [("in_15_years", 15), ("in_20_years", 20), ("in_25_years", 25)]:
         if yr > 0 and gap_to_fi > 0:
@@ -411,14 +410,13 @@ async def get_gifting_and_estate_strategy(
     gross_estate    = round(accts.get("total_assets") or 0, 2)
     total_liab      = round(accts.get("total_liabilities") or 0, 2)
     net_estate      = round(gross_estate - total_liab, 2)
-    net_worth       = round(accts.get("net_worth") or 0, 2)
+    round(accts.get("net_worth") or 0, 2)
 
     federal_exemption = _ESTATE_EXEMPTION_MFJ if is_mfj else _ESTATE_EXEMPTION_SINGLE
     taxable_estate    = round(max(0, net_estate - federal_exemption), 2)
     est_estate_tax    = round(taxable_estate * _ESTATE_TOP_RATE, 2)
 
     # Annual gift exclusion
-    annual_per_recipient = _ANNUAL_GIFT_EXCLUSION
     # MFJ couples can gift-split: $18k × 2 donors per recipient
     annual_per_recipient_mfj = _ANNUAL_GIFT_EXCLUSION * (2 if is_mfj else 1)
     total_annual_exclusion   = annual_per_recipient_mfj * num_recipients

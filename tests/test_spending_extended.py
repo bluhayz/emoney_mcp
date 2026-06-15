@@ -8,7 +8,7 @@ Tests for v1.0.0 spending tools:
 import sys
 from datetime import datetime, timedelta
 from pathlib import Path
-from unittest.mock import AsyncMock, patch
+from unittest.mock import patch
 
 import pytest
 

@@ -153,7 +153,6 @@ class TestLtcgRate:
 
 def _make_retirement_result(accounts: list) -> dict:
     """Build a mock get_retirement_accounts return value from a list of account dicts."""
-    from emoney_mcp.scrapers.accounts import _build_account_type_map
     total = sum(a["balance"] for a in accounts)
 
     def bucket(kws):
@@ -186,7 +185,6 @@ class TestGetRmdEstimateRothExclusion:
         retirement_result = _make_retirement_result(accounts)
 
         async def mock_get_accounts(_sess):
-            from emoney_mcp.scrapers.accounts import get_accounts as _ga
             return retirement_result
 
         import unittest.mock

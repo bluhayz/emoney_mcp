@@ -90,3 +90,41 @@ class TestSaveCookiesPermissions:
         assert oct(os.stat(session_file).st_mode & 0o777) == "0o600"
 
         importlib.reload(browser)
+
+
+class TestMacOSCookieDecryption:
+    """_decrypt_macos_cookie should round-trip a v10 AES-128-CBC cookie value
+    (the Keychain key derivation is not exercised here — only the cipher)."""
+
+    def _encrypt(self, key: bytes, value: bytes, prefix32: bool) -> bytes:
+        from Cryptodome.Cipher import AES
+        from Cryptodome.Util.Padding import pad
+        body = (b"\x11" * 32 + value) if prefix32 else value
+        iv = b" " * 16
+        ct = AES.new(key, AES.MODE_CBC, iv).encrypt(pad(body, 16))
+        return b"v10" + ct
+
+    def test_roundtrip_short_value(self):
+        from emoney_mcp.browser import _decrypt_macos_cookie
+        key = b"0123456789abcdef"  # 16-byte AES-128 key
+        enc = self._encrypt(key, b"session-token-xyz", prefix32=True)
+        assert _decrypt_macos_cookie(enc, key) == "session-token-xyz"
+
+    def test_roundtrip_long_value(self):
+        from emoney_mcp.browser import _decrypt_macos_cookie
+        key = b"0123456789abcdef"
+        value = b"a" * 200  # spans multiple AES blocks
+        enc = self._encrypt(key, value, prefix32=True)
+        assert _decrypt_macos_cookie(enc, key) == "a" * 200
+
+    def test_non_v10_returns_none(self):
+        from emoney_mcp.browser import _decrypt_macos_cookie
+        assert _decrypt_macos_cookie(b"v11garbage", b"0123456789abcdef") is None
+
+    def test_bad_key_does_not_raise(self):
+        from emoney_mcp.browser import _decrypt_macos_cookie
+        key = b"0123456789abcdef"
+        enc = self._encrypt(key, b"value", prefix32=True)
+        # Wrong key → garbage/padding error → None, never an exception.
+        result = _decrypt_macos_cookie(enc, b"wrongkeywrongkey")
+        assert result is None or isinstance(result, str)

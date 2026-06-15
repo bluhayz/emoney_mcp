@@ -578,3 +578,39 @@ class TestApplyTransactionRule:
             from emoney_mcp.scrapers.transactions import apply_transaction_rule
             result = await apply_transaction_rule(session, rule_id="10")
         assert "error" in result
+
+
+# ===========================================================================
+# raw passthrough gating (EMONEY_DEV) — issue #24
+# ===========================================================================
+
+class TestRawGating:
+
+    @pytest.mark.asyncio
+    async def test_add_rule_omits_raw_by_default(self, monkeypatch):
+        monkeypatch.delenv("EMONEY_DEV", raising=False)
+        session = make_mock_http_session()
+        with _make_csrf_mock({"Success": True, "RuleID": {"Value": "77"}}):
+            from emoney_mcp.scrapers.transactions import add_transaction_rule
+            result = await add_transaction_rule(session, description_contains="X", category_id="1")
+        assert "raw" not in result
+        assert result["success"] is True
+
+    @pytest.mark.asyncio
+    async def test_add_rule_includes_raw_in_dev(self, monkeypatch):
+        monkeypatch.setenv("EMONEY_DEV", "1")
+        session = make_mock_http_session()
+        with _make_csrf_mock({"Success": True, "RuleID": {"Value": "77"}}):
+            from emoney_mcp.scrapers.transactions import add_transaction_rule
+            result = await add_transaction_rule(session, description_contains="X", category_id="1")
+        assert result.get("raw") == {"Success": True, "RuleID": {"Value": "77"}}
+
+    @pytest.mark.asyncio
+    async def test_apply_rule_omits_raw_by_default(self, monkeypatch):
+        monkeypatch.delenv("EMONEY_DEV", raising=False)
+        session = make_mock_http_session()
+        with _make_csrf_mock({"Success": True, "Updated": 7}):
+            from emoney_mcp.scrapers.transactions import apply_transaction_rule
+            result = await apply_transaction_rule(session, rule_id="10")
+        assert "raw" not in result
+        assert result["success"] is True

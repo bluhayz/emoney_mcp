@@ -1,7 +1,7 @@
 """Tests for get_holdings parsing."""
 
 import pytest
-from helpers import load_fixture, make_mock_http_session
+from helpers import make_mock_http_session
 
 
 @pytest.fixture

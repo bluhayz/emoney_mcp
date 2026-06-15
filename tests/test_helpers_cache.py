@@ -267,3 +267,36 @@ class TestGetCardIdCoercion:
         result = await _helpers._get_card(http, None)
         assert result is None
         assert http.get.call_count == 0
+
+
+class TestGetCardNullBody:
+    """_get_card must not crash when a card returns a JSON null or non-object
+    body (seen when probing undocumented card IDs via get_available_cards)."""
+
+    @pytest.mark.asyncio
+    async def test_json_null_body_returns_none(self):
+        from emoney_mcp.scrapers import _helpers
+        _helpers.clear_card_cache()
+        resp = MagicMock()
+        resp.status_code = 200
+        resp.headers = {"content-type": "application/json"}
+        resp.json.return_value = None  # JSON null
+        http = AsyncMock()
+        http.get = AsyncMock(return_value=resp)
+
+        result = await _helpers._get_card(http, 7)
+        assert result is None  # no AttributeError
+
+    @pytest.mark.asyncio
+    async def test_json_list_body_returns_none(self):
+        from emoney_mcp.scrapers import _helpers
+        _helpers.clear_card_cache()
+        resp = MagicMock()
+        resp.status_code = 200
+        resp.headers = {"content-type": "application/json"}
+        resp.json.return_value = [1, 2, 3]  # non-object
+        http = AsyncMock()
+        http.get = AsyncMock(return_value=resp)
+
+        result = await _helpers._get_card(http, 7)
+        assert result is None

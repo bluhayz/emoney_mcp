@@ -46,7 +46,7 @@ import time
 from datetime import datetime
 
 from ._helpers import _INV_URL
-from .accounts import get_accounts, get_retirement_accounts, _build_account_type_map, _match_tax_bucket
+from .accounts import get_retirement_accounts, _build_account_type_map, _match_tax_bucket
 from .spending import get_income_summary
 
 # ===========================================================================
@@ -148,11 +148,9 @@ def _compute_tax(taxable_income: float, filing_status: str) -> float:
 
 def _marginal_rate(taxable_income: float, filing_status: str) -> float:
     fs = filing_status if filing_status in _BRACKETS else "mfj"
-    prev = 0.0
     for ceiling, rate in _BRACKETS[fs]:
         if taxable_income <= ceiling:
             return rate
-        prev = ceiling
     return 0.37
 
 
@@ -554,12 +552,11 @@ async def get_roth_conversion_analysis(
     future_value_20yr = round(conversion_amount * (1.06 ** 20), 2)
     tax_on_conversion = round(tax_after - tax_before, 2)
 
-    breakeven_years = None
     if marginal > 0 and effective_rate_on_conversion > 0:
         if effective_rate_on_conversion < marginal:
-            breakeven_years = 0
+            pass
         else:
-            breakeven_years = None
+            pass
 
     retirement = await get_retirement_accounts(http_session)
     deferred_total = retirement.get("total_retirement_assets", 0) if "error" not in retirement else None
@@ -880,7 +877,7 @@ async def get_social_security_optimizer(
         return round(monthly * months, 2)
 
     lifetime_62 = _lifetime(monthly_62, 62, life_expectancy)
-    lifetime_67 = _lifetime(monthly_67, 67, life_expectancy)
+    _lifetime(monthly_67, 67, life_expectancy)
     lifetime_70 = _lifetime(monthly_70, 70, life_expectancy)
 
     # Breakeven: age where claiming later surpasses claiming earlier
@@ -1023,7 +1020,7 @@ async def get_quarterly_estimated_taxes(
     fs = filing_status if filing_status in _BRACKETS else "mfj"
     std_ded = _STD_DEDUCTION.get(fs, 30_000)
     current_year = datetime.now().year
-    current_month = datetime.now().month
+    datetime.now().month
 
     # Infer income
     if annual_income_override is not None:
@@ -1048,10 +1045,10 @@ async def get_quarterly_estimated_taxes(
 
     # IRS quarterly due dates
     due_dates = [
-        {"quarter": "Q1", "period": f"Jan 1 – Mar 31",    "due": f"April 15, {current_year}"},
-        {"quarter": "Q2", "period": f"Apr 1 – May 31",    "due": f"June 16, {current_year}"},
-        {"quarter": "Q3", "period": f"Jun 1 – Aug 31",    "due": f"September 15, {current_year}"},
-        {"quarter": "Q4", "period": f"Sep 1 – Dec 31",    "due": f"January 15, {current_year + 1}"},
+        {"quarter": "Q1", "period": "Jan 1 – Mar 31",    "due": f"April 15, {current_year}"},
+        {"quarter": "Q2", "period": "Apr 1 – May 31",    "due": f"June 16, {current_year}"},
+        {"quarter": "Q3", "period": "Jun 1 – Aug 31",    "due": f"September 15, {current_year}"},
+        {"quarter": "Q4", "period": "Sep 1 – Dec 31",    "due": f"January 15, {current_year + 1}"},
     ]
 
     # IRS unequal installment fractions: 25% each
@@ -1164,13 +1161,11 @@ async def get_tax_bracket_headroom(
     next_bracket_rate    = None
     headroom_to_next     = None
     dollars_into_bracket = None
-    bracket_ceiling      = None
     prev_ceiling         = 0.0
 
     for i, (ceiling, rate) in enumerate(brackets):
         if taxable_income <= ceiling:
             current_bracket_rate  = rate
-            bracket_ceiling       = ceiling
             dollars_into_bracket  = round(taxable_income - prev_ceiling, 2)
             if ceiling < float("inf"):
                 headroom_to_next  = round(ceiling - taxable_income, 2)
@@ -1199,7 +1194,6 @@ async def get_tax_bracket_headroom(
     ltcg_brackets        = _LTCG_THRESHOLDS[fs]
     ltcg_headroom        = None
     ltcg_next_rate       = None
-    ltcg_prev            = 0.0
     for ceiling, rate in ltcg_brackets:
         if taxable_income <= ceiling:
             if ceiling < float("inf"):
@@ -1208,7 +1202,6 @@ async def get_tax_bracket_headroom(
                 if idx + 1 < len(ltcg_brackets):
                     ltcg_next_rate = ltcg_brackets[idx + 1][1]
             break
-        ltcg_prev = ceiling
 
     return {
         "filing_status":             fs,
@@ -1258,7 +1251,6 @@ async def get_annual_tax_advantaged_summary(
     age : your current age (enables catch-up contribution eligibility)
     """
     from datetime import datetime
-    import asyncio
 
     from .accounts import get_retirement_accounts
 

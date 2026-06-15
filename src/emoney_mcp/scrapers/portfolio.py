@@ -266,7 +266,6 @@ async def get_rebalancing_targets(
     equity_value = 0.0
     bond_value   = 0.0
     cash_value   = data.get("Cash") or 0.0
-    other_value  = 0.0
 
     position_details = []
     for acct in data.get("Accounts", []):

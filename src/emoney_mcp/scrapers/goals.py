@@ -27,7 +27,6 @@ get_financial_health_score(http_session)
 """
 
 import asyncio
-import time
 from datetime import datetime
 
 from ._helpers import _get_card
@@ -202,7 +201,7 @@ async def get_financial_health_score(http_session) -> dict:
     if "error" in accts:
         return accts
 
-    net_worth    = accts.get("net_worth") or 0
+    accts.get("net_worth") or 0
     total_assets = accts.get("total_assets") or 0
     total_liab   = accts.get("total_liabilities") or 0
 

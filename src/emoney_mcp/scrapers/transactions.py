@@ -23,9 +23,22 @@ Rule object shape:
    StartDay, EndDay, UserDescription, CategoryID:{Value,IsValid}}
 """
 
+import os
+
 from ._helpers import BASE_URL
 
 _SPENDING = f"{BASE_URL}/ema/CS/Spending"
+
+
+def _maybe_raw(out: dict, raw) -> dict:
+    """Attach the unprocessed API response only when EMONEY_DEV is set.
+
+    Keeps normal tool output clean and small; exposes the raw Emoney payload
+    for debugging when developing against the live API.
+    """
+    if os.environ.get("EMONEY_DEV"):
+        out["raw"] = raw
+    return out
 
 
 async def _csrf_post(http_session, path: str, data: dict) -> dict | list:
@@ -174,7 +187,6 @@ async def update_transaction_splits(
       }
     Amounts must sum to the transaction total. Negative amounts for expenses.
     """
-    import json
     # Emoney expects a flat form-encoded representation of the array.
     # jQuery serializes [{...},{...}] as transactionSplits[0][Field]=..., etc.
     flat: dict = {}
@@ -284,12 +296,11 @@ async def add_transaction_rule(
     result = await _csrf_post(http_session, "AddRule", flat)
     if isinstance(result, dict) and "error" in result:
         return result
-    return {
+    return _maybe_raw({
         "success": True,
         "description_contains": description_contains,
         "category_id": category_id,
-        "raw": result,
-    }
+    }, result)
 
 
 async def update_transaction_rule(
@@ -372,8 +383,7 @@ async def apply_transaction_rule(
     result = await _csrf_post(http_session, "ApplyRule", data)
     if isinstance(result, dict) and "error" in result:
         return result
-    return {
+    return _maybe_raw({
         "success": True,
         "rule_id": rule_id,
-        "raw": result,
-    }
+    }, result)

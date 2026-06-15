@@ -2,7 +2,19 @@
 
 All notable changes to emoney-mcp are documented here.
 
-## [1.0.5] — 2026-06-15 (current)
+## [1.0.6] — 2026-06-15 (current)
+
+### Security
+
+- **`scrapers/_helpers.py`** — `_get_card` now coerces `card_id` to `int` before building the request URL and returns `None` if coercion fails. Previously a crafted value (e.g. via the user/model-supplied `card_ids` list passed to `explore_emoney_cards`/`get_available_cards`) was interpolated directly into `…/GetCard/{card_id}?…`, allowing path or query injection against the authenticated emaplan.com session (e.g. `"8/../SignOut"`). The guard rejects such input without issuing any HTTP request; valid integer and numeric-string IDs are unaffected.
+- **`browser.py`** — `save_cookies` now hardens permissions on every write: the session directory is set to `0o700` and the cookie file to `0o600` via `os.fchmod`. The mode passed to `os.open` only applies when a file is first created, so a pre-existing session file with looser permissions was never tightened — leaving credential-equivalent session cookies potentially readable by other local users. Guarded for platforms without `os.fchmod` (Windows).
+
+### Tests
+
+- Added `TestGetCardIdCoercion` (4 tests) covering path/query injection rejection, numeric-string acceptance, and `None` handling.
+- Added `TestSaveCookiesPermissions` (2 tests) verifying new-file and pre-existing-file permission tightening (skipped where POSIX perms don't apply).
+
+## [1.0.5] — 2026-06-15
 
 ### Fixed
 

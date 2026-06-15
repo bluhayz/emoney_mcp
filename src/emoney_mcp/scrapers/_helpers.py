@@ -84,6 +84,15 @@ async def _get_card(http, card_id: int) -> dict | None:
 
     Returns ``None`` if the HTTP status is not 200 or the response is not JSON.
     """
+    # Card IDs index a fixed set of numeric Emoney endpoints. Coerce to int so a
+    # crafted value (e.g. via explore_emoney_cards' user/model-supplied card_ids
+    # list) can't inject path or query segments into the request against the
+    # authenticated host (e.g. "8/../SignOut" or "8?foo=bar").
+    try:
+        card_id = int(card_id)
+    except (TypeError, ValueError):
+        return None
+
     now = time.time()
 
     # Return cached data if still fresh

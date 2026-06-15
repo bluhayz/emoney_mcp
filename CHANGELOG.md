@@ -2,11 +2,11 @@
 
 All notable changes to emoney-mcp are documented here.
 
-## [1.0.12] — 2026-06-15 (current)
+## [1.0.13] — 2026-06-15 (current)
 
 ### Changed
 
-- **mypy is now a hard CI gate** (#31) — dropped `continue-on-error` from the mypy step. Fixed the real findings: added `assert data is not None` guards after the `_get_investment_data` error checks in `portfolio.py` (narrows the 6 `union-attr` warnings and is a defensive check), an `assert fi_number is not None` in `retirement.py` (the comparison was safe but mypy couldn't follow the `fi_gap` correlation), `str()`/`float()` coercions in `spending.py` and `tax.py` where `object`-typed JSON values reached `in`/unary-minus, and declared `_csrf_token` in `EmoneyHttpSession.__init__` (removing stale `# type: ignore`s). The Windows-only `ctypes.windll.*` calls carry targeted `# type: ignore[attr-defined]`. The mypy config disables the type-precision noise codes (`return-value`, `arg-type`, `assignment`, `dict-item`, etc.) that fire constantly on a JSON codebase where every dict value is `object`, while keeping the high-signal checks (`union-attr`, `attr-defined`, `operator`, `has-type`).
+- **mypy is now a hard CI gate** (#31) — dropped `continue-on-error` from the mypy step. Fixed the real findings: added `assert data is not None` guards after the `_get_investment_data` error checks in `portfolio.py` (narrows the 6 `union-attr` warnings and is a defensive check), an `assert fi_number is not None` in `retirement.py` (the comparison was safe but mypy couldn't follow the `fi_gap` correlation), `str()`/`float()` coercions in `spending.py` and `tax.py` where `object`-typed JSON values reached `in`/unary-minus, and declared `_csrf_token` in `EmoneyHttpSession.__init__` (removing stale `# type: ignore`s). The Windows-only `ctypes.windll.*` calls carry targeted `# type: ignore[attr-defined]`. The mypy config disables the type-precision noise codes (`return-value`, `arg-type`, `assignment`, `dict-item`, etc.) that fire constantly on a JSON codebase where every dict value is `object`, while keeping the high-signal checks (`union-attr`, `attr-defined`, `operator`, `has-type`), and skips following imports into `nodriver` (whose shipped source has a non-UTF-8 byte that breaks mypy's parser).
 - **`browser.py`, `scrapers/{spending,accounts,planning}.py`** (#33) — replaced the remaining silent `except: pass`/`return {}` swallows in non-cookie paths (`_fetch_snb_account_map`, debt-payoff `math.log`, FIRE projection) with `logging.debug` of the exception type, finishing the diagnostics work started in #26. No silent broad `except: pass` remain in the scrapers.
 
 ### Documentation

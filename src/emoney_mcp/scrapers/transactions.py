@@ -14,8 +14,9 @@ Payload shapes (reverse-engineered from Capstone.Spending.Transactions.js):
   GetAllBankTransactionSplits    {transactionID:{Value}}
   UpdateTransactionSplits    {transactionSplits:[{TransactionSplitID,CategoryID:{Value},SplitAmount,UserDescription},...]}
   AddRule / UpdateRule       {rule:{...ruleObj}, transactionID}
-  ApplyRule                  {rule:{...ruleObj}, transactionID}
+  ApplyRule                  {ruleID, transactionID}
   GetTransactionsByRuleID    {ruleID, filter}
+  GetRules                   {} (empty — just CSRF token)
 
 Rule object shape:
   {RuleID:{Value,IsValid}, DescriptionContains, MinAmount, MaxAmount,
@@ -126,17 +127,35 @@ async def get_transaction_splits(http_session, transaction_id: str) -> dict:
     })
     if isinstance(result, dict) and "error" in result:
         return result
-    # Normalize the response
-    if isinstance(result, dict):
-        splits = result.get("Splits") or result.get("splits") or []
-        total = result.get("Total") or result.get("total")
-        return {
-            "transaction_id": transaction_id,
-            "splits": splits,
-            "total": total,
-            "raw": result,
-        }
-    return {"transaction_id": transaction_id, "raw": result}
+
+    # API returns a list of split objects directly; occasionally wrapped in a dict
+    items: list = (
+        result if isinstance(result, list)
+        else result.get("Splits") or result.get("splits") or []
+        if isinstance(result, dict) else []
+    )
+
+    splits = []
+    total = 0.0
+    for item in items:
+        cat_raw = item.get("CategoryID")
+        cat_id = cat_raw.get("Value") if isinstance(cat_raw, dict) else cat_raw
+        amount = float(item.get("SplitAmount") or 0)
+        total += amount
+        splits.append({
+            "category_id": cat_id,
+            "description": item.get("UserDescription") or item.get("CleanDescription") or item.get("Description"),
+            "original_description": item.get("Description"),
+            "amount": amount,
+        })
+
+    return {
+        "transaction_id": transaction_id,
+        "split_count": len(splits),
+        "is_split": len(splits) > 1,
+        "splits": splits,
+        "total_amount": round(total, 2),
+    }
 
 
 async def update_transaction_splits(
@@ -187,8 +206,15 @@ async def get_transaction_rules(http_session) -> dict:
     Each rule has: rule_id, description_contains, category_id, user_description,
     min_amount, max_amount, start_day, end_day.
     """
-    result = await _csrf_post(http_session, "GetRules", {"filter": ""})
+    # JS sends data:{} — empty payload (just the CSRF token from _csrf_post)
+    result = await _csrf_post(http_session, "GetRules", {})
     if isinstance(result, dict) and "error" in result:
+        # Emoney returns HTTP 500 when there are no rules — treat as empty
+        body = result.get("response_body", "")
+        if "500" in result.get("error", "") and (
+            "unexpected error" in body.lower() or not body
+        ):
+            return {"rules": [], "count": 0, "note": "No categorization rules configured."}
         return result
 
     # API may return a list [{...}, ...] OR a dict {rule_id: {...}, ...}
@@ -250,22 +276,12 @@ async def add_transaction_rule(
     if max_amount is not None:
         rule["MaxAmount"] = str(max_amount)
 
-    # Flatten rule into rule[Field] form that jQuery would produce
-    flat: dict = {}
-    for k, v in rule.items():
-        flat[f"rule[{k.replace('[', '.').replace(']', '')}]"] = v
+    # jQuery encodes {rule: {RuleID: {Value: ""}}} as rule[RuleID][Value]=...
+    flat: dict = {f"rule[{k}]": v for k, v in rule.items()}
     if transaction_id:
         flat["transactionID"] = transaction_id
 
-    # Correct jQuery-style nested form: rule[RuleID][Value] etc.
-    flat2: dict = {}
-    for k, v in rule.items():
-        # k is like "RuleID[Value]" → want "rule[RuleID][Value]"
-        flat2[f"rule[{k}]"] = v
-    if transaction_id:
-        flat2["transactionID"] = transaction_id
-
-    result = await _csrf_post(http_session, "AddRule", flat2)
+    result = await _csrf_post(http_session, "AddRule", flat)
     if isinstance(result, dict) and "error" in result:
         return result
     return {
@@ -344,34 +360,20 @@ async def apply_transaction_rule(
     """
     Apply an existing rule to all matching transactions.
 
+    JS signature: ApplyRule({ruleID, transactionID})
+
     rule_id        — the rule ID (from get_transaction_rules)
-    transaction_id — optional: apply to a specific transaction only
+    transaction_id — optional: scope to a specific transaction
     """
-    rules_result = await get_transaction_rules(http_session)
-    if "error" in rules_result:
-        return rules_result
-    existing = next((r for r in rules_result["rules"] if str(r["rule_id"]) == str(rule_id)), None)
-    if not existing:
-        return {"error": f"Rule {rule_id} not found. Call get_transaction_rules to see available rules."}
-
-    rule_obj = {
-        "RuleID[Value]": str(rule_id),
-        "RuleID[IsValid]": "true",
-        "DescriptionContains": existing["description_contains"] or "",
-        "CategoryID[Value]": str(existing["category_id"] or ""),
-        "CategoryID[IsValid]": "true",
-        "UserDescription": existing["user_description"] or "",
-    }
-    flat: dict = {f"rule[{k}]": v for k, v in rule_obj.items()}
+    data: dict = {"ruleID": str(rule_id)}
     if transaction_id:
-        flat["transactionID"] = transaction_id
+        data["transactionID"] = transaction_id
 
-    result = await _csrf_post(http_session, "ApplyRule", flat)
+    result = await _csrf_post(http_session, "ApplyRule", data)
     if isinstance(result, dict) and "error" in result:
         return result
     return {
         "success": True,
         "rule_id": rule_id,
-        "description": f"Rule '{existing['description_contains']}' applied to matching transactions.",
         "raw": result,
     }

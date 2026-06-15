@@ -249,7 +249,7 @@ wheels = [
 
 [[package]]
 name = "emoney-mcp"
-version = "0.8.3"
+version = "1.0.5"
 source = { editable = "." }
 dependencies = [
     { name = "beautifulsoup4" },

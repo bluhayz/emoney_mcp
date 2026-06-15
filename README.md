@@ -97,7 +97,7 @@ Then point Claude Desktop at your local clone:
 
 ---
 
-## Available tools (76 total)
+## Available tools (82 total)
 
 ### 🏠 Overview & Dashboard
 
@@ -117,6 +117,7 @@ Then point Claude Desktop at your local clone:
 | `get_net_worth_history` | Monthly net worth trend. Parameter: `months` (default 12, max 60) |
 | `get_net_worth_breakdown` | Net worth broken down three ways: by **person** (per household member/joint), by **liquidity** (Liquid/Semi-liquid/Illiquid), and by **tax treatment** (Taxable/Tax-Deferred/Tax-Free) |
 | `get_retirement_accounts` | Aggregates all tax-advantaged accounts — 401k, IRA, Roth IRA, annuities, HSA, 529 — with subtotals by category |
+| `get_client_profile` | Household profile — names, dates of birth, ages, and dependents. Used to auto-populate `birth_year`/`age` for retirement and tax tools |
 
 ### 📈 Investments
 
@@ -140,7 +141,7 @@ Then point Claude Desktop at your local clone:
 |------|-------------|
 | `get_tax_bracket_headroom` | **How much more income before the next bracket?** Shows remaining room in the current ordinary income bracket and LTCG bracket. Infers income automatically if not supplied. Optional: `current_income`, `filing_status` |
 | `get_tax_loss_harvesting` | Identifies positions with unrealized losses in **taxable accounts** suitable for harvesting. Returns losses sorted by magnitude with estimated tax savings at 15%, 20%, and 23.8% (LTCG + NIIT) rates. |
-| `get_contribution_room` | Shows 2025 IRS annual limits for all tax-advantaged accounts (401k, IRA, HSA, SIMPLE IRA, SEP IRA, 529). Adjusts for catch-up contributions by age including the SECURE 2.0 super catch-up (ages 60–63). Parameters: `age`, `filing_status` |
+| `get_contribution_room` | Shows 2026 IRS annual limits for all tax-advantaged accounts (401k, IRA, HSA, SIMPLE IRA, SEP IRA, 529). Adjusts for catch-up contributions by age including the SECURE 2.0 super catch-up (ages 60–63). Parameters: `age`, `filing_status` |
 | `get_roth_conversion_analysis` | Estimates the federal tax cost and long-term benefit of converting pre-tax dollars to Roth. Shows bracket-by-bracket impact, effective rate on conversion, and projected tax-free growth. Required: `conversion_amount`, `current_income`. Optional: `filing_status`, `age` |
 | `get_capital_gains_exposure` | Identifies embedded unrealized gains in taxable accounts and estimates the tax bill if positions were sold today. Applies LTCG rates and NIIT based on income. Optional: `filing_status`, `annual_income` |
 | `get_rmd_estimate` | Estimates Required Minimum Distributions from pre-tax retirement accounts using the IRS Uniform Lifetime Table (RMDs begin at age 73, SECURE 2.0). Returns current-year RMD and a 10-year projected schedule. Required: `birth_year` |
@@ -190,7 +191,7 @@ Then point Claude Desktop at your local clone:
 
 | Tool | Description |
 |------|-------------|
-| `get_gifting_and_estate_strategy` | **Estate tax exposure and gifting capacity.** Federal estate tax snapshot, annual gift exclusion capacity, 529 superfunding opportunity, and action list. Uses 2025 IRS constants. Optional: `num_recipients` (default 2), `filing_status` ('mfj' or 'single') |
+| `get_gifting_and_estate_strategy` | **Estate tax exposure and gifting capacity.** Federal estate tax snapshot, annual gift exclusion capacity, 529 superfunding opportunity, and action list. Uses 2026 IRS constants. Optional: `num_recipients` (default 2), `filing_status` ('mfj' or 'single') |
 
 ### 💰 Spending Analysis (v1.0.0)
 
@@ -212,7 +213,7 @@ Then point Claude Desktop at your local clone:
 
 | Tool | Description |
 |------|-------------|
-| `get_annual_tax_advantaged_summary` | **Annual contribution limits.** Shows 2025 IRS limits for 401k, IRA, HSA, and 529 alongside current balances, catch-up eligibility by age, and key deadlines. Optional: `age` |
+| `get_annual_tax_advantaged_summary` | **Annual contribution limits.** Shows 2026 IRS limits for 401k, IRA, HSA, and 529 alongside current balances, catch-up eligibility by age, and key deadlines. Optional: `age` |
 
 ### ⚖️ Portfolio Analysis
 
@@ -234,6 +235,7 @@ Then point Claude Desktop at your local clone:
 | `get_cash_flow_forecast` | **Recurring vs. discretionary cash flow.** Breaks projected spending into detected fixed recurring charges and estimated discretionary, giving a more structured forecast. Parameter: `months` (1–6, default 3) |
 | `get_income_summary` | Income sources and monthly income trend — paychecks, direct deposits, dividends, interest grouped by source. Parameter: `days` (default 90, max 365) |
 | `get_savings_rate` | Month-by-month savings rate (income minus spending ÷ income). Parameter: `months` (default 6, max 12) |
+| `get_categories` | Full SNB spending-category name→ID map (≈114 categories). Used to look up the `category_id` for `update_transaction` and rules |
 | `search_transactions` | Search transactions by keyword, category, and/or amount range across up to 365 days. Parameters: `query`, `category`, `days`, `min_amount`, `max_amount`, `max_results` (default 100; pass 0 for all) |
 | `get_recurring_charges` | Detects subscriptions and recurring bills by analyzing 120 days of transaction patterns. Returns weekly/monthly/quarterly charges and total estimated monthly recurring spend. |
 | `get_unusual_transactions` | **Anomaly detection.** Flags transactions that are unusually large vs. the merchant's or category's historical average. Parameters: `days` (default 90), `threshold_pct` (default 150%) |
@@ -274,6 +276,9 @@ Then point Claude Desktop at your local clone:
 | `get_features` | Lists all available tools grouped by category with descriptions and example questions |
 | `explore_emoney_cards` | Probes unexplored Emoney CardSwitcher endpoints (cards 5, 6, 7, 10, 12, 14–16) to discover additional data. Optional: `card_ids` list |
 | `get_available_cards` | **Clean card inventory.** Returns a structured inventory of all responding card IDs (1–16 by default) with key names and data-type fingerprints. Optional: `card_ids` list |
+| `get_aggregation_status` | **Account-connection health.** Reports which linked institutions are broken/disconnected and each account's last-updated date — answers "Why is my Chase balance stale?" |
+| `explore_emoney_site` | Dev/discovery crawler — GETs major Emoney pages and mines HTML/JS for API endpoints, form actions, and nav links |
+| `explore_snb_write_endpoints` | Dev/discovery probe of candidate SNB write endpoints |
 | `clear_cache` | **Selective cache invalidation.** Purge card or SNB transaction cache without a full session reset. Parameter: `module` (`'cards'`, `'spending'`, or `'all'`; default `'all'`) |
 
 ---
@@ -422,7 +427,7 @@ All spending tools normalize raw bank descriptions before grouping, so visits to
 
 ## Tax planning notes
 
-Tax calculations use **2025 IRS figures** (brackets, contribution limits, LTCG thresholds). All estimates assume federal tax only and do not include state income tax. Always consult a qualified tax professional before making tax decisions.
+Tax calculations use **2026 IRS figures** (brackets, contribution limits, LTCG thresholds). All estimates assume federal tax only and do not include state income tax. Always consult a qualified tax professional before making tax decisions.
 
 Key assumptions:
 - LTCG rates: 0% / 15% / 20% based on taxable income
@@ -470,7 +475,7 @@ emoney_mcp/scrapers/          ← domain-split scraping package
   ├── investments.py          ←   holdings, performance, transactions
   ├── spending.py             ←   SNB-based cash flow tools + TTL cache
   ├── goals.py                ←   goals, financial summary, health score, monthly review
-  ├── tax.py                  ←   2025 IRS tax planning tools
+  ├── tax.py                  ←   2026 IRS tax planning tools
   ├── retirement.py           ←   runway, withdrawal, net worth projection, run_scenario
   ├── portfolio.py            ←   asset location, rebalancing, card discovery
   ├── planning.py             ←   insurance gap analysis
@@ -488,7 +493,7 @@ emoney_mcp/browser.py         ← session management + nodriver login
 - Two TTL caches (card + SNB) eliminate redundant HTTP calls within a conversation turn; `asyncio.gather()` parallelises independent fetches
 - Session cookies are persisted to `~/.emoney_mcp/session.json` — a stable path that works whether running via `uvx`, PyPI, or local clone
 - The SNB API JWT token is extracted from the Spending page HTML on each call — no separate auth flow required
-- Tax and planning calculations are pure Python — no external API calls, using hardcoded 2025 IRS tables
+- Tax and planning calculations are pure Python — no external API calls, using hardcoded 2026 IRS tables
 - Set `EMONEY_DEV=1` to enable hot-reload of scraper modules without restarting Claude Desktop
 
 ---

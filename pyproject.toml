@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "emoney-mcp"
-version = "1.0.11"
+version = "1.0.12"
 description = "MCP server for Emoney Advisor financial planning"
 readme = "README_PYPI.md"
 requires-python = ">=3.11"
@@ -53,10 +53,17 @@ select = ["F", "E9"]
 [tool.mypy]
 python_version = "3.11"
 ignore_missing_imports = true
-# Pragmatic baseline — type-check the package without forcing full annotations.
+# Pragmatic baseline for a reverse-engineered, JSON-heavy codebase: keep the
+# high-signal checks (None attribute access, undefined names, bad operators)
+# and silence the type-precision noise that comes from untyped JSON dict values
+# (every value is `object`, so heterogeneous dicts trip these codes constantly).
 files = ["src/emoney_mcp"]
 check_untyped_defs = true
 warn_unused_ignores = true
+disable_error_code = [
+    "return-value", "arg-type", "assignment", "dict-item",
+    "var-annotated", "misc", "call-overload", "index",
+]
 
 [tool.hatch.build]
 exclude = [

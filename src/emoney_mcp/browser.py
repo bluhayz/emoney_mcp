@@ -90,14 +90,14 @@ def _get_chrome_aes_key() -> bytes | None:
         blob_in = DATA_BLOB(len(enc_key), p_in)
         blob_out = DATA_BLOB()
 
-        ok = ctypes.windll.crypt32.CryptUnprotectData(
+        ok = ctypes.windll.crypt32.CryptUnprotectData(  # type: ignore[attr-defined]
             ctypes.byref(blob_in), None, None, None, None, 0,
             ctypes.byref(blob_out)
         )
         if not ok:
             return None
         key = ctypes.string_at(blob_out.pbData, blob_out.cbData)
-        ctypes.windll.kernel32.LocalFree(blob_out.pbData)
+        ctypes.windll.kernel32.LocalFree(blob_out.pbData)  # type: ignore[attr-defined]
         return key
     except Exception as e:
         _log.debug("Chrome AES key derivation (Windows) failed: %s", type(e).__name__)
@@ -106,7 +106,7 @@ def _get_chrome_aes_key() -> bytes | None:
 
 def _copy_locked_file(src: Path, dst: str) -> bool:
     """Copy a file that may be locked by another process using CopyFileW."""
-    return bool(ctypes.windll.kernel32.CopyFileW(str(src), dst, False))
+    return bool(ctypes.windll.kernel32.CopyFileW(str(src), dst, False))  # type: ignore[attr-defined]
 
 
 # ---------------------------------------------------------------------------
@@ -277,6 +277,7 @@ def extract_chrome_emaplan_cookies() -> dict:
 class EmoneyHttpSession:
     def __init__(self):
         self._http: AsyncSession | None = None
+        self._csrf_token: str | None = None
 
     def has_cookies(self) -> bool:
         return COOKIE_FILE.exists() and COOKIE_FILE.stat().st_size > 10
@@ -341,7 +342,7 @@ class EmoneyHttpSession:
         from the hidden <input> field.  Result is cached for the session lifetime.
         """
         if getattr(self, "_csrf_token", None):
-            return self._csrf_token        # type: ignore[attr-defined]
+            return self._csrf_token
         import re
         http = await self.get_http()
         resp = await http.get(f"{BASE_URL}/ema/CS/Investments", timeout=20)
@@ -351,12 +352,12 @@ class EmoneyHttpSession:
             resp.text, re.IGNORECASE
         )
         token = (match.group(1) or match.group(2)) if match else ""
-        self._csrf_token = token          # type: ignore[attr-defined]
+        self._csrf_token = token
         return token
 
     def close(self) -> None:
         self._http = None
-        self._csrf_token = None           # type: ignore[attr-defined]
+        self._csrf_token = None
 
 
 # ---------------------------------------------------------------------------

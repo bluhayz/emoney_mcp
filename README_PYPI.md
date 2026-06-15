@@ -164,7 +164,7 @@ Get me a link to the Liquidity Report.
 
 ---
 
-## Available tools (76 total)
+## Available tools (82 total)
 
 ### Overview & Dashboard
 | Tool | What it answers |
@@ -182,6 +182,7 @@ Get me a link to the Liquidity Report.
 | `get_net_worth_history` | Monthly net worth trend (up to 60 months) |
 | `get_net_worth_breakdown` | Net worth by person, liquidity, and tax treatment |
 | `get_retirement_accounts` | All tax-advantaged accounts (401k, IRA, Roth, HSA, 529) with subtotals |
+| `get_client_profile` | Household names, dates of birth, ages, and dependents (auto-fills birth_year/age for other tools) |
 
 ### Investments
 | Tool | What it answers |
@@ -210,6 +211,7 @@ Get me a link to the Liquidity Report.
 | `get_recurring_charges` | Detected subscriptions and recurring bills |
 | `get_unusual_transactions` | **New.** Flag charges unusually large vs. merchant or category historical average |
 | `get_merchant_spending` | **New.** Total spending grouped by normalized merchant name |
+| `get_categories` | Full spending-category name→ID map (look up the `category_id` used when recategorizing) |
 
 ### Goals
 | Tool | What it answers |
@@ -221,7 +223,7 @@ Get me a link to the Liquidity Report.
 |------|----------------|
 | `get_tax_bracket_headroom` | Room remaining in your current bracket before the next threshold |
 | `get_tax_loss_harvesting` | Taxable positions with unrealized losses ranked by size |
-| `get_contribution_room` | 2025 IRS limits for 401k, IRA, HSA, SIMPLE IRA, SEP IRA, 529 |
+| `get_contribution_room` | 2026 IRS limits for 401k, IRA, HSA, SIMPLE IRA, SEP IRA, 529 |
 | `get_roth_conversion_analysis` | Tax cost and long-term benefit of a Roth conversion |
 | `get_capital_gains_exposure` | Estimated tax bill on unrealized gains if sold today |
 | `get_rmd_estimate` | Required Minimum Distribution schedule (10-year projection) |
@@ -291,13 +293,16 @@ Get me a link to the Liquidity Report.
 | `reset_session` | Clear saved session and force a fresh login |
 | `clear_cache` | **New.** Selectively clear card or spending data cache to force fresh data |
 | `get_available_cards` | **New.** Inventory of all responding Emoney data cards with key-type fingerprints |
+| `get_aggregation_status` | **New.** Which linked institutions are broken/disconnected and each account's last-updated date |
+| `get_version` | Installed version, cookie file path, and session status |
 | `get_features` | List all tools with descriptions and example questions |
+| `explore_emoney_cards` · `explore_emoney_site` · `explore_snb_write_endpoints` | Developer/discovery probes for finding new Emoney data sources and endpoints |
 
 ---
 
 ## Tax planning disclaimer
 
-Tax estimates use 2025 IRS figures (brackets, limits, LTCG thresholds) and cover federal tax only. Always consult a qualified tax professional before making tax decisions.
+Tax estimates use 2026 IRS figures (brackets, limits, LTCG thresholds) and cover federal tax only. Always consult a qualified tax professional before making tax decisions.
 
 ---
 

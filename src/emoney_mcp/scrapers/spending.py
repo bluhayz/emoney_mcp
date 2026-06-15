@@ -78,11 +78,14 @@ clear_snb_cache()                — Purges the SNB in-memory cache.
 """
 
 import asyncio
+import logging
 import re
 import time
 from datetime import datetime, timedelta
 
 from ._helpers import BASE_URL, _SNB_API, _get_card, _month_offset
+
+_log = logging.getLogger("emoney_mcp.scrapers.spending")
 
 
 # ---------------------------------------------------------------------------
@@ -459,8 +462,8 @@ async def _fetch_snb_account_map(http_session) -> dict[str, str]:
             }
             _snb_account_cache = (now, account_map)
             return account_map
-    except Exception:
-        pass
+    except Exception as e:
+        _log.debug("SNB account-map fetch failed: %s", type(e).__name__)
     return {}
 
 
@@ -1895,7 +1898,7 @@ async def explore_snb_write_endpoints(http_session) -> dict:
 
         results.append(probe)
 
-    promising = [r for r in results if "EXISTS" in r.get("assessment", "")]
+    promising = [r for r in results if "EXISTS" in str(r.get("assessment", ""))]
     write_capable = [
         r for r in results
         if any(m in (r.get("options_methods") or []) for m in ["PUT", "PATCH", "POST"])

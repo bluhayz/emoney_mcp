@@ -31,9 +31,8 @@ jobs:
       - name: Lint (ruff)
         run: ruff check src/ scripts/ tests/
 
-      - name: Type check (mypy, advisory)
+      - name: Type check (mypy)
         run: mypy src/emoney_mcp
-        continue-on-error: true  # advisory until the existing type errors are triaged
 
       - name: Syntax check (all source files)
         run: |

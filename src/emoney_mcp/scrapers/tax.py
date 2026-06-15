@@ -435,7 +435,8 @@ async def get_year_end_checklist(
 
     # Sort: action_needed first, then opportunity, then done/not_applicable
     _priority_order = {"action_needed": 0, "opportunity": 1, "done": 2, "not_applicable": 3, "skipped": 4}
-    checklist.sort(key=lambda x: (_priority_order.get(x["status"], 9), -x.get("amount", 0)))
+    checklist.sort(key=lambda x: (_priority_order.get(str(x["status"]), 9),
+                                  -float(x.get("amount", 0) or 0)))
 
     return {
         "tax_year":               _TAX_YEAR,

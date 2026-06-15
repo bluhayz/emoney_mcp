@@ -22,11 +22,14 @@ get_gifting_and_estate_strategy(http_session, num_recipients, filing_status)
 """
 
 import asyncio
+import logging
 from datetime import datetime
 
 from .accounts import get_accounts, _calc_investable_assets
 from .spending import _fetch_snb_data, _sum_income_spending
 from ._helpers import _get_card
+
+_log = logging.getLogger("emoney_mcp.scrapers.planning")
 
 # ---------------------------------------------------------------------------
 # 2026 IRS constants used by get_gifting_and_estate_strategy
@@ -208,8 +211,8 @@ async def get_fire_number(
                 years_to_fi = round(n / 12, 1)
                 fi_year = datetime.now().year + int(years_to_fi) + 1
                 fi_date_str = str(fi_year)
-        except Exception:
-            pass
+        except Exception as e:
+            _log.debug("FIRE projection calc failed: %s", type(e).__name__)
 
     # Monthly savings needed to hit FI by target ages
     now_year = datetime.now().year

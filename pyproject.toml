@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "emoney-mcp"
-version = "1.0.13"
+version = "1.0.14"
 description = "MCP server for Emoney Advisor financial planning"
 readme = "README_PYPI.md"
 requires-python = ">=3.11"
@@ -52,6 +52,10 @@ select = ["F", "E9"]
 
 [tool.mypy]
 python_version = "3.11"
+# Analyze as Linux (matching CI) so platform-narrowed branches — e.g. the
+# Windows DPAPI path after `if sys.platform == "darwin": return` — are checked
+# deterministically regardless of the developer's OS.
+platform = "linux"
 ignore_missing_imports = true
 # Pragmatic baseline for a reverse-engineered, JSON-heavy codebase: keep the
 # high-signal checks (None attribute access, undefined names, bad operators)

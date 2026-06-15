@@ -1,6 +1,7 @@
 """Emoney MCP server."""
 
 import importlib
+import inspect
 import json
 import time
 
@@ -1381,347 +1382,266 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
         return [TextContent(type="text", text=json.dumps({"error": str(e), "tool": name}, indent=2))]
 
 
+# ---------------------------------------------------------------------------
+# Tool dispatch registry
+# ---------------------------------------------------------------------------
+#
+# Single source of truth for routing. Each tool maps to a handler taking the raw
+# `arguments` dict and returning a dict (or an awaitable of one). Pure tools use
+# `_passthru`, which resolves the session and forwards converted kwargs to the
+# scraper function (looked up by name at call time so EMONEY_DEV hot-reload keeps
+# working). A few tools with bespoke behaviour reference dedicated wrappers.
+
+_REQ = object()  # sentinel: argument is required
+
+
+def _A(name, conv=str, default=_REQ, *, optional=False):
+    """Declare one argument: name + how to pull/convert it from `arguments`.
+
+    optional=True  -> conv(value) if present and not None, else None
+    default given  -> conv(arguments.get(name, default))
+    neither        -> conv(arguments[name])  (required; KeyError if missing)
+    """
+    return (name, conv, default, optional)
+
+
+def _ints(v):
+    return [int(c) for c in v]
+
+
+def _identity(v):
+    return v
+
+
+def _kwargs(specs, args: dict) -> dict:
+    out = {}
+    for name, conv, default, optional in specs:
+        if optional:
+            out[name] = conv(args[name]) if (name in args and args[name] is not None) else None
+        elif default is _REQ:
+            out[name] = conv(args[name])
+        else:
+            out[name] = conv(args.get(name, default))
+    return out
+
+
+def _passthru(fn_name: str, *specs):
+    """Build a handler that calls scraper.<fn_name>(sess, **converted_kwargs)."""
+    async def handler(arguments: dict):
+        sess, err = await _get_session_or_err()
+        if err:
+            return err
+        fn = getattr(scraper, fn_name)
+        return await fn(sess, **_kwargs(specs, arguments))
+    return handler
+
+
+_DISPATCH = {
+    # ── Overview & dashboards ─────────────────────────────────────────────
+    "get_features":                  lambda a: _get_features(),
+    "get_financial_summary":         _passthru("get_financial_summary"),
+    "get_financial_health_score":    _passthru("get_financial_health_score"),
+    "get_quick_status":              _passthru("get_quick_status"),
+    "get_monthly_review":            _passthru("get_monthly_review"),
+    # ── Balance sheet ─────────────────────────────────────────────────────
+    "get_accounts":                  _passthru("get_accounts"),
+    "get_net_worth":                 lambda a: _get_net_worth(),
+    "get_net_worth_history":         _passthru("get_net_worth_history", _A("months", int, 12)),
+    "get_net_worth_breakdown":       _passthru("get_net_worth_breakdown"),
+    "get_retirement_accounts":       _passthru("get_retirement_accounts"),
+    "get_client_profile":            _passthru("get_client_profile"),
+    "get_aggregation_status":        _passthru("get_aggregation_status"),
+    "get_home_equity":               _passthru("get_home_equity"),
+    # ── Investments ───────────────────────────────────────────────────────
+    "get_holdings":                  _passthru("get_holdings"),
+    "get_asset_allocation":          _passthru("get_asset_allocation"),
+    "get_performance":               _passthru("get_performance"),
+    "get_transactions":              _passthru("get_transactions", _A("days", int, 30),
+                                               _A("account_id", str, optional=True)),
+    "get_capital_gains":             _passthru("get_capital_gains", _A("year", int, optional=True)),
+    "get_asset_location_efficiency": _passthru("get_asset_location_efficiency"),
+    "get_rebalancing_targets":       _passthru("get_rebalancing_targets",
+                                               _A("target_equity_pct", float, 60),
+                                               _A("target_bond_pct", float, 30),
+                                               _A("target_cash_pct", float, 10)),
+    "get_portfolio_concentration":   _passthru("get_portfolio_concentration",
+                                               _A("concentration_threshold_pct", float, 10.0)),
+    "get_net_worth_velocity":        _passthru("get_net_worth_velocity", _A("months", int, 12)),
+    "get_tax_drag_analysis":         _passthru("get_tax_drag_analysis",
+                                               _A("marginal_rate", float, 0.32),
+                                               _A("ltcg_rate", float, 0.15)),
+    # ── Goals ─────────────────────────────────────────────────────────────
+    "get_goals":                     _passthru("get_goals"),
+    "get_college_savings_gap":       _passthru("get_college_savings_gap",
+                                               _A("annual_return", float, 0.06),
+                                               _A("annual_college_inflation", float, 0.05)),
+    # ── Spending & cash flow ──────────────────────────────────────────────
+    "get_spending":                  _passthru("get_spending", _A("months", int, 1)),
+    "get_spending_transactions":     _passthru("get_spending_transactions", _A("days", int, 30),
+                                               _A("max_transactions", int, 100)),
+    "get_spending_trends":           _passthru("get_spending_trends", _A("months", int, 3)),
+    "get_budget_vs_actual":          _passthru("get_budget_vs_actual", _A("months_avg", int, 3)),
+    "get_year_over_year":            _passthru("get_year_over_year"),
+    "get_cash_flow_projection":      _passthru("get_cash_flow_projection", _A("months_ahead", int, 6)),
+    "get_cash_flow_forecast":        _passthru("get_cash_flow_forecast", _A("months", int, 3)),
+    "get_income_summary":            _passthru("get_income_summary", _A("days", int, 90)),
+    "get_savings_rate":              _passthru("get_savings_rate", _A("months", int, 6)),
+    "get_recurring_charges":         _passthru("get_recurring_charges"),
+    "get_unusual_transactions":      _passthru("get_unusual_transactions", _A("days", int, 90),
+                                               _A("threshold_pct", float, 150.0)),
+    "get_merchant_spending":         _passthru("get_merchant_spending", _A("days", int, 365),
+                                               _A("merchant", str, ""), _A("limit", int, 25)),
+    "get_50_30_20_analysis":         _passthru("get_50_30_20_analysis", _A("months", int, 3)),
+    "get_spending_by_account":       _passthru("get_spending_by_account", _A("days", int, 30)),
+    "get_upcoming_bills":            _passthru("get_upcoming_bills", _A("days_ahead", int, 30)),
+    "get_categories":                _passthru("get_categories"),
+    "search_transactions":           _passthru("search_transactions", _A("query", str, ""),
+                                               _A("category", str, ""), _A("days", int, 365),
+                                               _A("min_amount", float, 0),
+                                               _A("max_amount", float, optional=True),
+                                               _A("max_results", int, 100)),
+    # ── Transaction writes & rules ────────────────────────────────────────
+    "update_transaction":            _passthru("update_transaction", _A("transaction_id", str),
+                                               _A("category_id", str, optional=True),
+                                               _A("description", str, optional=True)),
+    "hide_transaction":              _passthru("hide_transaction", _A("transaction_id", str),
+                                               _A("hidden", bool, True)),
+    "get_transaction_splits":        _passthru("get_transaction_splits", _A("transaction_id", str)),
+    "update_transaction_splits":     _passthru("update_transaction_splits",
+                                               _A("transaction_splits", _identity)),
+    "get_transaction_rules":         _passthru("get_transaction_rules"),
+    "add_transaction_rule":          _passthru("add_transaction_rule",
+                                               _A("description_contains", str),
+                                               _A("category_id", str),
+                                               _A("user_description", str, optional=True),
+                                               _A("transaction_id", str, optional=True),
+                                               _A("min_amount", float, optional=True),
+                                               _A("max_amount", float, optional=True)),
+    "update_transaction_rule":       _passthru("update_transaction_rule", _A("rule_id", str),
+                                               _A("description_contains", str, optional=True),
+                                               _A("category_id", str, optional=True),
+                                               _A("user_description", str, optional=True),
+                                               _A("min_amount", float, optional=True),
+                                               _A("max_amount", float, optional=True),
+                                               _A("transaction_id", str, optional=True)),
+    "apply_transaction_rule":        _passthru("apply_transaction_rule", _A("rule_id", str),
+                                               _A("transaction_id", str, optional=True)),
+    # ── Reports ───────────────────────────────────────────────────────────
+    "get_reports":                   _passthru("get_reports"),
+    "get_report_url":                _passthru("get_report_url", _A("report_id", str)),
+    # ── Tax planning ──────────────────────────────────────────────────────
+    "get_tax_loss_harvesting":       _passthru("get_tax_loss_harvesting"),
+    "get_contribution_room":         _passthru("get_contribution_room", _A("age", int, optional=True),
+                                               _A("filing_status", str, "mfj")),
+    "get_roth_conversion_analysis":  _passthru("get_roth_conversion_analysis",
+                                               _A("conversion_amount", float),
+                                               _A("current_income", float),
+                                               _A("filing_status", str, "mfj"),
+                                               _A("age", int, optional=True)),
+    "get_capital_gains_exposure":    _passthru("get_capital_gains_exposure",
+                                               _A("filing_status", str, "mfj"),
+                                               _A("annual_income", float, optional=True)),
+    "get_rmd_estimate":              _passthru("get_rmd_estimate", _A("birth_year", int)),
+    "get_tax_bracket_headroom":      _passthru("get_tax_bracket_headroom",
+                                               _A("current_income", float, optional=True),
+                                               _A("filing_status", str, "mfj")),
+    "get_social_security_optimizer": _passthru("get_social_security_optimizer", _A("birth_year", int),
+                                               _A("estimated_monthly_benefit_at_67", float, optional=True),
+                                               _A("filing_status", str, "mfj"),
+                                               _A("spouse_birth_year", int, optional=True),
+                                               _A("spouse_benefit_at_67", float, optional=True),
+                                               _A("life_expectancy", int, 85)),
+    "get_quarterly_estimated_taxes": _passthru("get_quarterly_estimated_taxes",
+                                               _A("filing_status", str, "mfj"),
+                                               _A("annual_income_override", float, optional=True),
+                                               _A("prior_year_tax", float, optional=True),
+                                               _A("expected_withholding", float, optional=True)),
+    "get_year_end_checklist":        _passthru("get_year_end_checklist", _A("age", int, optional=True),
+                                               _A("birth_year", int, optional=True),
+                                               _A("filing_status", str, "mfj"),
+                                               _A("current_income", float, optional=True)),
+    "get_annual_tax_advantaged_summary": _passthru("get_annual_tax_advantaged_summary",
+                                                   _A("age", int, optional=True)),
+    # ── Retirement & long-range ───────────────────────────────────────────
+    "get_retirement_runway":         _passthru("get_retirement_runway",
+                                               _A("annual_spending", float, optional=True),
+                                               _A("return_rate", float, 0.06)),
+    "get_withdrawal_rate_analysis":  _passthru("get_withdrawal_rate_analysis"),
+    "get_net_worth_projection":      _passthru("get_net_worth_projection",
+                                               _A("target_net_worth", float, optional=True),
+                                               _A("annual_return", float, 0.07),
+                                               _A("annual_savings_override", float, optional=True)),
+    "get_debt_payoff_plan":          _passthru("get_debt_payoff_plan",
+                                               _A("extra_monthly_payment", float, 0.0),
+                                               _A("assumed_credit_card_apr", float, 0.22),
+                                               _A("assumed_loan_apr", float, 0.07)),
+    "get_debt_overview":             _passthru("get_debt_overview",
+                                               _A("assumed_mortgage_apr", float, 0.065),
+                                               _A("assumed_cc_apr", float, 0.22),
+                                               _A("assumed_auto_apr", float, 0.07),
+                                               _A("assumed_student_apr", float, 0.055)),
+    "run_monte_carlo_retirement":    _passthru("run_monte_carlo_retirement",
+                                               _A("simulations", int, 1_000), _A("years", int, 30),
+                                               _A("annual_spending", float, optional=True),
+                                               _A("mean_return", float, 0.07), _A("std_dev", float, 0.15),
+                                               _A("inflation_mean", float, 0.03),
+                                               _A("inflation_std", float, 0.01),
+                                               _A("social_security_annual", float, 0.0),
+                                               _A("withdrawal_rate", float, optional=True)),
+    "get_dynamic_withdrawal_guardrails": _passthru("get_dynamic_withdrawal_guardrails",
+                                                   _A("initial_withdrawal_rate", float, 0.05),
+                                                   _A("raise_ceiling_pct", float, 20.0),
+                                                   _A("cut_floor_pct", float, 20.0),
+                                                   _A("raise_guard_pct", float, 20.0),
+                                                   _A("cut_guard_pct", float, 20.0),
+                                                   _A("initial_portfolio_value", float, optional=True),
+                                                   _A("current_annual_withdrawal", float, optional=True)),
+    "run_scenario":                  _passthru("run_scenario",
+                                               _A("monthly_savings_delta", float, 0.0),
+                                               _A("target_net_worth", float, optional=True),
+                                               _A("retirement_age", int, optional=True),
+                                               _A("annual_return_pct", float, optional=True)),
+    "get_fire_number":               _passthru("get_fire_number", _A("swr", float, 0.04),
+                                               _A("annual_return", float, 0.07)),
+    "get_financial_independence_roadmap": _passthru("get_financial_independence_roadmap",
+                                                    _A("current_age", int, optional=True),
+                                                    _A("retirement_age", int, 65)),
+    # ── Planning ──────────────────────────────────────────────────────────
+    "get_insurance_gap_analysis":    _passthru("get_insurance_gap_analysis",
+                                               _A("income_multiple", float, 10.0),
+                                               _A("disability_pct", float, 0.65)),
+    "get_gifting_and_estate_strategy": _passthru("get_gifting_and_estate_strategy",
+                                                 _A("num_recipients", int, 2),
+                                                 _A("filing_status", str, "mfj")),
+    # ── Discovery / debug / session ───────────────────────────────────────
+    "explore_emoney_site":           _passthru("explore_emoney_site"),
+    "explore_snb_write_endpoints":   _passthru("explore_snb_write_endpoints"),
+    "explore_emoney_cards":          _passthru("explore_emoney_cards", _A("card_ids", _ints, optional=True)),
+    "get_available_cards":           _passthru("get_available_cards", _A("card_ids", _ints, optional=True)),
+    "get_version":                   lambda a: _get_version(),
+    "sync_chrome_session":           lambda a: _sync_chrome_session(),
+    "reset_session":                 lambda a: _reset(),
+    "clear_cache":                   lambda a: _clear_cache(module=a.get("module", "all")),
+}
+
+
 async def _call_tool_inner(name: str, arguments: dict) -> list[TextContent]:
-    # Hot-reload scraper module only in development mode.
-    # In production (the common case) this is skipped — the thin shim adds
-    # no value once the package is installed, and reloading every call adds
-    # measurable overhead.  Set EMONEY_DEV=1 to re-enable hot-reload.
+    # Hot-reload the scraper module only in development mode (EMONEY_DEV=1).
+    # In production this is skipped — the thin shim adds no value once installed
+    # and reloading on every call has measurable overhead. _passthru resolves the
+    # scraper function by name at call time, so reload is picked up.
     import os
     if os.environ.get("EMONEY_DEV"):
         importlib.reload(scraper)
 
-    if name == "get_features":
-        result = _get_features()
-    elif name == "get_financial_summary":
-        result = await _get_financial_summary()
-    elif name == "get_accounts":
-        result = await _get_accounts()
-    elif name == "get_net_worth":
-        result = await _get_net_worth()
-    elif name == "get_net_worth_history":
-        months = int(arguments.get("months", 12))
-        result = await _get_net_worth_history(months=months)
-    elif name == "get_retirement_accounts":
-        result = await _get_retirement_accounts()
-    elif name == "get_holdings":
-        result = await _get_holdings()
-    elif name == "get_asset_allocation":
-        result = await _get_asset_allocation()
-    elif name == "get_performance":
-        result = await _get_performance()
-    elif name == "get_transactions":
-        days = int(arguments.get("days", 30))
-        account_id = arguments.get("account_id")
-        result = await _get_transactions(days=days, account_id=account_id)
-    elif name == "get_goals":
-        result = await _get_goals()
-    elif name == "get_capital_gains":
-        year = arguments.get("year")
-        if year is not None:
-            year = int(year)
-        result = await _get_capital_gains(year=year)
-    elif name == "get_spending":
-        months = int(arguments.get("months", 1))
-        result = await _get_spending(months=months)
-    elif name == "search_transactions":
-        result = await _search_transactions(
-            query=arguments.get("query", ""),
-            category=arguments.get("category", ""),
-            days=int(arguments.get("days", 365)),
-            min_amount=float(arguments.get("min_amount", 0)),
-            max_amount=float(arguments["max_amount"]) if "max_amount" in arguments else None,
-            max_results=int(arguments.get("max_results", 100)),
-        )
-    elif name == "get_quick_status":
-        result = await _get_quick_status()
-    elif name == "get_budget_vs_actual":
-        result = await _get_budget_vs_actual(months_avg=int(arguments.get("months_avg", 3)))
-    elif name == "get_year_over_year":
-        result = await _get_year_over_year()
-    elif name == "get_cash_flow_projection":
-        result = await _get_cash_flow_projection(months_ahead=int(arguments.get("months_ahead", 6)))
-    elif name == "get_recurring_charges":
-        result = await _get_recurring_charges()
-    elif name == "get_net_worth_breakdown":
-        result = await _get_net_worth_breakdown()
-    elif name == "get_spending_trends":
-        months = int(arguments.get("months", 3))
-        result = await _get_spending_trends(months=months)
-    elif name == "get_income_summary":
-        days = int(arguments.get("days", 90))
-        result = await _get_income_summary(days=days)
-    elif name == "get_savings_rate":
-        months = int(arguments.get("months", 6))
-        result = await _get_savings_rate(months=months)
-    elif name == "get_spending_transactions":
-        days = int(arguments.get("days", 30))
-        max_transactions = int(arguments.get("max_transactions", 100))
-        result = await _get_spending_transactions(days=days, max_transactions=max_transactions)
-    elif name == "get_version":
-        result = _get_version()
-    elif name == "sync_chrome_session":
-        result = await _sync_chrome_session()
-    elif name == "reset_session":
-        result = await _reset()
-    # ── Tax planning ──────────────────────────────────────────────────────
-    elif name == "get_tax_loss_harvesting":
-        result = await _get_tax_loss_harvesting()
-    elif name == "get_contribution_room":
-        age = arguments.get("age")
-        if age is not None:
-            age = int(age)
-        result = await _get_contribution_room(
-            age=age,
-            filing_status=arguments.get("filing_status", "mfj"),
-        )
-    elif name == "get_roth_conversion_analysis":
-        result = await _get_roth_conversion_analysis(
-            conversion_amount=float(arguments["conversion_amount"]),
-            current_income=float(arguments["current_income"]),
-            filing_status=arguments.get("filing_status", "mfj"),
-            age=int(arguments["age"]) if "age" in arguments else None,
-        )
-    elif name == "get_capital_gains_exposure":
-        result = await _get_capital_gains_exposure(
-            filing_status=arguments.get("filing_status", "mfj"),
-            annual_income=float(arguments["annual_income"]) if "annual_income" in arguments else None,
-        )
-    elif name == "get_rmd_estimate":
-        result = await _get_rmd_estimate(birth_year=int(arguments["birth_year"]))
-    elif name == "get_tax_bracket_headroom":
-        result = await _get_tax_bracket_headroom(
-            current_income=float(arguments["current_income"]) if "current_income" in arguments else None,
-            filing_status=arguments.get("filing_status", "mfj"),
-        )
-    # ── Retirement planning ───────────────────────────────────────────────
-    elif name == "get_retirement_runway":
-        result = await _get_retirement_runway(
-            annual_spending=float(arguments["annual_spending"]) if "annual_spending" in arguments else None,
-            return_rate=float(arguments.get("return_rate", 0.06)),
-        )
-    elif name == "get_withdrawal_rate_analysis":
-        result = await _get_withdrawal_rate_analysis()
-    elif name == "get_net_worth_projection":
-        result = await _get_net_worth_projection(
-            target_net_worth=float(arguments["target_net_worth"]) if "target_net_worth" in arguments else None,
-            annual_return=float(arguments.get("annual_return", 0.07)),
-            annual_savings_override=float(arguments["annual_savings_override"]) if "annual_savings_override" in arguments else None,
-        )
-    # ── Portfolio analysis ────────────────────────────────────────────────
-    elif name == "get_asset_location_efficiency":
-        result = await _get_asset_location_efficiency()
-    elif name == "get_rebalancing_targets":
-        result = await _get_rebalancing_targets(
-            target_equity_pct=float(arguments.get("target_equity_pct", 60)),
-            target_bond_pct=float(arguments.get("target_bond_pct", 30)),
-            target_cash_pct=float(arguments.get("target_cash_pct", 10)),
-        )
-    elif name == "get_financial_health_score":
-        result = await _get_financial_health_score()
-    elif name == "update_transaction":
-        result = await _update_transaction(
-            transaction_id=arguments["transaction_id"],
-            category_id=arguments.get("category_id"),
-            description=arguments.get("description"),
-        )
-    elif name == "hide_transaction":
-        result = await _hide_transaction(
-            transaction_id=arguments["transaction_id"],
-            hidden=bool(arguments.get("hidden", True)),
-        )
-    elif name == "get_transaction_splits":
-        result = await _get_transaction_splits(transaction_id=arguments["transaction_id"])
-    elif name == "update_transaction_splits":
-        result = await _update_transaction_splits(transaction_splits=arguments["transaction_splits"])
-    elif name == "get_transaction_rules":
-        result = await _get_transaction_rules()
-    elif name == "get_categories":
-        result = await _get_categories()
-    elif name == "add_transaction_rule":
-        result = await _add_transaction_rule(
-            description_contains=arguments["description_contains"],
-            category_id=str(arguments["category_id"]),
-            user_description=arguments.get("user_description"),
-            transaction_id=arguments.get("transaction_id"),
-            min_amount=float(arguments["min_amount"]) if "min_amount" in arguments else None,
-            max_amount=float(arguments["max_amount"]) if "max_amount" in arguments else None,
-        )
-    elif name == "update_transaction_rule":
-        result = await _update_transaction_rule(
-            rule_id=str(arguments["rule_id"]),
-            description_contains=arguments.get("description_contains"),
-            category_id=str(arguments["category_id"]) if "category_id" in arguments else None,
-            user_description=arguments.get("user_description"),
-            min_amount=float(arguments["min_amount"]) if "min_amount" in arguments else None,
-            max_amount=float(arguments["max_amount"]) if "max_amount" in arguments else None,
-            transaction_id=arguments.get("transaction_id"),
-        )
-    elif name == "apply_transaction_rule":
-        result = await _apply_transaction_rule(
-            rule_id=str(arguments["rule_id"]),
-            transaction_id=arguments.get("transaction_id"),
-        )
-    elif name == "get_reports":
-        result = await _get_reports()
-    elif name == "get_report_url":
-        result = await _get_report_url(report_id=arguments["report_id"])
-    elif name == "explore_emoney_site":
-        result = await _explore_emoney_site()
-    elif name == "explore_snb_write_endpoints":
-        result = await _explore_snb_write_endpoints()
-    elif name == "explore_emoney_cards":
-        card_ids = arguments.get("card_ids")
-        if card_ids is not None:
-            card_ids = [int(c) for c in card_ids]
-        result = await _explore_emoney_cards(card_ids=card_ids)
-    elif name == "get_debt_payoff_plan":
-        result = await _get_debt_payoff_plan(
-            extra_monthly_payment=float(arguments.get("extra_monthly_payment", 0.0)),
-            assumed_credit_card_apr=float(arguments.get("assumed_credit_card_apr", 0.22)),
-            assumed_loan_apr=float(arguments.get("assumed_loan_apr", 0.07)),
-        )
-    elif name == "get_college_savings_gap":
-        result = await _get_college_savings_gap(
-            annual_return=float(arguments.get("annual_return", 0.06)),
-            annual_college_inflation=float(arguments.get("annual_college_inflation", 0.05)),
-        )
-    # ── Advanced retirement simulations ──────────────────────────────────
-    elif name == "run_monte_carlo_retirement":
-        result = await _run_monte_carlo_retirement(
-            simulations=int(arguments.get("simulations", 1_000)),
-            years=int(arguments.get("years", 30)),
-            annual_spending=float(arguments["annual_spending"]) if "annual_spending" in arguments else None,
-            mean_return=float(arguments.get("mean_return", 0.07)),
-            std_dev=float(arguments.get("std_dev", 0.15)),
-            inflation_mean=float(arguments.get("inflation_mean", 0.03)),
-            inflation_std=float(arguments.get("inflation_std", 0.01)),
-            social_security_annual=float(arguments.get("social_security_annual", 0.0)),
-            withdrawal_rate=float(arguments["withdrawal_rate"]) if "withdrawal_rate" in arguments else None,
-        )
-    elif name == "get_dynamic_withdrawal_guardrails":
-        result = await _get_dynamic_withdrawal_guardrails(
-            initial_withdrawal_rate=float(arguments.get("initial_withdrawal_rate", 0.05)),
-            raise_ceiling_pct=float(arguments.get("raise_ceiling_pct", 20.0)),
-            cut_floor_pct=float(arguments.get("cut_floor_pct", 20.0)),
-            raise_guard_pct=float(arguments.get("raise_guard_pct", 20.0)),
-            cut_guard_pct=float(arguments.get("cut_guard_pct", 20.0)),
-            initial_portfolio_value=float(arguments["initial_portfolio_value"]) if "initial_portfolio_value" in arguments else None,
-            current_annual_withdrawal=float(arguments["current_annual_withdrawal"]) if "current_annual_withdrawal" in arguments else None,
-        )
-    elif name == "get_social_security_optimizer":
-        result = await _get_social_security_optimizer(
-            birth_year=int(arguments["birth_year"]),
-            estimated_monthly_benefit_at_67=float(arguments["estimated_monthly_benefit_at_67"]) if "estimated_monthly_benefit_at_67" in arguments else None,
-            filing_status=arguments.get("filing_status", "mfj"),
-            spouse_birth_year=int(arguments["spouse_birth_year"]) if "spouse_birth_year" in arguments else None,
-            spouse_benefit_at_67=float(arguments["spouse_benefit_at_67"]) if "spouse_benefit_at_67" in arguments else None,
-            life_expectancy=int(arguments.get("life_expectancy", 85)),
-        )
-    elif name == "get_quarterly_estimated_taxes":
-        result = await _get_quarterly_estimated_taxes(
-            filing_status=arguments.get("filing_status", "mfj"),
-            annual_income_override=float(arguments["annual_income_override"]) if "annual_income_override" in arguments else None,
-            prior_year_tax=float(arguments["prior_year_tax"]) if "prior_year_tax" in arguments else None,
-            expected_withholding=float(arguments["expected_withholding"]) if "expected_withholding" in arguments else None,
-        )
-    # ── v0.8.0 new tools ──────────────────────────────────────────────────
-    elif name == "get_monthly_review":
-        result = await _get_monthly_review()
-    elif name == "get_unusual_transactions":
-        result = await _get_unusual_transactions(
-            days=int(arguments.get("days", 90)),
-            threshold_pct=float(arguments.get("threshold_pct", 150.0)),
-        )
-    elif name == "get_merchant_spending":
-        result = await _get_merchant_spending(
-            days=int(arguments.get("days", 365)),
-            merchant=arguments.get("merchant", ""),
-            limit=int(arguments.get("limit", 25)),
-        )
-    elif name == "get_year_end_checklist":
-        result = await _get_year_end_checklist(
-            age=int(arguments["age"]) if "age" in arguments else None,
-            birth_year=int(arguments["birth_year"]) if "birth_year" in arguments else None,
-            filing_status=arguments.get("filing_status", "mfj"),
-            current_income=float(arguments["current_income"]) if "current_income" in arguments else None,
-        )
-    elif name == "run_scenario":
-        result = await _run_scenario(
-            monthly_savings_delta=float(arguments.get("monthly_savings_delta", 0.0)),
-            target_net_worth=float(arguments["target_net_worth"]) if "target_net_worth" in arguments else None,
-            retirement_age=int(arguments["retirement_age"]) if "retirement_age" in arguments else None,
-            annual_return_pct=float(arguments["annual_return_pct"]) if "annual_return_pct" in arguments else None,
-        )
-    elif name == "get_cash_flow_forecast":
-        result = await _get_cash_flow_forecast(months=int(arguments.get("months", 3)))
-    elif name == "get_insurance_gap_analysis":
-        result = await _get_insurance_gap_analysis(
-            income_multiple=float(arguments.get("income_multiple", 10.0)),
-            disability_pct=float(arguments.get("disability_pct", 0.65)),
-        )
-    # ── v1.0.0 ──────────────────────────────────────────────────────────────
-    elif name == "get_home_equity":
-        result = await _get_home_equity()
-    elif name == "get_fire_number":
-        result = await _get_fire_number(
-            swr=float(arguments.get("swr", 0.04)),
-            annual_return=float(arguments.get("annual_return", 0.07)),
-        )
-    elif name == "get_gifting_and_estate_strategy":
-        result = await _get_gifting_and_estate_strategy(
-            num_recipients=int(arguments.get("num_recipients", 2)),
-            filing_status=str(arguments.get("filing_status", "mfj")),
-        )
-    elif name == "get_debt_overview":
-        result = await _get_debt_overview(
-            assumed_mortgage_apr=float(arguments.get("assumed_mortgage_apr", 0.065)),
-            assumed_cc_apr=float(arguments.get("assumed_cc_apr", 0.22)),
-            assumed_auto_apr=float(arguments.get("assumed_auto_apr", 0.07)),
-            assumed_student_apr=float(arguments.get("assumed_student_apr", 0.055)),
-        )
-    elif name == "get_50_30_20_analysis":
-        result = await _get_50_30_20_analysis(months=int(arguments.get("months", 3)))
-    elif name == "get_spending_by_account":
-        result = await _get_spending_by_account(days=int(arguments.get("days", 30)))
-    elif name == "get_upcoming_bills":
-        result = await _get_upcoming_bills(days_ahead=int(arguments.get("days_ahead", 30)))
-    elif name == "get_portfolio_concentration":
-        result = await _get_portfolio_concentration(
-            concentration_threshold_pct=float(arguments.get("concentration_threshold_pct", 10.0)),
-        )
-    elif name == "get_net_worth_velocity":
-        result = await _get_net_worth_velocity(months=int(arguments.get("months", 12)))
-    elif name == "get_tax_drag_analysis":
-        result = await _get_tax_drag_analysis(
-            marginal_rate=float(arguments.get("marginal_rate", 0.32)),
-            ltcg_rate=float(arguments.get("ltcg_rate", 0.15)),
-        )
-    elif name == "get_financial_independence_roadmap":
-        current_age    = arguments.get("current_age")
-        retirement_age = int(arguments.get("retirement_age", 65))
-        result = await _get_financial_independence_roadmap(
-            current_age=int(current_age) if current_age is not None else None,
-            retirement_age=retirement_age,
-        )
-    elif name == "get_annual_tax_advantaged_summary":
-        age_arg = arguments.get("age")
-        result = await _get_annual_tax_advantaged_summary(
-            age=int(age_arg) if age_arg is not None else None,
-        )
-    elif name == "get_client_profile":
-        result = await _get_client_profile()
-    elif name == "get_aggregation_status":
-        result = await _get_aggregation_status()
-    elif name == "clear_cache":
-        result = _clear_cache(module=arguments.get("module", "all"))
-    elif name == "get_available_cards":
-        card_ids = arguments.get("card_ids")
-        if card_ids is not None:
-            card_ids = [int(c) for c in card_ids]
-        result = await _get_available_cards(card_ids=card_ids)
-    else:
+    try:
+        handler = _DISPATCH[name]
+    except KeyError:
         raise ValueError(f"Unknown tool: {name}")
 
+    result = handler(arguments)
+    if inspect.isawaitable(result):
+        result = await result
     return [TextContent(type="text", text=json.dumps(result, indent=2))]
 
 
@@ -1761,11 +1681,6 @@ async def _get_session_or_err():
 
 # ── Core balance sheet ─────────────────────────────────────────────────────
 
-async def _get_accounts() -> dict:
-    sess, err = await _get_session_or_err()
-    if err:
-        return err
-    return await scraper.get_accounts(sess)
 
 
 async def _get_net_worth() -> dict:
@@ -1782,138 +1697,42 @@ async def _get_net_worth() -> dict:
     }
 
 
-async def _get_net_worth_history(months: int = 12) -> dict:
-    sess, err = await _get_session_or_err()
-    if err:
-        return err
-    return await scraper.get_net_worth_history(sess, months=months)
 
 
-async def _get_retirement_accounts() -> dict:
-    sess, err = await _get_session_or_err()
-    if err:
-        return err
-    return await scraper.get_retirement_accounts(sess)
 
 
 # ── Investments ────────────────────────────────────────────────────────────
 
-async def _get_holdings() -> dict:
-    sess, err = await _get_session_or_err()
-    if err:
-        return err
-    return await scraper.get_holdings(sess)
 
 
-async def _get_asset_allocation() -> dict:
-    sess, err = await _get_session_or_err()
-    if err:
-        return err
-    return await scraper.get_asset_allocation(sess)
 
 
-async def _get_performance() -> dict:
-    sess, err = await _get_session_or_err()
-    if err:
-        return err
-    return await scraper.get_performance(sess)
 
 
-async def _get_transactions(days: int = 30, account_id: str | None = None) -> dict:
-    sess, err = await _get_session_or_err()
-    if err:
-        return err
-    return await scraper.get_transactions(sess, days=days, account_id=account_id)
 
 
-async def _get_capital_gains(year: int | None = None) -> dict:
-    sess, err = await _get_session_or_err()
-    if err:
-        return err
-    return await scraper.get_capital_gains(sess, year=year)
 
 
 # ── Spending ───────────────────────────────────────────────────────────────
 
-async def _get_goals() -> dict:
-    sess, err = await _get_session_or_err()
-    if err:
-        return err
-    return await scraper.get_goals(sess)
 
 
-async def _get_spending(months: int = 1) -> dict:
-    sess, err = await _get_session_or_err()
-    if err:
-        return err
-    return await scraper.get_spending(sess, months=months)
 
 
-async def _get_financial_summary() -> dict:
-    sess, err = await _get_session_or_err()
-    if err:
-        return err
-    return await scraper.get_financial_summary(sess)
 
 
-async def _search_transactions(
-    query: str = "",
-    category: str = "",
-    days: int = 365,
-    min_amount: float = 0.0,
-    max_amount: float | None = None,
-    max_results: int = 100,
-) -> dict:
-    sess, err = await _get_session_or_err()
-    if err:
-        return err
-    return await scraper.search_transactions(
-        sess, query=query, category=category,
-        days=days, min_amount=min_amount, max_amount=max_amount,
-        max_results=max_results,
-    )
 
 
-async def _get_recurring_charges() -> dict:
-    sess, err = await _get_session_or_err()
-    if err:
-        return err
-    return await scraper.get_recurring_charges(sess)
 
 
-async def _get_net_worth_breakdown() -> dict:
-    sess, err = await _get_session_or_err()
-    if err:
-        return err
-    return await scraper.get_net_worth_breakdown(sess)
 
 
-async def _get_spending_trends(months: int = 3) -> dict:
-    sess, err = await _get_session_or_err()
-    if err:
-        return err
-    return await scraper.get_spending_trends(sess, months=months)
 
 
-async def _get_income_summary(days: int = 90) -> dict:
-    sess, err = await _get_session_or_err()
-    if err:
-        return err
-    return await scraper.get_income_summary(sess, days=days)
 
 
-async def _get_savings_rate(months: int = 6) -> dict:
-    sess, err = await _get_session_or_err()
-    if err:
-        return err
-    return await scraper.get_savings_rate(sess, months=months)
 
 
-async def _get_spending_transactions(days: int = 30, max_transactions: int = 100) -> dict:
-    sess, err = await _get_session_or_err()
-    if err:
-        return err
-    return await scraper.get_spending_transactions(sess, days=days, max_transactions=max_transactions)
 
 
 # ── Help ──────────────────────────────────────────────────────────────────
@@ -2266,635 +2085,142 @@ async def _reset() -> dict:
 
 # ── Tax planning ───────────────────────────────────────────────────────────
 
-async def _get_tax_loss_harvesting() -> dict:
-    sess, err = await _get_session_or_err()
-    if err:
-        return err
-    return await scraper.get_tax_loss_harvesting(sess)
 
 
-async def _get_contribution_room(age: int | None = None, filing_status: str = "mfj") -> dict:
-    sess, err = await _get_session_or_err()
-    if err:
-        return err
-    return await scraper.get_contribution_room(sess, age=age, filing_status=filing_status)
 
 
-async def _get_roth_conversion_analysis(
-    conversion_amount: float,
-    current_income: float,
-    filing_status: str = "mfj",
-    age: int | None = None,
-) -> dict:
-    sess, err = await _get_session_or_err()
-    if err:
-        return err
-    return await scraper.get_roth_conversion_analysis(
-        sess,
-        conversion_amount=conversion_amount,
-        current_income=current_income,
-        filing_status=filing_status,
-        age=age,
-    )
 
 
-async def _get_capital_gains_exposure(
-    filing_status: str = "mfj",
-    annual_income: float | None = None,
-) -> dict:
-    sess, err = await _get_session_or_err()
-    if err:
-        return err
-    return await scraper.get_capital_gains_exposure(
-        sess, filing_status=filing_status, annual_income=annual_income
-    )
 
 
-async def _get_rmd_estimate(birth_year: int) -> dict:
-    sess, err = await _get_session_or_err()
-    if err:
-        return err
-    return await scraper.get_rmd_estimate(sess, birth_year=birth_year)
 
 
 # ── Retirement planning ────────────────────────────────────────────────────
 
-async def _get_retirement_runway(
-    annual_spending: float | None = None,
-    return_rate: float = 0.06,
-) -> dict:
-    sess, err = await _get_session_or_err()
-    if err:
-        return err
-    return await scraper.get_retirement_runway(
-        sess, annual_spending=annual_spending, return_rate=return_rate
-    )
 
 
-async def _get_withdrawal_rate_analysis() -> dict:
-    sess, err = await _get_session_or_err()
-    if err:
-        return err
-    return await scraper.get_withdrawal_rate_analysis(sess)
 
 
 # ── Portfolio analysis ─────────────────────────────────────────────────────
 
-async def _get_asset_location_efficiency() -> dict:
-    sess, err = await _get_session_or_err()
-    if err:
-        return err
-    return await scraper.get_asset_location_efficiency(sess)
 
 
-async def _get_rebalancing_targets(
-    target_equity_pct: float = 60.0,
-    target_bond_pct:   float = 30.0,
-    target_cash_pct:   float = 10.0,
-) -> dict:
-    sess, err = await _get_session_or_err()
-    if err:
-        return err
-    return await scraper.get_rebalancing_targets(
-        sess,
-        target_equity_pct=target_equity_pct,
-        target_bond_pct=target_bond_pct,
-        target_cash_pct=target_cash_pct,
-    )
 
 
-async def _get_financial_health_score() -> dict:
-    sess, err = await _get_session_or_err()
-    if err:
-        return err
-    return await scraper.get_financial_health_score(sess)
 
 
-async def _explore_emoney_site() -> dict:
-    sess, err = await _get_session_or_err()
-    if err:
-        return err
-    return await scraper.explore_emoney_site(sess)
 
 
-async def _explore_snb_write_endpoints() -> dict:
-    sess, err = await _get_session_or_err()
-    if err:
-        return err
-    return await scraper.explore_snb_write_endpoints(sess)
 
 
-async def _explore_emoney_cards(card_ids: list[int] | None = None) -> dict:
-    sess, err = await _get_session_or_err()
-    if err:
-        return err
-    return await scraper.explore_emoney_cards(sess, card_ids=card_ids)
 
 
 # ── New Sprint 2 & 3 handlers ──────────────────────────────────────────────
 
-async def _get_quick_status() -> dict:
-    sess, err = await _get_session_or_err()
-    if err:
-        return err
-    return await scraper.get_quick_status(sess)
 
 
-async def _get_budget_vs_actual(months_avg: int = 3) -> dict:
-    sess, err = await _get_session_or_err()
-    if err:
-        return err
-    return await scraper.get_budget_vs_actual(sess, months_avg=months_avg)
 
 
-async def _get_year_over_year() -> dict:
-    sess, err = await _get_session_or_err()
-    if err:
-        return err
-    return await scraper.get_year_over_year(sess)
 
 
-async def _get_cash_flow_projection(months_ahead: int = 6) -> dict:
-    sess, err = await _get_session_or_err()
-    if err:
-        return err
-    return await scraper.get_cash_flow_projection(sess, months_ahead=months_ahead)
 
 
-async def _get_tax_bracket_headroom(
-    current_income: float | None = None,
-    filing_status: str = "mfj",
-) -> dict:
-    sess, err = await _get_session_or_err()
-    if err:
-        return err
-    return await scraper.get_tax_bracket_headroom(
-        sess, current_income=current_income, filing_status=filing_status
-    )
 
 
-async def _get_net_worth_projection(
-    target_net_worth: float | None = None,
-    annual_return: float = 0.07,
-    annual_savings_override: float | None = None,
-) -> dict:
-    sess, err = await _get_session_or_err()
-    if err:
-        return err
-    return await scraper.get_net_worth_projection(
-        sess,
-        target_net_worth=target_net_worth,
-        annual_return=annual_return,
-        annual_savings_override=annual_savings_override,
-    )
 
 
-async def _get_debt_payoff_plan(
-    extra_monthly_payment: float = 0.0,
-    assumed_credit_card_apr: float = 0.22,
-    assumed_loan_apr: float = 0.07,
-) -> dict:
-    sess, err = await _get_session_or_err()
-    if err:
-        return err
-    return await scraper.get_debt_payoff_plan(
-        sess,
-        extra_monthly_payment=extra_monthly_payment,
-        assumed_credit_card_apr=assumed_credit_card_apr,
-        assumed_loan_apr=assumed_loan_apr,
-    )
 
 
-async def _get_college_savings_gap(
-    annual_return: float = 0.06,
-    annual_college_inflation: float = 0.05,
-) -> dict:
-    sess, err = await _get_session_or_err()
-    if err:
-        return err
-    return await scraper.get_college_savings_gap(
-        sess,
-        annual_return=annual_return,
-        annual_college_inflation=annual_college_inflation,
-    )
 
 
 # ── Advanced retirement simulations ───────────────────────────────────────
 
-async def _run_monte_carlo_retirement(
-    simulations: int = 1_000,
-    years: int = 30,
-    annual_spending: float | None = None,
-    mean_return: float = 0.07,
-    std_dev: float = 0.15,
-    inflation_mean: float = 0.03,
-    inflation_std: float = 0.01,
-    social_security_annual: float = 0.0,
-    withdrawal_rate: float | None = None,
-) -> dict:
-    sess, err = await _get_session_or_err()
-    if err:
-        return err
-    return await scraper.run_monte_carlo_retirement(
-        sess,
-        simulations=simulations,
-        years=years,
-        annual_spending=annual_spending,
-        mean_return=mean_return,
-        std_dev=std_dev,
-        inflation_mean=inflation_mean,
-        inflation_std=inflation_std,
-        social_security_annual=social_security_annual,
-        withdrawal_rate=withdrawal_rate,
-    )
 
 
-async def _get_dynamic_withdrawal_guardrails(
-    initial_withdrawal_rate: float = 0.05,
-    raise_ceiling_pct: float = 20.0,
-    cut_floor_pct: float = 20.0,
-    raise_guard_pct: float = 20.0,
-    cut_guard_pct: float = 20.0,
-    initial_portfolio_value: float | None = None,
-    current_annual_withdrawal: float | None = None,
-) -> dict:
-    sess, err = await _get_session_or_err()
-    if err:
-        return err
-    return await scraper.get_dynamic_withdrawal_guardrails(
-        sess,
-        initial_withdrawal_rate=initial_withdrawal_rate,
-        raise_ceiling_pct=raise_ceiling_pct,
-        cut_floor_pct=cut_floor_pct,
-        raise_guard_pct=raise_guard_pct,
-        cut_guard_pct=cut_guard_pct,
-        initial_portfolio_value=initial_portfolio_value,
-        current_annual_withdrawal=current_annual_withdrawal,
-    )
 
 
-async def _get_social_security_optimizer(
-    birth_year: int,
-    estimated_monthly_benefit_at_67: float | None = None,
-    filing_status: str = "mfj",
-    spouse_birth_year: int | None = None,
-    spouse_benefit_at_67: float | None = None,
-    life_expectancy: int = 85,
-) -> dict:
-    sess, err = await _get_session_or_err()
-    if err:
-        return err
-    return await scraper.get_social_security_optimizer(
-        sess,
-        birth_year=birth_year,
-        estimated_monthly_benefit_at_67=estimated_monthly_benefit_at_67,
-        filing_status=filing_status,
-        spouse_birth_year=spouse_birth_year,
-        spouse_benefit_at_67=spouse_benefit_at_67,
-        life_expectancy=life_expectancy,
-    )
 
 
-async def _get_quarterly_estimated_taxes(
-    filing_status: str = "mfj",
-    annual_income_override: float | None = None,
-    prior_year_tax: float | None = None,
-    expected_withholding: float | None = None,
-) -> dict:
-    sess, err = await _get_session_or_err()
-    if err:
-        return err
-    return await scraper.get_quarterly_estimated_taxes(
-        sess,
-        filing_status=filing_status,
-        annual_income_override=annual_income_override,
-        prior_year_tax=prior_year_tax,
-        expected_withholding=expected_withholding,
-    )
 
 
 # ── v0.8.0 new tool wrappers ───────────────────────────────────────────────
 
-async def _get_monthly_review() -> dict:
-    sess, err = await _get_session_or_err()
-    if err:
-        return err
-    return await scraper.get_monthly_review(sess)
 
 
-async def _get_unusual_transactions(days: int = 90, threshold_pct: float = 150.0) -> dict:
-    sess, err = await _get_session_or_err()
-    if err:
-        return err
-    return await scraper.get_unusual_transactions(sess, days=days, threshold_pct=threshold_pct)
 
 
-async def _get_merchant_spending(
-    days: int = 365,
-    merchant: str = "",
-    limit: int = 25,
-) -> dict:
-    sess, err = await _get_session_or_err()
-    if err:
-        return err
-    return await scraper.get_merchant_spending(sess, days=days, merchant=merchant, limit=limit)
 
 
-async def _get_year_end_checklist(
-    age: int | None = None,
-    birth_year: int | None = None,
-    filing_status: str = "mfj",
-    current_income: float | None = None,
-) -> dict:
-    sess, err = await _get_session_or_err()
-    if err:
-        return err
-    return await scraper.get_year_end_checklist(
-        sess,
-        age=age,
-        birth_year=birth_year,
-        filing_status=filing_status,
-        current_income=current_income,
-    )
 
 
-async def _run_scenario(
-    monthly_savings_delta: float = 0.0,
-    target_net_worth: float | None = None,
-    retirement_age: int | None = None,
-    annual_return_pct: float | None = None,
-) -> dict:
-    sess, err = await _get_session_or_err()
-    if err:
-        return err
-    return await scraper.run_scenario(
-        sess,
-        monthly_savings_delta=monthly_savings_delta,
-        target_net_worth=target_net_worth,
-        retirement_age=retirement_age,
-        annual_return_pct=annual_return_pct,
-    )
 
 
-async def _get_cash_flow_forecast(months: int = 3) -> dict:
-    sess, err = await _get_session_or_err()
-    if err:
-        return err
-    return await scraper.get_cash_flow_forecast(sess, months=months)
 
 
-async def _get_insurance_gap_analysis(
-    income_multiple: float = 10.0,
-    disability_pct: float = 0.65,
-) -> dict:
-    sess, err = await _get_session_or_err()
-    if err:
-        return err
-    return await scraper.get_insurance_gap_analysis(
-        sess, income_multiple=income_multiple, disability_pct=disability_pct
-    )
 
 
 # ── v1.0.0 private wrappers ─────────────────────────────────────────────────
 
-async def _get_home_equity() -> dict:
-    sess, err = await _get_session_or_err()
-    if err:
-        return err
-    return await scraper.get_home_equity(sess)
 
 
-async def _get_fire_number(swr: float = 0.04, annual_return: float = 0.07) -> dict:
-    sess, err = await _get_session_or_err()
-    if err:
-        return err
-    return await scraper.get_fire_number(sess, swr=swr, annual_return=annual_return)
 
 
-async def _get_gifting_and_estate_strategy(num_recipients: int = 2, filing_status: str = "mfj") -> dict:
-    sess, err = await _get_session_or_err()
-    if err:
-        return err
-    return await scraper.get_gifting_and_estate_strategy(sess, num_recipients=num_recipients, filing_status=filing_status)
 
 
-async def _get_debt_overview(
-    assumed_mortgage_apr: float = 0.065,
-    assumed_cc_apr: float = 0.22,
-    assumed_auto_apr: float = 0.07,
-    assumed_student_apr: float = 0.055,
-) -> dict:
-    sess, err = await _get_session_or_err()
-    if err:
-        return err
-    return await scraper.get_debt_overview(
-        sess,
-        assumed_mortgage_apr=assumed_mortgage_apr,
-        assumed_cc_apr=assumed_cc_apr,
-        assumed_auto_apr=assumed_auto_apr,
-        assumed_student_apr=assumed_student_apr,
-    )
 
 
-async def _get_50_30_20_analysis(months: int = 3) -> dict:
-    sess, err = await _get_session_or_err()
-    if err:
-        return err
-    return await scraper.get_50_30_20_analysis(sess, months=months)
 
 
-async def _get_spending_by_account(days: int = 30) -> dict:
-    sess, err = await _get_session_or_err()
-    if err:
-        return err
-    return await scraper.get_spending_by_account(sess, days=days)
 
 
-async def _get_upcoming_bills(days_ahead: int = 30) -> dict:
-    sess, err = await _get_session_or_err()
-    if err:
-        return err
-    return await scraper.get_upcoming_bills(sess, days_ahead=days_ahead)
 
 
-async def _get_portfolio_concentration(concentration_threshold_pct: float = 10.0) -> dict:
-    sess, err = await _get_session_or_err()
-    if err:
-        return err
-    return await scraper.get_portfolio_concentration(sess, concentration_threshold_pct=concentration_threshold_pct)
 
 
-async def _get_net_worth_velocity(months: int = 12) -> dict:
-    sess, err = await _get_session_or_err()
-    if err:
-        return err
-    return await scraper.get_net_worth_velocity(sess, months=months)
 
 
-async def _get_tax_drag_analysis(marginal_rate: float = 0.32, ltcg_rate: float = 0.15) -> dict:
-    sess, err = await _get_session_or_err()
-    if err:
-        return err
-    return await scraper.get_tax_drag_analysis(sess, marginal_rate=marginal_rate, ltcg_rate=ltcg_rate)
 
 
-async def _get_financial_independence_roadmap(current_age: int | None = None, retirement_age: int = 65) -> dict:
-    sess, err = await _get_session_or_err()
-    if err:
-        return err
-    return await scraper.get_financial_independence_roadmap(sess, current_age=current_age, retirement_age=retirement_age)
 
 
-async def _get_annual_tax_advantaged_summary(age: int | None = None) -> dict:
-    sess, err = await _get_session_or_err()
-    if err:
-        return err
-    return await scraper.get_annual_tax_advantaged_summary(sess, age=age)
 
 
-async def _get_client_profile() -> dict:
-    sess, err = await _get_session_or_err()
-    if err:
-        return err
-    return await scraper.get_client_profile(sess)
 
 
-async def _get_aggregation_status() -> dict:
-    sess, err = await _get_session_or_err()
-    if err:
-        return err
-    return await scraper.get_aggregation_status(sess)
 
 
 def _clear_cache(module: str = "all") -> dict:
     return scraper.clear_cache(module=module)
 
 
-async def _get_available_cards(card_ids: list[int] | None = None) -> dict:
-    sess, err = await _get_session_or_err()
-    if err:
-        return err
-    return await scraper.get_available_cards(sess, card_ids=card_ids)
 
 
 # ── Transaction writes ─────────────────────────────────────────────────────
 
-async def _update_transaction(
-    transaction_id: str,
-    category_id: str | None = None,
-    description: str | None = None,
-) -> dict:
-    sess, err = await _get_session_or_err()
-    if err:
-        return err
-    return await scraper.update_transaction(sess, transaction_id=transaction_id,
-                                            category_id=category_id, description=description)
 
 
-async def _hide_transaction(transaction_id: str, hidden: bool = True) -> dict:
-    sess, err = await _get_session_or_err()
-    if err:
-        return err
-    return await scraper.hide_transaction(sess, transaction_id=transaction_id, hidden=hidden)
 
 
-async def _get_transaction_splits(transaction_id: str) -> dict:
-    sess, err = await _get_session_or_err()
-    if err:
-        return err
-    return await scraper.get_transaction_splits(sess, transaction_id=transaction_id)
 
 
-async def _update_transaction_splits(transaction_splits: list) -> dict:
-    sess, err = await _get_session_or_err()
-    if err:
-        return err
-    return await scraper.update_transaction_splits(sess, transaction_splits=transaction_splits)
 
 
 # ── Rules engine ───────────────────────────────────────────────────────────
 
-async def _get_transaction_rules() -> dict:
-    sess, err = await _get_session_or_err()
-    if err:
-        return err
-    return await scraper.get_transaction_rules(sess)
 
 
-async def _get_categories() -> dict:
-    sess, err = await _get_session_or_err()
-    if err:
-        return err
-    return await scraper.get_categories(sess)
 
 
-async def _add_transaction_rule(
-    description_contains: str,
-    category_id: str,
-    user_description: str | None = None,
-    transaction_id: str | None = None,
-    min_amount: float | None = None,
-    max_amount: float | None = None,
-) -> dict:
-    sess, err = await _get_session_or_err()
-    if err:
-        return err
-    return await scraper.add_transaction_rule(
-        sess,
-        description_contains=description_contains,
-        category_id=category_id,
-        user_description=user_description,
-        transaction_id=transaction_id,
-        min_amount=min_amount,
-        max_amount=max_amount,
-    )
 
 
-async def _update_transaction_rule(
-    rule_id: str,
-    description_contains: str | None = None,
-    category_id: str | None = None,
-    user_description: str | None = None,
-    min_amount: float | None = None,
-    max_amount: float | None = None,
-    transaction_id: str | None = None,
-) -> dict:
-    sess, err = await _get_session_or_err()
-    if err:
-        return err
-    return await scraper.update_transaction_rule(
-        sess,
-        rule_id=rule_id,
-        description_contains=description_contains,
-        category_id=category_id,
-        user_description=user_description,
-        min_amount=min_amount,
-        max_amount=max_amount,
-        transaction_id=transaction_id,
-    )
 
 
-async def _apply_transaction_rule(rule_id: str, transaction_id: str | None = None) -> dict:
-    sess, err = await _get_session_or_err()
-    if err:
-        return err
-    return await scraper.apply_transaction_rule(sess, rule_id=rule_id, transaction_id=transaction_id)
 
 
 # ── Reports ────────────────────────────────────────────────────────────────
 
-async def _get_reports() -> dict:
-    sess, err = await _get_session_or_err()
-    if err:
-        return err
-    return await scraper.get_reports(sess)
 
 
-async def _get_report_url(report_id: str) -> dict:
-    sess, err = await _get_session_or_err()
-    if err:
-        return err
-    return await scraper.get_report_url(sess, report_id=report_id)
 
 
 async def main() -> None:

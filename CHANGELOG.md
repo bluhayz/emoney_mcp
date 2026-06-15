@@ -2,7 +2,15 @@
 
 All notable changes to emoney-mcp are documented here.
 
-## [1.0.7] — 2026-06-15 (current)
+## [1.0.8] — 2026-06-15 (current)
+
+### Changed — server.py dispatch registry (#23)
+
+- Replaced the 81-branch `if/elif` dispatch tree **and** the ~76 near-identical private wrapper functions in `server.py` with a single declarative `_DISPATCH` registry. Pure tools are declared with `_passthru("scraper_fn", _A("arg", conv, default))`; the generic handler resolves the session, converts arguments per their specs, and calls the scraper function (looked up by name at call time, preserving `EMONEY_DEV` hot-reload). Six bespoke tools (`get_net_worth`, `get_features`, `get_version`, `sync_chrome_session`, `reset_session`, `clear_cache`) register a small lambda to their dedicated wrapper.
+- `server.py` shrank from 2,915 to 2,241 lines (−674). Adding a tool now touches 4 locations instead of 6, with no separate wrapper or dispatch branch.
+- Behavior is unchanged: a 24-test characterization suite (`tests/test_server_dispatch.py`) — written against the old dispatch and kept green through the refactor — locks in the exact scraper call and converted kwargs for every argument pattern, plus a **bidirectional drift guard** asserting `list_tools()` and `_DISPATCH` are exactly in sync (a forgotten registry entry now fails CI instead of 404-ing at runtime).
+
+## [1.0.7] — 2026-06-15
 
 ### Fixed
 

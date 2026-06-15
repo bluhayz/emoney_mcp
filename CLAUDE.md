@@ -49,27 +49,43 @@ src/emoney_mcp/
 
 ## Tool Dispatch Chain
 
-Every MCP tool call flows through exactly these steps:
+Dispatch is **registry-driven** (a single `_DISPATCH` dict in `server.py`), not an
+if/elif tree. Every MCP tool call flows through:
 
 ```
 call_tool(name, args)                  # top-level try/except → JSON error on any exception
-  └─ _call_tool_inner(name, args)      # if/elif dispatch tree
-       └─ _<tool_name>()               # private wrapper: get session, call scraper
-            ├─ _get_session_or_err()   # returns (session, None) or (None, error_dict)
-            └─ scraper.<function>(session, ...args)
-                 └─ returns dict → JSON string via TextContent
+  └─ _call_tool_inner(name, args)      # looks up _DISPATCH[name]; raises ValueError if missing
+       └─ handler(args)                # registry handler
+            ├─ pure tools: _passthru("scraper_fn", _A(...), ...)
+            │     ├─ _get_session_or_err()        # (session, None) or (None, error_dict)
+            │     ├─ _kwargs(specs, args)         # pull + convert each argument
+            │     └─ getattr(scraper, fn)(session, **kwargs)   # name lookup → hot-reload safe
+            └─ special tools: a lambda calling a dedicated wrapper
+                  (get_net_worth, get_features, get_version,
+                   sync_chrome_session, reset_session, clear_cache)
+       └─ returns dict → JSON string via TextContent
 ```
 
-**Adding a new tool requires touching 6 locations** (if creating a new module, also add to `scrapers/__init__.py` imports + `__all__` before step 2).
+**Argument specs** — `_A(name, conv=str, default=_REQ, *, optional=False)`:
+- `default` given → `conv(args.get(name, default))`
+- `optional=True` → `conv(args[name])` if present & not None, else `None`
+- neither → `conv(args[name])` (required; `KeyError` → surfaced as an error)
+Special list/identity converters: `_ints` (list→[int]), `_identity` (pass through).
+
+**Adding a new tool now touches 4 locations** (one new file split adds the
+`scrapers/__init__.py` import + `__all__`):
 
 | # | File | What to add |
 |---|------|-------------|
 | 1 | `scrapers/<module>.py` | Implement `async def get_foo(http_session, ...) -> dict` |
 | 2 | `scrapers/__init__.py` | Add to imports and `__all__` |
 | 3 | `scraper.py` | Add to `from .scrapers import (...)` |
-| 4 | `server.py` → `list_tools()` | Add `Tool(name=..., description=..., inputSchema=...)` |
-| 5 | `server.py` → `_call_tool_inner()` | Add `elif name == "get_foo": result = await _get_foo(arg)` |
-| 6 | `server.py` | Add `async def _get_foo(arg): sess, err = await _get_session_or_err(); if err: return err; return await scraper.get_foo(sess, arg)` |
+| 4 | `server.py` → `list_tools()` **and** `_DISPATCH` | Add the `Tool(...)` schema and a registry entry, e.g. `"get_foo": _passthru("get_foo", _A("days", int, 30))` |
+
+A test (`tests/test_server_dispatch.py`) asserts every advertised tool is in
+`_DISPATCH` (and routes), so a forgotten registry entry fails CI rather than
+404-ing at runtime. Bespoke tools register a `lambda a: _my_wrapper(...)` instead
+of `_passthru`.
 
 ---
 

@@ -639,21 +639,24 @@ async def get_net_worth_velocity(http_session, months: int = 12) -> dict:
     if card8 is None:
         return {"error": "Card 8 (net worth history) unavailable. Session may have expired."}
 
-    # Card 8 returns a bare list of net worth values, newest first
-    raw_history = card8 if isinstance(card8, list) else (
-        card8.get("History") or card8.get("NetWorthHistory") or []
-    )
+    # Card 8 is a dict with a History array of net-worth values, oldest first
+    # (newest last); NetWorth holds the current value. Mirror get_net_worth_history
+    # so ordering stays consistent across tools.
+    raw_history = (card8.get("History") if isinstance(card8, dict) else card8) or []
     if not raw_history:
         return {"error": "No net worth history data found in Card 8."}
 
-    # Label each month working backwards from now
+    raw_history = raw_history[-months:]  # keep the most recent N months
+
+    # Label each point; the newest element (last) is the current month (months_ago = 0).
     now = datetime.now()
     labelled = []
-    for i, val in enumerate(raw_history[:months]):
-        month_offset_dt = _month_offset(now, i)
-        labelled.append({"month": month_offset_dt.strftime("%Y-%m"), "net_worth": val})
-
-    labelled.reverse()  # oldest first
+    total = len(raw_history)
+    for i, val in enumerate(raw_history):
+        months_ago = total - 1 - i
+        dt = _month_offset(now, months_ago)
+        labelled.append({"month": dt.strftime("%Y-%m"), "net_worth": val})
+    # raw_history is already oldest-first — no reverse needed.
 
     # Compute month-over-month changes
     history_out = []
@@ -668,7 +671,11 @@ async def get_net_worth_velocity(http_session, months: int = 12) -> dict:
             "change_pct":  change_pct,
         })
 
-    current_nw = round(labelled[-1]["net_worth"], 2)
+    # Prefer the card's authoritative NetWorth field; fall back to the newest point.
+    current_nw = round(
+        (card8.get("NetWorth") if isinstance(card8, dict) else None)
+        or labelled[-1]["net_worth"], 2
+    )
 
     # Rolling averages
     monthly_changes = [h["change"] for h in history_out if h["change"] is not None]

@@ -148,14 +148,18 @@ class TestGetPortfolioConcentration:
 # get_net_worth_velocity
 # ===========================================================================
 
-# Card 8 returns a list of net worth values, newest first
-_NW_HISTORY_GROWING = [
-    1_100_000, 1_080_000, 1_060_000, 1_040_000,
-    1_020_000, 1_000_000, 980_000,  960_000,
-    940_000,   920_000,   900_000,  880_000,
-]  # consistent +$20k/month
+# Card 8 is a dict with a History array (oldest first / newest last) plus
+# the current NetWorth. Mirrors the real GetCard/8 payload shape.
+_NW_HISTORY_GROWING = {
+    "NetWorth": 1_100_000,
+    "History": [
+        880_000,   900_000,   920_000,  940_000,
+        960_000,   980_000,   1_000_000, 1_020_000,
+        1_040_000, 1_060_000, 1_080_000, 1_100_000,
+    ],  # consistent +$20k/month, oldest first
+}
 
-_NW_HISTORY_FLAT = [500_000] * 12
+_NW_HISTORY_FLAT = {"NetWorth": 500_000, "History": [500_000] * 12}
 
 
 class TestGetNetWorthVelocity:
@@ -169,12 +173,29 @@ class TestGetNetWorthVelocity:
         assert result["avg_monthly_gain"] > 0
 
     @pytest.mark.asyncio
-    async def test_current_net_worth_is_last_in_history(self):
+    async def test_current_net_worth_is_newest_in_history(self):
+        """Current net worth must equal the NEWEST point (History[-1] / NetWorth)."""
         session = make_mock_http_session()
         with patch("emoney_mcp.scrapers.portfolio._get_card", return_value=_NW_HISTORY_GROWING):
             from emoney_mcp.scrapers.portfolio import get_net_worth_velocity
             result = await get_net_worth_velocity(session, months=12)
-        assert result["current_net_worth"] == _NW_HISTORY_GROWING[0]
+        assert result["current_net_worth"] == _NW_HISTORY_GROWING["History"][-1]
+        assert result["current_net_worth"] == _NW_HISTORY_GROWING["NetWorth"]
+        # And the last monthly_history row is the current month, with the newest value.
+        assert result["monthly_history"][-1]["net_worth"] == _NW_HISTORY_GROWING["History"][-1]
+
+    @pytest.mark.asyncio
+    async def test_history_is_chronological_oldest_first(self):
+        """monthly_history must run oldest→newest so growth shows as positive gains."""
+        session = make_mock_http_session()
+        with patch("emoney_mcp.scrapers.portfolio._get_card", return_value=_NW_HISTORY_GROWING):
+            from emoney_mcp.scrapers.portfolio import get_net_worth_velocity
+            result = await get_net_worth_velocity(session, months=12)
+        values = [h["net_worth"] for h in result["monthly_history"]]
+        assert values == sorted(values), "History should be oldest-first (ascending for growth)"
+        # Every month-over-month change is the steady +$20k.
+        changes = [h["change"] for h in result["monthly_history"] if h["change"] is not None]
+        assert all(c == 20_000 for c in changes)
 
     @pytest.mark.asyncio
     async def test_monthly_history_length(self):
@@ -182,12 +203,15 @@ class TestGetNetWorthVelocity:
         with patch("emoney_mcp.scrapers.portfolio._get_card", return_value=_NW_HISTORY_GROWING):
             from emoney_mcp.scrapers.portfolio import get_net_worth_velocity
             result = await get_net_worth_velocity(session, months=12)
-        assert len(result["monthly_history"]) == min(12, len(_NW_HISTORY_GROWING))
+        assert len(result["monthly_history"]) == min(12, len(_NW_HISTORY_GROWING["History"]))
 
     @pytest.mark.asyncio
     async def test_trend_accelerating_for_growing(self):
-        # Second half should grow faster than first half for 'accelerating'
-        accel_history = list(range(900_000, 900_000 + 20_000 * 12, 20_000))[::-1]
+        # Oldest-first ascending series → steady growth → 'stable' or 'accelerating'
+        accel_history = {
+            "NetWorth": 900_000 + 20_000 * 11,
+            "History": list(range(900_000, 900_000 + 20_000 * 12, 20_000)),
+        }
         session = make_mock_http_session()
         with patch("emoney_mcp.scrapers.portfolio._get_card", return_value=accel_history):
             from emoney_mcp.scrapers.portfolio import get_net_worth_velocity

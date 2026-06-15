@@ -358,6 +358,16 @@ async def _get_snb_credentials(http_session) -> tuple[str, str]:
     return jwt_token, api_key
 
 
+def _snb_headers(jwt_token: str, api_key: str) -> dict:
+    """Standard request headers for the SNB API (Bearer JWT + apikey)."""
+    return {
+        "Accept":        "application/json, text/plain, */*",
+        "Authorization": f"Bearer {jwt_token}",
+        "apikey":        api_key,
+        "Origin":        BASE_URL,
+    }
+
+
 async def _fetch_snb_raw(http_session) -> tuple[bool, list, dict]:
     """
     Fetch and cache the complete SNB dataset: all transactions + category map.
@@ -385,12 +395,7 @@ async def _fetch_snb_raw(http_session) -> tuple[bool, list, dict]:
         return False, [], {}
 
     http = await http_session.get_http()
-    snb_headers = {
-        "Accept":        "application/json, text/plain, */*",
-        "Authorization": f"Bearer {jwt_token}",
-        "apikey":        api_key,
-        "Origin":        BASE_URL,
-    }
+    snb_headers = _snb_headers(jwt_token, api_key)
 
     # Fetch category map (114 categories)
     categories: dict[str, str] = {}
@@ -442,12 +447,7 @@ async def _fetch_snb_account_map(http_session) -> dict[str, str]:
         return {}
 
     http = await http_session.get_http()
-    snb_headers = {
-        "Accept":        "application/json, text/plain, */*",
-        "Authorization": f"Bearer {jwt_token}",
-        "apikey":        api_key,
-        "Origin":        BASE_URL,
-    }
+    snb_headers = _snb_headers(jwt_token, api_key)
     try:
         resp = await http.get(f"{_SNB_API}/api/values/GetAccounts",
                               headers=snb_headers, timeout=20)
@@ -1810,12 +1810,7 @@ async def explore_snb_write_endpoints(http_session) -> dict:
         return {"error": "Could not retrieve SNB credentials. Try sync_chrome_session first."}
 
     http = await http_session.get_http()
-    headers = {
-        "Accept":        "application/json, text/plain, */*",
-        "Authorization": f"Bearer {jwt_token}",
-        "apikey":        api_key,
-        "Origin":        BASE_URL,
-    }
+    headers = _snb_headers(jwt_token, api_key)
 
     # Grab a real transaction id + category id to use in probe URLs
     sample_txn_id  = None

@@ -282,3 +282,27 @@ class TestGetRmdEstimateRothExclusion:
         result = await get_rmd_estimate(session, birth_year=1955)
 
         assert len(result["projected_rmd_schedule"]) == 10
+
+
+# ---------------------------------------------------------------------------
+# Tax-table staleness nag (#27)
+# ---------------------------------------------------------------------------
+
+class TestTaxYearFreshness:
+    """The IRS brackets/limits in tax.py are hardcoded per year (_TAX_YEAR) and
+    must be refreshed each January. This test fails once the tables fall more
+    than one year behind the wall clock — a loud, well-timed reminder to update
+    _BRACKETS, _CONTRIBUTION_LIMITS, _STD_DEDUCTION, _LTCG_THRESHOLDS, _NIIT_THRESHOLD.
+    A one-year grace is allowed so a not-yet-updated January doesn't break CI."""
+
+    def test_tax_tables_not_more_than_one_year_stale(self):
+        from datetime import datetime
+        from emoney_mcp.scrapers.tax import _TAX_YEAR
+
+        current_year = datetime.now().year
+        assert _TAX_YEAR >= current_year - 1, (
+            f"Tax tables in scrapers/tax.py are for {_TAX_YEAR}, but it is "
+            f"{current_year}. Update _TAX_YEAR and the IRS constants "
+            f"(_BRACKETS, _CONTRIBUTION_LIMITS, _STD_DEDUCTION, _LTCG_THRESHOLDS, "
+            f"_NIIT_THRESHOLD) to {current_year}."
+        )

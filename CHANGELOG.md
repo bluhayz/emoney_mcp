@@ -2,7 +2,23 @@
 
 All notable changes to emoney-mcp are documented here.
 
-## [1.0.8] — 2026-06-15 (current)
+## [1.0.9] — 2026-06-15 (current)
+
+### Changed (Tier 3 cleanup)
+
+- **`scrapers/spending.py`** (#28) — extracted a shared `_snb_headers(jwt_token, api_key)` helper; the SNB `Authorization: Bearer` + `apikey` header block (previously duplicated at three call sites) is now defined once.
+- **`browser.py`** (#26) — replaced silent `except Exception: pass`/`return None` swallows in the cookie/auth paths (Windows DPAPI key, macOS Keychain key + decrypt + DB read, Windows extraction, `load_cookies`) with `logging.debug` calls on a `emoney_mcp.browser` logger. Logs the exception *type* (and at most a cookie name or file path) — never cookie values or tokens — so auth failures are diagnosable instead of "it just didn't work." Benign cleanup `pass` blocks (temp unlink, `browser.stop()`) are left as-is.
+
+### Added
+
+- **`tests/test_tax_math.py`** (#27) — a freshness test that fails once the hardcoded IRS tables (`_TAX_YEAR` in `tax.py`) fall more than one year behind the wall clock, a well-timed reminder to refresh the brackets/limits each January. (Note: the tables are currently for 2025 and should be updated to 2026 — see below.)
+
+### Known issues
+
+- The IRS tax tables in `scrapers/tax.py` are still hardcoded for **2025** (`_TAX_YEAR = 2025`) and are one year stale. Updating `_BRACKETS`, `_CONTRIBUTION_LIMITS`, `_STD_DEDUCTION`, `_LTCG_THRESHOLDS`, and `_NIIT_THRESHOLD` to 2026 figures is pending.
+- Transaction write verification (#19) remains blocked: Emoney's Nexus write backend is still returning `IsNexusAvailable: false` ("Your data is unavailable due to maintenance").
+
+## [1.0.8] — 2026-06-15
 
 ### Changed — server.py dispatch registry (#23)
 

@@ -16,6 +16,7 @@ All subsequent scraping uses curl_cffi (Chrome TLS fingerprint).
 import asyncio
 import ctypes
 import json
+import logging
 import os
 import sqlite3
 import tempfile
@@ -23,6 +24,11 @@ import threading
 from pathlib import Path
 
 from curl_cffi.requests import AsyncSession
+
+# Debug-level logger for the auth/cookie paths. Failures here are non-fatal
+# (the caller falls back to manual login), but logging the exception type makes
+# "it just didn't work" diagnosable. Never log cookie values or tokens.
+_log = logging.getLogger("emoney_mcp.browser")
 
 _SUBDOMAIN = os.getenv("EMONEY_SUBDOMAIN", "wealth")
 BASE_URL = f"https://{_SUBDOMAIN}.emaplan.com"
@@ -93,7 +99,8 @@ def _get_chrome_aes_key() -> bytes | None:
         key = ctypes.string_at(blob_out.pbData, blob_out.cbData)
         ctypes.windll.kernel32.LocalFree(blob_out.pbData)
         return key
-    except Exception:
+    except Exception as e:
+        _log.debug("Chrome AES key derivation (Windows) failed: %s", type(e).__name__)
         return None
 
 
@@ -133,7 +140,8 @@ def _get_chrome_macos_key() -> bytes | None:
         password = proc.stdout.strip().encode("utf-8")
         # pycryptodome PBKDF2 defaults to HMAC-SHA1, which is what Chrome uses.
         return PBKDF2(password, b"saltysalt", dkLen=16, count=1003)
-    except Exception:
+    except Exception as e:
+        _log.debug("Chrome Keychain key derivation (macOS) failed: %s", type(e).__name__)
         return None
 
 
@@ -159,7 +167,8 @@ def _decrypt_macos_cookie(enc_val: bytes, key: bytes) -> str | None:
             except UnicodeDecodeError:
                 continue
         return None
-    except Exception:
+    except Exception as e:
+        _log.debug("macOS cookie decrypt failed: %s", type(e).__name__)
         return None
 
 
@@ -178,7 +187,8 @@ def _extract_macos_cookies() -> dict:
             "WHERE host_key LIKE '%emaplan%'"
         ).fetchall()
         conn.close()
-    except Exception:
+    except Exception as e:
+        _log.debug("macOS cookie DB read failed: %s", type(e).__name__)
         return {}
 
     cookies: dict = {}
@@ -246,11 +256,12 @@ def extract_chrome_emaplan_cookies() -> dict:
                     val = ctypes.string_at(blob_out.pbData, blob_out.cbData).decode()
                     ctypes.windll.kernel32.LocalFree(blob_out.pbData)
                 cookies[name] = val
-            except Exception:
-                pass
+            except Exception as e:
+                _log.debug("Skipping undecryptable cookie %r: %s", name, type(e).__name__)
 
         return cookies
-    except Exception:
+    except Exception as e:
+        _log.debug("Chrome cookie extraction (Windows) failed: %s", type(e).__name__)
         return {}
     finally:
         try:
@@ -274,8 +285,8 @@ class EmoneyHttpSession:
         if COOKIE_FILE.exists():
             try:
                 return json.loads(COOKIE_FILE.read_text())
-            except Exception:
-                pass
+            except Exception as e:
+                _log.debug("Could not read session file %s: %s", COOKIE_FILE, type(e).__name__)
         return {}
 
     def save_cookies(self, cookies: dict) -> None:

@@ -128,3 +128,28 @@ class TestMacOSCookieDecryption:
         # Wrong key → garbage/padding error → None, never an exception.
         result = _decrypt_macos_cookie(enc, b"wrongkeywrongkey")
         assert result is None or isinstance(result, str)
+
+
+class TestAuthDebugLogging:
+    """Silent auth/cookie failures should emit a debug log (not crash), and must
+    never include cookie values or tokens (#26)."""
+
+    def test_load_cookies_logs_on_corrupt_file(self, tmp_path, monkeypatch, caplog):
+        import logging
+        import importlib
+        import emoney_mcp.browser as browser
+
+        session_file = tmp_path / "session.json"
+        session_file.write_text("{ this is not valid json")
+        monkeypatch.setenv("EMONEY_SESSION_FILE", str(session_file))
+        importlib.reload(browser)
+
+        with caplog.at_level(logging.DEBUG, logger="emoney_mcp.browser"):
+            result = browser._http_session.load_cookies()
+
+        assert result == {}  # graceful fallback preserved
+        assert any("session file" in r.message for r in caplog.records)
+        # The raw (invalid) file contents must not be logged.
+        assert all("not valid json" not in r.getMessage() for r in caplog.records)
+
+        importlib.reload(browser)  # restore default env for other tests

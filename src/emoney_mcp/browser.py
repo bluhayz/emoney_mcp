@@ -249,12 +249,12 @@ def extract_chrome_emaplan_cookies() -> dict:
                     p_in = ctypes.create_string_buffer(bytes(enc_val))
                     blob_in = DATA_BLOB(len(enc_val), p_in)
                     blob_out = DATA_BLOB()
-                    ctypes.windll.crypt32.CryptUnprotectData(
+                    ctypes.windll.crypt32.CryptUnprotectData(  # type: ignore[attr-defined]
                         ctypes.byref(blob_in), None, None, None, None, 0,
                         ctypes.byref(blob_out)
                     )
                     val = ctypes.string_at(blob_out.pbData, blob_out.cbData).decode()
-                    ctypes.windll.kernel32.LocalFree(blob_out.pbData)
+                    ctypes.windll.kernel32.LocalFree(blob_out.pbData)  # type: ignore[attr-defined]
                 cookies[name] = val
             except Exception as e:
                 _log.debug("Skipping undecryptable cookie %r: %s", name, type(e).__name__)

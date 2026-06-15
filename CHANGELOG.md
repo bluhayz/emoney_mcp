@@ -2,7 +2,7 @@
 
 All notable changes to emoney-mcp are documented here.
 
-## [1.0.13] — 2026-06-15 (current)
+## [1.0.14] — 2026-06-15 (current)
 
 ### Changed
 

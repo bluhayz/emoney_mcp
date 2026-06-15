@@ -152,6 +152,7 @@ async def get_asset_location_efficiency(http_session) -> dict:
     data, err = await _get_investment_data(http_session)
     if err:
         return err
+    assert data is not None  # err is None ⇒ _get_investment_data returned a dict
 
     total = (data.get("Holdings") or 0) + (data.get("Cash") or 0)
 
@@ -265,6 +266,7 @@ async def get_rebalancing_targets(
     data, err = await _get_investment_data(http_session)
     if err:
         return err
+    assert data is not None  # err is None ⇒ _get_investment_data returned a dict
 
     portfolio_total = (data.get("Holdings") or 0) + (data.get("Cash") or 0)
 
@@ -519,6 +521,7 @@ async def get_portfolio_concentration(
     )
     if err:
         return err
+    assert data is not None  # err is None ⇒ _get_investment_data returned a dict
 
     total_value = 0.0
     all_positions: list[dict] = []
@@ -755,6 +758,7 @@ async def get_tax_drag_analysis(
     data, err = await _get_investment_data(http_session)
     if err:
         return err
+    assert data is not None  # err is None ⇒ _get_investment_data returned a dict
 
     # Estimated distribution yields by asset class (conservative estimates)
     _YIELD_BY_CLASS: dict[str, float] = {

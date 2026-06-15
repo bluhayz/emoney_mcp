@@ -25,7 +25,11 @@ _build_account_type_map(http_session) — {account_name_lower: tax_bucket}
 _match_tax_bucket(name, type_map)     — fuzzy lookup in type_map
 """
 
+import logging
+
 from ._helpers import _get_card
+
+_log = logging.getLogger("emoney_mcp.scrapers.accounts")
 
 # ---------------------------------------------------------------------------
 # Tax-bucket classification map
@@ -581,8 +585,8 @@ async def get_debt_overview(
                     n = -math.log(1 - monthly_rate * balance / min_payment) / math.log(1 + monthly_rate)
                     payoff_months = round(n)
                     payoff_date   = (now + timedelta(days=payoff_months * 30.44)).strftime("%Y-%m")
-                except Exception:
-                    pass
+                except Exception as e:
+                    _log.debug("Debt payoff calc failed (using fallback): %s", type(e).__name__)
 
             debts.append({
                 "name":                  acct.get("name"),

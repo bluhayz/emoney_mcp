@@ -188,10 +188,24 @@ class EmoneyHttpSession:
         return {}
 
     def save_cookies(self, cookies: dict) -> None:
+        # Session cookies are credential-equivalent (anyone who reads them owns
+        # the Emoney session), so restrict access to the owner. The mode passed
+        # to os.open only applies when the file is *created* — an existing file
+        # keeps its old (possibly looser) permissions — so tighten both the
+        # directory and the file explicitly on every write.
         COOKIE_FILE.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            os.chmod(COOKIE_FILE.parent, 0o700)
+        except OSError:
+            pass
         data = json.dumps(cookies, indent=2).encode()
         fd = os.open(str(COOKIE_FILE), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
         try:
+            if hasattr(os, "fchmod"):
+                try:
+                    os.fchmod(fd, 0o600)  # tighten even a pre-existing file
+                except OSError:
+                    pass
             os.write(fd, data)
         finally:
             os.close(fd)

@@ -215,3 +215,55 @@ class TestGetCardErrorTTL:
             await _helpers._get_card(http, 33)
 
         assert http.get.call_count == 1
+
+
+# ---------------------------------------------------------------------------
+# _get_card — card_id coercion (request-path injection guard)
+# ---------------------------------------------------------------------------
+
+class TestGetCardIdCoercion:
+    """card_id must be coerced to int so a crafted value can't inject path/query
+    segments into the authenticated request (defense against malicious card_ids
+    passed to explore_emoney_cards)."""
+
+    @pytest.mark.asyncio
+    async def test_path_injection_card_id_rejected_without_request(self):
+        from emoney_mcp.scrapers import _helpers
+        _helpers.clear_card_cache()
+        http = _make_mock_http(data={"should": "not be fetched"})
+
+        result = await _helpers._get_card(http, "8/../SignOut")
+        assert result is None
+        assert http.get.call_count == 0  # no HTTP request was issued
+
+    @pytest.mark.asyncio
+    async def test_query_injection_card_id_rejected(self):
+        from emoney_mcp.scrapers import _helpers
+        _helpers.clear_card_cache()
+        http = _make_mock_http()
+
+        result = await _helpers._get_card(http, "8?foo=bar")
+        assert result is None
+        assert http.get.call_count == 0
+
+    @pytest.mark.asyncio
+    async def test_numeric_string_card_id_is_accepted(self):
+        from emoney_mcp.scrapers import _helpers
+        _helpers.clear_card_cache()
+        http = _make_mock_http(data={"ok": True})
+
+        result = await _helpers._get_card(http, "13")
+        assert result == {"ok": True}
+        # The URL must contain the clean integer path segment.
+        called_url = http.get.call_args[0][0]
+        assert "/GetCard/13?" in called_url
+
+    @pytest.mark.asyncio
+    async def test_none_card_id_returns_none(self):
+        from emoney_mcp.scrapers import _helpers
+        _helpers.clear_card_cache()
+        http = _make_mock_http()
+
+        result = await _helpers._get_card(http, None)
+        assert result is None
+        assert http.get.call_count == 0

@@ -45,3 +45,48 @@ class TestIsSigninUrl:
 
     def test_spending_is_not_signin(self):
         assert _is_signin_url("https://wealth.emaplan.com/ema/CS/Spending") is False
+
+
+class TestSaveCookiesPermissions:
+    """save_cookies must keep the session file owner-only (0o600) and the
+    directory owner-only (0o700), since session cookies are credential-equivalent.
+    Skipped on platforms without POSIX permission semantics."""
+
+    @pytest.mark.skipif(not hasattr(__import__("os"), "fchmod"),
+                        reason="POSIX file permissions not enforced on this platform")
+    def test_new_file_is_owner_only(self, tmp_path, monkeypatch):
+        import os
+        import importlib
+        import emoney_mcp.browser as browser
+
+        session_file = tmp_path / "nested" / "session.json"
+        monkeypatch.setenv("EMONEY_SESSION_FILE", str(session_file))
+        importlib.reload(browser)
+
+        browser._http_session.save_cookies({"sess": "secret"})
+
+        assert oct(os.stat(browser.COOKIE_FILE).st_mode & 0o777) == "0o600"
+        assert oct(os.stat(browser.COOKIE_FILE.parent).st_mode & 0o777) == "0o700"
+
+        importlib.reload(browser)  # restore module to default env for other tests
+
+    @pytest.mark.skipif(not hasattr(__import__("os"), "fchmod"),
+                        reason="POSIX file permissions not enforced on this platform")
+    def test_preexisting_loose_file_is_tightened(self, tmp_path, monkeypatch):
+        import os
+        import importlib
+        import emoney_mcp.browser as browser
+
+        session_file = tmp_path / "session.json"
+        monkeypatch.setenv("EMONEY_SESSION_FILE", str(session_file))
+        importlib.reload(browser)
+
+        # Simulate a pre-existing world-readable session file.
+        session_file.write_text("{}")
+        os.chmod(session_file, 0o644)
+        assert oct(os.stat(session_file).st_mode & 0o777) == "0o644"
+
+        browser._http_session.save_cookies({"sess": "secret"})
+        assert oct(os.stat(session_file).st_mode & 0o777) == "0o600"
+
+        importlib.reload(browser)

@@ -2,7 +2,21 @@
 
 All notable changes to emoney-mcp are documented here.
 
-## [1.0.3] — 2026-06-14 (current)
+## [1.0.5] — 2026-06-15 (current)
+
+### Fixed
+
+- **`scrapers/portfolio.py`** — `get_net_worth_velocity` read the Card 8 `History` array with the wrong ordering assumption ("newest first" + take first N + label index 0 as the current month). Card 8 is actually a dict whose `History` array is **oldest first / newest last** (same shape `get_net_worth_history` already relied on). The bug **reversed the series**, turning real net-worth growth into a fabricated decline — e.g. reporting current net worth as $6.02M instead of the true $8.47M, an avg "loss" of $611k/month, and projecting **negative net worth** in 12 months when net worth had actually grown ~40% over the period. Now extracts `History` from the dict, keeps the most recent N via `[-months:]`, labels the newest point as the current month, and sources current net worth from the authoritative `NetWorth` field (falling back to the newest history point).
+- **`tests/test_portfolio_extended.py`** — the `_NW_HISTORY_GROWING` fixture was a bare **newest-first** list, which did not match the real Card 8 payload and is why the bug went undetected. Replaced with a realistic Card 8 dict (`NetWorth` + oldest-first `History`). Updated assertions: current net worth must equal the newest point, and `monthly_history` must run chronologically oldest→newest. Added `test_history_is_chronological_oldest_first`.
+
+## [1.0.4] — 2026-06-15
+
+### Fixed
+
+- **`scrapers/transactions.py`** — corrected three transaction/rules bugs found during live testing: `get_transaction_splits` now normalizes the bare-list API response into a clean `{split_count, is_split, splits[], total_amount}` shape (was leaking raw Emoney internals); `get_transaction_rules` sends an empty payload (matching the JS `data:{}`) instead of `filter=""` and treats Emoney's HTTP 500 "no rules" response as an empty result; `apply_transaction_rule` sends the correct `{ruleID, transactionID}` payload instead of a full rule object. Removed dead payload-construction code in `add_transaction_rule`.
+- **`tests/test_transaction_writes.py`** — updated to match corrected behavior (clean splits output, empty GetRules payload, direct ApplyRule payload).
+
+## [1.0.3] — 2026-06-14
 
 ### Fixed — Category classification correctness
 

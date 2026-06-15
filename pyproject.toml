@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "emoney-mcp"
-version = "1.0.12"
+version = "1.0.13"
 description = "MCP server for Emoney Advisor financial planning"
 readme = "README_PYPI.md"
 requires-python = ">=3.11"
@@ -64,6 +64,13 @@ disable_error_code = [
     "return-value", "arg-type", "assignment", "dict-item",
     "var-annotated", "misc", "call-overload", "index",
 ]
+
+# nodriver ships source with a non-UTF-8 byte that breaks mypy's parser; we
+# never type-check third-party code, so don't follow imports into it.
+[[tool.mypy.overrides]]
+module = "nodriver.*"
+follow_imports = "skip"
+ignore_errors = true
 
 [tool.hatch.build]
 exclude = [

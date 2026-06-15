@@ -128,7 +128,12 @@ async def _get_investment_data(http_session) -> tuple[dict | None, dict | None]:
     resp = await http.get(f"{_INV_URL}/GetInvestmentData?_={int(time.time()*1000)}", timeout=30)
     if resp.status_code != 200 or "json" not in resp.headers.get("content-type", ""):
         return None, {"error": f"GetInvestmentData returned {resp.status_code}. Session may have expired."}
-    return resp.json(), None
+    # Guard against a JSON null / non-object body so callers never receive
+    # (None, None) and crash on data.get(...). Same hardening as _get_card.
+    payload = resp.json()
+    if not isinstance(payload, dict):
+        return None, {"error": "GetInvestmentData returned an unexpected (non-object) body."}
+    return payload, None
 
 
 async def get_asset_location_efficiency(http_session) -> dict:

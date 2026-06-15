@@ -306,3 +306,38 @@ class TestGetTaxDragAnalysis:
         for key in ("total_annual_tax_drag_est", "misplaced_positions",
                     "priority_swaps", "assumptions"):
             assert key in result, f"Missing key: {key}"
+
+
+# ---------------------------------------------------------------------------
+# _get_investment_data null-body guard (#30)
+# ---------------------------------------------------------------------------
+
+def _null_body_session():
+    """Mock session whose GetInvestmentData returns HTTP 200 with a JSON null body."""
+    resp = MagicMock()
+    resp.status_code = 200
+    resp.headers = {"content-type": "application/json"}
+    resp.json.return_value = None  # JSON null
+    http = AsyncMock()
+    http.get = AsyncMock(return_value=resp)
+    session = MagicMock()
+    session.get_http = AsyncMock(return_value=http)
+    return session
+
+
+class TestGetInvestmentDataNullBody:
+    """A JSON-null / non-object GetInvestmentData body must yield (None, error),
+    never (None, None) that then crashes callers with AttributeError (#30)."""
+
+    @pytest.mark.asyncio
+    async def test_returns_error_not_none_none(self):
+        from emoney_mcp.scrapers.portfolio import _get_investment_data
+        data, err = await _get_investment_data(_null_body_session())
+        assert data is None
+        assert isinstance(err, dict) and "error" in err
+
+    @pytest.mark.asyncio
+    async def test_consumer_tool_returns_error_not_crash(self):
+        from emoney_mcp.scrapers.portfolio import get_portfolio_concentration
+        result = await get_portfolio_concentration(_null_body_session())
+        assert isinstance(result, dict) and "error" in result

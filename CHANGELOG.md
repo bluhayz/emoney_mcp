@@ -2,7 +2,13 @@
 
 All notable changes to emoney-mcp are documented here.
 
-## [1.0.10] — 2026-06-15 (current)
+## [1.0.11] — 2026-06-15 (current)
+
+### Fixed
+
+- **`scrapers/portfolio.py`** (#30) — `_get_investment_data` could return `(None, None)` when `GetInvestmentData` responded HTTP 200 with a JSON `null`/non-object body, crashing every caller (`get_asset_location_efficiency`, `get_rebalancing_targets`, `get_portfolio_concentration`, `get_tax_loss_harvesting`, `get_capital_gains_exposure`) with `AttributeError` on `data.get(...)`. Same bug class as the `_get_card` fix in v1.0.7. Now guards the response type and returns a clean `(None, error)`. Added regression tests (null body → error dict, consumer tool does not crash). The mypy `union-attr` warnings at the call sites are type-narrowing noise tracked separately in #31.
+
+## [1.0.10] — 2026-06-15
 
 ### Changed — IRS tables updated to 2026 (#29)
 

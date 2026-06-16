@@ -732,15 +732,25 @@ async def get_rmd_estimate(http_session, birth_year: int) -> dict:
     if "error" in retirement:
         return retirement
 
-    breakdown = retirement.get("retirement_breakdown", {})
-    k401_balance = breakdown.get("401k_403b", 0) or 0
-    # ira_roth bucket conflates traditional IRA + Roth IRA; Roth IRAs have no RMD.
-    # Compute traditional-only IRA balance from the individual account list.
+    # Both retirement_breakdown buckets conflate pretax and Roth balances, but
+    # designated Roth accounts have NO RMD (Roth IRAs always; Roth 401(k)/403(b)
+    # starting 2024 under SECURE 2.0). Recompute each pretax balance from the
+    # individual account list, excluding anything whose name/type contains "roth".
+    accounts = retirement.get("retirement_accounts", [])
+
+    def _name_type(a: dict) -> str:
+        return (a.get("name") or "").lower() + " " + (a.get("type") or "").lower()
+
+    k401_balance = sum(
+        a.get("balance", 0) or 0
+        for a in accounts
+        if ("401" in _name_type(a) or "403" in _name_type(a))
+        and "roth" not in _name_type(a)
+    )
     trad_ira_balance = sum(
         a.get("balance", 0) or 0
-        for a in retirement.get("retirement_accounts", [])
-        if "ira" in (a.get("name") or "").lower() + " " + (a.get("type") or "").lower()
-        and "roth" not in (a.get("name") or "").lower() + " " + (a.get("type") or "").lower()
+        for a in accounts
+        if "ira" in _name_type(a) and "roth" not in _name_type(a)
     )
     pretax_balance = k401_balance + trad_ira_balance
 

@@ -1743,10 +1743,7 @@ def _get_features() -> dict:
         ver = version("emoney-mcp")
     except PackageNotFoundError:
         ver = "unknown (dev install)"
-    return {
-        "version": ver,
-        "total_tools": 51,
-        "categories": {
+    categories = {
             "Overview & Dashboard": {
                 "tools": {
                     "get_quick_status": {
@@ -2019,7 +2016,19 @@ def _get_features() -> dict:
                     },
                 },
             },
-        },
+    }
+
+    # Derive counts from the dispatch registry (single source of truth) so the
+    # advertised total can't drift from the tools actually registered, and
+    # surface any tools missing from the hand-maintained category map.
+    listed = {tool for cat in categories.values() for tool in cat.get("tools", {})}
+    registered = set(_DISPATCH)
+    return {
+        "version": ver,
+        "total_tools": len(registered),
+        "categorized_tools": len(listed & registered),
+        "uncategorized_tools": sorted(registered - listed),
+        "categories": categories,
     }
 
 

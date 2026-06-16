@@ -45,6 +45,9 @@ async def _csrf_post(http_session, path: str, data: dict) -> dict | list:
     """POST to a Spending endpoint with CSRF token in body."""
     http = await http_session.get_http()
     token = await http_session.get_csrf_token()
+    if not token:
+        return {"error": f"Could not obtain CSRF token for {path} — "
+                         "Emoney page layout may have changed or the session expired."}
     payload = {**data, "__RequestVerificationToken": token}
     resp = await http.post(
         f"{_SPENDING}/{path}",
@@ -221,10 +224,17 @@ async def get_transaction_rules(http_session) -> dict:
     # JS sends data:{} — empty payload (just the CSRF token from _csrf_post)
     result = await _csrf_post(http_session, "GetRules", {})
     if isinstance(result, dict) and "error" in result:
-        # Emoney returns HTTP 500 when there are no rules — treat as empty
-        body = result.get("response_body", "")
+        body = result.get("response_body", "") or ""
+        body_lower = body.lower()
+        # A Nexus maintenance-window 500 (IsNexusAvailable:false / "unavailable due
+        # to maintenance") must surface as a real error — not be mistaken for
+        # "no rules configured" by the empty-body heuristic below.
+        if "isnexusavailable" in body_lower or "maintenance" in body_lower:
+            return result
+        # Emoney genuinely returns HTTP 500 with an empty/generic body when no
+        # rules exist — treat that (and only that) as an empty rule set.
         if "500" in result.get("error", "") and (
-            "unexpected error" in body.lower() or not body
+            "unexpected error" in body_lower or not body
         ):
             return {"rules": [], "count": 0, "note": "No categorization rules configured."}
         return result

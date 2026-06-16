@@ -350,10 +350,20 @@ def _normalize_merchant(raw: str) -> str:
 # ---------------------------------------------------------------------------
 
 async def _get_snb_credentials(http_session) -> tuple[str, str]:
-    """Extract JWT token and API key from the Spending/Transactions page HTML."""
-    http = await http_session.get_http()
-    resp = await http.get(f"{BASE_URL}/ema/CS/Spending/Transactions", timeout=20)
-    html = resp.text
+    """Extract JWT token and API key from the Spending/Transactions page HTML.
+
+    Returns ("", "") on any network error so a transient blip on this one
+    request degrades to a clean "could not retrieve" error in callers rather
+    than crashing every SNB tool (per the never-raise convention). Mirrors the
+    error handling already used by _fetch_snb_account_map.
+    """
+    try:
+        http = await http_session.get_http()
+        resp = await http.get(f"{BASE_URL}/ema/CS/Spending/Transactions", timeout=20)
+        html = resp.text
+    except Exception as e:
+        _log.debug("SNB credential fetch failed: %s", type(e).__name__)
+        return "", ""
     jwt_match = re.search(r'"JwtToken"\s*:\s*"([^"]+)"', html)
     key_match  = re.search(r'apiKey["\']?\s*:\s*["\']([^"\']+)["\']', html)
     jwt_token = jwt_match.group(1) if jwt_match else ""

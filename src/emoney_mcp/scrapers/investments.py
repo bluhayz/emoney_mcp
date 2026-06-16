@@ -39,7 +39,7 @@ import json
 import time
 from datetime import datetime, timedelta
 
-from ._helpers import _get_card, _INV_URL
+from ._helpers import _get_card, _INV_URL, _parse_card8_history
 
 
 async def get_holdings(http_session) -> dict:
@@ -192,9 +192,9 @@ async def get_net_worth_history(http_session, months: int = 12) -> dict:
     """
     Return monthly net worth trend for the last `months` months (default 12).
 
-    Card 8 returns a bare History array of net worth values (newest last) plus
-    ChangeThisMonth.  We label each point "Month N" since the API does not
-    return dates alongside the values.
+    Card 8 returns a bare History array of net worth values (oldest first,
+    newest last) plus ChangeThisMonth.  Each point is labelled with its
+    calendar month via the shared _parse_card8_history helper.
     """
     months = min(max(months, 1), 60)
     http = await http_session.get_http()
@@ -203,23 +203,11 @@ async def get_net_worth_history(http_session, months: int = 12) -> dict:
     if not card8:
         return {"error": "Could not retrieve net worth history (Card 8 unavailable)."}
 
-    raw_history = card8.get("History") or []
     current_nw  = card8.get("NetWorth")
     mtd         = card8.get("ChangeThisMonth") or {}
     ytd         = card8.get("ChangeThisYear")  or {}
 
-    raw_history = raw_history[-months:]
-
-    now = datetime.now()
-    points = []
-    total  = len(raw_history)
-    for i, val in enumerate(raw_history):
-        months_ago = total - 1 - i
-        dt = (now.replace(day=1) - timedelta(days=months_ago * 28)).replace(day=1)
-        points.append({
-            "month":     dt.strftime("%Y-%m"),
-            "net_worth": val,
-        })
+    points = _parse_card8_history(card8, months)
 
     change_dollar = None
     change_pct    = None

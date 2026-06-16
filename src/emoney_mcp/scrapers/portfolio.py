@@ -36,7 +36,7 @@ _ASSET_EFFICIENCY
 import time
 from datetime import datetime
 
-from ._helpers import _get_card, _INV_URL, _month_offset
+from ._helpers import _get_card, _INV_URL, _month_offset, _parse_card8_history
 from .accounts import _build_account_type_map, _match_tax_bucket
 
 # ---------------------------------------------------------------------------
@@ -62,6 +62,9 @@ _ASSET_EFFICIENCY: dict[str, int] = {
     "tips":                  1,
     "high_yield_bond":       1,
     "money_market":          3,
+    # Unrecognized holdings: neutral score so an unknown ticker isn't scored as
+    # the most tax-efficient asset possible (which would understate tax drag).
+    "unknown":               5,
 }
 
 
@@ -110,7 +113,7 @@ def _classify_asset(ticker: str, description: str) -> str:
     if any(x in combined for x in ("GROWTH", "EQUITY", "STOCK", "LARGE CAP", "SMALL CAP", "MID CAP")):
         return "growth_equity"
 
-    return "domestic_equity_index"   # conservative default
+    return "unknown"   # unrecognized — scored neutrally, not as the best asset
 
 
 # ---------------------------------------------------------------------------
@@ -647,23 +650,13 @@ async def get_net_worth_velocity(http_session, months: int = 12) -> dict:
         return {"error": "Card 8 (net worth history) unavailable. Session may have expired."}
 
     # Card 8 is a dict with a History array of net-worth values, oldest first
-    # (newest last); NetWorth holds the current value. Mirror get_net_worth_history
-    # so ordering stays consistent across tools.
-    raw_history = (card8.get("History") if isinstance(card8, dict) else card8) or []
-    if not raw_history:
+    # (newest last); NetWorth holds the current value. Parsing/labelling is shared
+    # with get_net_worth_history via _parse_card8_history so the two stay aligned.
+    labelled = _parse_card8_history(card8, months)
+    if not labelled:
         return {"error": "No net worth history data found in Card 8."}
 
-    raw_history = raw_history[-months:]  # keep the most recent N months
-
-    # Label each point; the newest element (last) is the current month (months_ago = 0).
     now = datetime.now()
-    labelled = []
-    total = len(raw_history)
-    for i, val in enumerate(raw_history):
-        months_ago = total - 1 - i
-        dt = _month_offset(now, months_ago)
-        labelled.append({"month": dt.strftime("%Y-%m"), "net_worth": val})
-    # raw_history is already oldest-first — no reverse needed.
 
     # Compute month-over-month changes
     history_out = []

@@ -243,6 +243,20 @@ class TestGetRmdEstimateRothExclusion:
         assert result["current_pretax_balance"] == pytest.approx(350_000.0)
 
     @pytest.mark.asyncio
+    async def test_roth_401k_excluded_from_rmd_base(self):
+        """Regression #36: designated Roth 401(k)/403(b) has no RMD (SECURE 2.0)."""
+        accounts = [
+            {"name": "Traditional 401k", "type": "401k",      "balance": 300_000},
+            {"name": "Roth 401(k)",      "type": "Roth 401k", "balance": 120_000},
+        ]
+        session = self._make_session(accounts)
+        from emoney_mcp.scrapers.tax import get_rmd_estimate
+        result = await get_rmd_estimate(session, birth_year=1950)
+
+        # Only the traditional 401k counts; the Roth 401(k) is excluded.
+        assert result["current_pretax_balance"] == pytest.approx(300_000.0)
+
+    @pytest.mark.asyncio
     async def test_age_below_73_no_current_rmd(self):
         """Under age 73 (SECURE 2.0), current RMD should not be required."""
         accounts = [

@@ -267,10 +267,18 @@ async def get_categories(http_session) -> dict:
     ok, _, categories = await _fetch_snb_raw(http_session)
     if not ok:
         return {"error": "Could not retrieve SNB data. Try re-syncing Chrome session."}
-    cats = sorted(
-        [{"id": int(k), "name": v} for k, v in categories.items() if k and v],
-        key=lambda x: x["name"],
-    )
+    cats = []
+    for k, v in categories.items():
+        if not k or not v:
+            continue
+        try:
+            cat_id = int(k)
+        except (TypeError, ValueError):
+            # Skip a malformed/non-numeric key rather than crashing the whole tool.
+            _log.debug("Skipping non-numeric category key: %r", k)
+            continue
+        cats.append({"id": cat_id, "name": v})
+    cats.sort(key=lambda x: x["name"])
     return {"category_count": len(cats), "categories": cats}
 
 
@@ -2023,15 +2031,20 @@ async def get_50_30_20_analysis(http_session, months: int = 3) -> dict:
     months : number of complete months to average (default 3, max 12)
     """
     months = min(max(months, 1), 12)
-    days   = months * 31 + 5
+    # Fetch one extra month so we can drop the current partial month and still
+    # average over `months` complete months.
+    days   = (months + 1) * 31 + 5
 
     txns, ok = await _fetch_snb_data(http_session, days=days)
     if not ok:
         return {"error": "Could not retrieve SNB transaction data. Try re-syncing Chrome session."}
 
     now = datetime.now()
+    # Average over the most recent COMPLETE months, excluding the current partial
+    # month (consistent with get_cash_flow_projection / get_cash_flow_forecast).
+    # Including it would skew percentages by the day of month the tool is called.
     month_labels = []
-    for i in range(months - 1, -1, -1):
+    for i in range(months, 0, -1):
         dt = _month_offset(now, i)
         month_labels.append(dt.strftime("%Y-%m"))
     month_set = set(month_labels)
@@ -2266,7 +2279,7 @@ async def get_upcoming_bills(http_session, days_ahead: int = 30) -> dict:
         if date_str < cutoff or t.get("isDeleted", False):
             continue
         cat_id     = str(t.get("categoryId") or "")
-        categories.get(cat_id, "Uncategorized") if cat_id else "Uncategorized"
+        cat_name   = categories.get(cat_id, "Uncategorized") if cat_id else "Uncategorized"
         cat_id_int = int(cat_id) if cat_id else 0
         # Skip income / excluded (ID-based for robustness)
         if cat_id_int in _INCOME_CATEGORY_IDS or cat_id_int in _EXCLUDE_CATEGORY_IDS:
@@ -2279,7 +2292,7 @@ async def get_upcoming_bills(http_session, days_ahead: int = 30) -> dict:
         )
         if key not in merchant_charges:
             merchant_charges[key] = []
-        merchant_charges[key].append({"date": date_str, "amount": abs(amount)})
+        merchant_charges[key].append({"date": date_str, "amount": abs(amount), "category": cat_name})
 
     upcoming = []
     today_str = now.strftime("%Y-%m-%d")
@@ -2320,6 +2333,7 @@ async def get_upcoming_bills(http_session, days_ahead: int = 30) -> dict:
         if overdue or next_str <= horizon:
             upcoming.append({
                 "merchant":        merchant,
+                "category":        charges_sorted[-1].get("category", "Uncategorized"),
                 "expected_date":   next_str,
                 "expected_amount": round(avg_amount, 2),
                 "cadence":         cadence_name,

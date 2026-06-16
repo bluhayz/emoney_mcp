@@ -109,6 +109,9 @@ async def get_report_url(http_session, report_id: str) -> dict:
     """
     http = await http_session.get_http()
     token = await http_session.get_csrf_token()
+    if not token:
+        return {"error": "Could not obtain CSRF token from Emoney — "
+                         "page layout may have changed or the session expired."}
 
     resp = await http.post(
         f"{_REPORTS_URL}/GetReportUrl",

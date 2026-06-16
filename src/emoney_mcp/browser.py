@@ -358,10 +358,15 @@ class EmoneyHttpSession:
         resp = await http.get(url, allow_redirects=True, timeout=30)
         return resp.text
 
-    async def get_csrf_token(self) -> str:
+    async def get_csrf_token(self) -> str | None:
         """
         Fetch the Investments page and extract the ASP.NET anti-forgery token
         from the hidden <input> field.  Result is cached for the session lifetime.
+
+        Returns ``None`` (and does not cache) when the token can't be found —
+        e.g. the page layout changed or an error page was served — so callers
+        can surface a clear, specific error instead of POSTing an empty token
+        and triggering a confusing 403/CSRF mismatch.
         """
         if getattr(self, "_csrf_token", None):
             return self._csrf_token
@@ -373,7 +378,9 @@ class EmoneyHttpSession:
             r'|<input[^>]+value=["\']([^"\']+)["\'][^>]+name=["\']__RequestVerificationToken["\']',
             resp.text, re.IGNORECASE
         )
-        token = (match.group(1) or match.group(2)) if match else ""
+        if not match:
+            return None
+        token = match.group(1) or match.group(2)
         self._csrf_token = token
         return token
 
@@ -391,12 +398,14 @@ class EmoneyLoginSession:
         self._waiting    = False          # True while browser is open
         self._thread: threading.Thread | None = None
         self._done_event = threading.Event()  # set when cookies are saved
+        self._error: str | None = None    # last login-thread failure, surfaced to the caller
 
     def open_login_window(self) -> None:
         """Spawn a background thread that runs its own asyncio event loop."""
         if self._thread and self._thread.is_alive():
             return  # already running
         self._waiting    = True
+        self._error      = None           # clear any prior failure for this fresh attempt
         self._done_event.clear()
         self._thread = threading.Thread(target=self._thread_main, daemon=True, name="nodriver-login")
         self._thread.start()
@@ -407,9 +416,12 @@ class EmoneyLoginSession:
         asyncio.set_event_loop(loop)
         try:
             loop.run_until_complete(self._async_main())
-        except Exception:
+        except Exception as e:
             import traceback
             traceback.print_exc()
+            # Record the cause so get_authenticated_session can surface it to the
+            # MCP caller instead of leaving them with an opaque login timeout.
+            self._error = f"{type(e).__name__}: {e}"
         finally:
             loop.close()
             self._waiting = False
@@ -572,6 +584,11 @@ class EmoneyLoginSession:
 
 _http_session   = EmoneyHttpSession()
 _login_session  = EmoneyLoginSession()
+
+
+def get_last_login_error() -> str | None:
+    """Return the most recent nodriver login-thread failure message, if any."""
+    return _login_session._error
 
 
 # ---------------------------------------------------------------------------

@@ -525,6 +525,10 @@ async def get_college_savings_gap(
         pct_funded      = g.get("percent_funded") or 0.0
 
         years_until     = max(0, start_year - current_year)
+        # Flag goals whose start year has already passed: years_until is clamped
+        # to 0, so projections treat them as starting today. Without this flag a
+        # caller can't tell "starts now" from "start date already passed".
+        goal_start_passed = start_year < current_year
 
         # Project current 529 balance to goal start year
         projected_529   = round(total_529 * ((1 + annual_return) ** years_until), 2)
@@ -556,6 +560,7 @@ async def get_college_savings_gap(
             "goal_name":             g.get("name"),
             "start_year":            start_year,
             "years_until":           years_until,
+            "goal_start_passed":     goal_start_passed,
             "emoney_pct_funded":     round(pct_funded, 1),
             "current_529_balance":   round(total_529, 2),
             "projected_529_at_start": projected_529,

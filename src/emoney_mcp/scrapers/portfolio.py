@@ -438,6 +438,9 @@ async def get_available_cards(
     """
     if card_ids is None:
         card_ids = list(range(1, 17))   # probe cards 1–16 in one call
+    if not card_ids:
+        # min()/max() below would raise on an empty list; return a clear error.
+        return {"error": "card_ids must not be empty."}
 
     raw = await explore_emoney_cards(http_session, card_ids=card_ids)
 

@@ -760,11 +760,15 @@ async def get_aggregation_status(http_session) -> dict:
 
     accounts_status = []
     for acct in card20.get("Accounts") or []:
+        # Don't fail open: this tool exists to surface broken connections, so a
+        # missing IsConnected field reports "unknown" rather than silently
+        # defaulting to connected and hiding a potentially stale account.
+        is_connected = acct.get("IsConnected")
         accounts_status.append({
             "name":           acct.get("Name") or acct.get("AccountName", ""),
             "institution":    acct.get("InstitutionName", ""),
             "last_updated":   (acct.get("AsOfDate") or "")[:10] or None,
-            "connection_ok":  acct.get("IsConnected", True),
+            "connection_ok":  is_connected if is_connected is not None else "unknown",
         })
 
     healthy   = len(broken_connections) == 0

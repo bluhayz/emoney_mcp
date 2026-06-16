@@ -13,6 +13,7 @@ from mcp.types import Tool, TextContent
 from .browser import (
     get_authenticated_session,
     close_session,
+    get_last_login_error,
     MANUAL_LOGIN_REQUIRED,
     COOKIE_FILE,
     _http_session,
@@ -1419,6 +1420,11 @@ def _kwargs(specs, args: dict) -> dict:
         if optional:
             out[name] = conv(args[name]) if (name in args and args[name] is not None) else None
         elif default is _REQ:
+            # Required argument: give a clear, actionable message instead of the
+            # bare KeyError (which renders as just the quoted key name and is
+            # indistinguishable from a real bug in the top-level handler).
+            if name not in args:
+                raise ValueError(f"Missing required argument: '{name}'")
             out[name] = conv(args[name])
         else:
             out[name] = conv(args.get(name, default))
@@ -1649,14 +1655,21 @@ async def _get_session_or_err():
     global _last_health_ts
     sess = await get_authenticated_session()
     if sess == MANUAL_LOGIN_REQUIRED:
+        login_err = get_last_login_error()
+        message = (
+            "Could not find an active Emoney session in Chrome. "
+            "Try sync_chrome_session first (make sure you are logged in to "
+            "Emoney in Chrome). Otherwise a Chrome window has been opened — "
+            "log in manually, then call get_accounts again."
+        )
+        if login_err:
+            # The background login attempt failed outright (e.g. Chrome missing) —
+            # surface the cause instead of an opaque "waiting for login".
+            message += f" Note: the last automatic login attempt failed ({login_err})."
         return None, {
             "login_required": True,
-            "message": (
-                "Could not find an active Emoney session in Chrome. "
-                "Try sync_chrome_session first (make sure you are logged in to "
-                "Emoney in Chrome). Otherwise a Chrome window has been opened — "
-                "log in manually, then call get_accounts again."
-            ),
+            "login_error": login_err,
+            "message": message,
         }
 
     # Proactive health check every 5 minutes — non-blocking warning if session stale.

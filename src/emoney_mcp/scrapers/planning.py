@@ -226,32 +226,39 @@ async def get_fire_number(
     gap_to_fi      = round(max(0, fi_number - investable_assets), 2)
     pct_of_way     = round(min(investable_assets / fi_number * 100, 100.0), 1) if fi_number > 0 else 0
 
-    # Years to FI: future value of current assets + monthly contributions compounding to fi_number
+    # Years to FI: future value of current assets + monthly contributions compounding to fi_number.
+    # fi_status disambiguates the cases that all previously collapsed into years_to_fi=None:
+    #   already_fi          — assets already meet the FI number
+    #   no_current_savings  — not saving, so no projected progress toward FI
+    #   on_track            — reaches FI within the 50-year horizon (years_to_fi populated)
+    #   unreachable_in_50y  — at this pace, FI is not reached within 50 years
     years_to_fi = None
     fi_date_str = None
-    if gap_to_fi > 0 and monthly_savings > 0 and annual_return > 0:
+    if gap_to_fi <= 0:
+        fi_status = "already_fi"
+    elif monthly_savings <= 0 or annual_return <= 0:
+        fi_status = "no_current_savings"
+    else:
+        fi_status = "unreachable_in_50y"
         r = annual_return / 12
         # FV = PV*(1+r)^n + PMT*((1+r)^n - 1)/r → solve for n numerically
         try:
-            # Newton approximation: use log formula for pure growth first, then iterate
             n = 0
             balance = investable_assets
-            while balance < fi_number and n < 600:
+            while balance < fi_number and n < 600:   # 600 months = 50-year cap
                 balance = balance * (1 + r) + monthly_savings
                 n += 1
             if balance >= fi_number:
                 years_to_fi = round(n / 12, 1)
                 fi_year = datetime.now().year + int(years_to_fi) + 1
                 fi_date_str = str(fi_year)
+                fi_status = "on_track"
         except Exception as e:
             _log.debug("FIRE projection calc failed: %s", type(e).__name__)
 
-    # Monthly savings needed to hit FI by target ages
-    now_year = datetime.now().year
+    # Monthly savings needed to hit FI at illustrative horizons (we don't know the
+    # client's age here, so express targets as years from now rather than ages).
     monthly_needed: dict[str, float | None] = {}
-    for target_age_offset in (55, 60, 65):
-        target_age_offset - (now_year % 100)  # rough heuristic without knowing age
-        # Instead express as years: 15, 20, 25 years from now as illustrative targets
     for label, yr in [("in_15_years", 15), ("in_20_years", 20), ("in_25_years", 25)]:
         if yr > 0 and gap_to_fi > 0:
             r  = annual_return / 12
@@ -275,6 +282,7 @@ async def get_fire_number(
         "fat_fi_number_3pct":           fat_fi_number,
         "gap_to_fi":                    gap_to_fi,
         "pct_of_way_there":             pct_of_way,
+        "fi_status":                    fi_status,
         "years_to_fi_at_current_pace":  years_to_fi,
         "estimated_fi_year":            fi_date_str,
         "monthly_savings_needed":       monthly_needed,

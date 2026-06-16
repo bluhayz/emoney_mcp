@@ -127,7 +127,7 @@ jobs:
 
       - name: Install uv
         if: steps.version_check.outputs.changed == 'true'
-        uses: astral-sh/setup-uv@v6
+        uses: astral-sh/setup-uv@v8
 
       - name: Build package
         if: steps.version_check.outputs.changed == 'true'

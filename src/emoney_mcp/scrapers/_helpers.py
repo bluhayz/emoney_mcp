@@ -27,6 +27,7 @@ clear_card_cache()        — Purge the in-memory card cache (called on session
 """
 
 import time
+from datetime import datetime
 
 from ..browser import BASE_URL  # single source of truth for the subdomain
 
@@ -134,3 +135,31 @@ def _month_offset(base_date, months_back: int):
     year  = base_date.year + (month - 1) // 12
     month = ((month - 1) % 12) + 1
     return base_date.replace(year=year, month=month, day=1)
+
+
+def _parse_card8_history(card8, months: int, now=None) -> list[dict]:
+    """
+    Slice and month-label Card 8's net-worth ``History`` array.
+
+    Card 8's ``History`` is **oldest-first** (the newest element is the current
+    month). This returns the most recent ``months`` points as
+    ``[{"month": "YYYY-MM", "net_worth": <value>}, ...]`` (oldest-first), with
+    drift-free calendar-month labels derived from :func:`_month_offset` — the
+    newest point is ``months_ago = 0``.
+
+    Shared by ``get_net_worth_history`` (investments.py) and
+    ``get_net_worth_velocity`` (portfolio.py) so their parsing/labelling can't
+    diverge. Accepts either the card dict (``{"History": [...], ...}``) or a
+    bare list. Returns ``[]`` for missing/empty history; callers decide whether
+    an empty result is an error.
+    """
+    raw = (card8.get("History") if isinstance(card8, dict) else card8) or []
+    raw = raw[-months:]                      # keep the most recent N months
+    now = now or datetime.now()
+    total = len(raw)
+    points = []
+    for i, val in enumerate(raw):
+        months_ago = total - 1 - i           # newest element → 0 months ago
+        dt = _month_offset(now, months_ago)
+        points.append({"month": dt.strftime("%Y-%m"), "net_worth": val})
+    return points

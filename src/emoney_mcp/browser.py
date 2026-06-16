@@ -146,7 +146,13 @@ def _get_chrome_macos_key() -> bytes | None:
 
 
 def _decrypt_macos_cookie(enc_val: bytes, key: bytes) -> str | None:
-    """Decrypt a single macOS Chrome ``v10`` cookie value (AES-128-CBC)."""
+    """Decrypt a single macOS Chrome ``v10`` cookie value (AES-128-CBC).
+
+    Only the legacy ``v10`` Keychain-derived scheme is supported. Chrome 127+
+    (mid-2024) wraps cookies with App-Bound Encryption (``v20`` prefix), which
+    needs a separate key path and is not handled here — those return ``None``
+    and are reported in aggregate by ``_extract_macos_cookies``.
+    """
     try:
         from Cryptodome.Cipher import AES
 
@@ -192,10 +198,26 @@ def _extract_macos_cookies() -> dict:
         return {}
 
     cookies: dict = {}
+    v20_skipped = 0
     for name, enc_val, host in rows:
-        val = _decrypt_macos_cookie(bytes(enc_val), key)
+        enc_bytes = bytes(enc_val)
+        if enc_bytes[:3] == b"v20":
+            # App-Bound Encryption (Chrome 127+) — not decryptable via the
+            # Keychain PBKDF2 path. Count and skip rather than failing silently.
+            v20_skipped += 1
+            continue
+        val = _decrypt_macos_cookie(enc_bytes, key)
         if val is not None:
             cookies[name] = val
+
+    if v20_skipped and not cookies:
+        _log.warning(
+            "macOS Chrome cookies use App-Bound Encryption (v20, Chrome 127+), which "
+            "automatic extraction does not support (%d emaplan cookie(s) skipped). "
+            "Falling back to manual login — run sync_chrome_session or reset_session "
+            "and sign in via the browser window that opens.",
+            v20_skipped,
+        )
     return cookies
 
 

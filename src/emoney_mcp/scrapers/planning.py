@@ -23,6 +23,7 @@ get_gifting_and_estate_strategy(http_session, num_recipients, filing_status)
 
 import asyncio
 import logging
+import re
 from datetime import datetime
 
 from .accounts import get_accounts, _calc_investable_assets
@@ -103,25 +104,47 @@ async def get_home_equity(http_session) -> dict:
             elif is_mortgage and bal < 0:
                 mortgage_accounts.append(acct)
 
-    # Simple matching: pair mortgages to properties by order / name proximity
     total_property_value   = round(sum(a.get("balance", 0) or 0 for a in property_accounts), 2)
     total_mortgage_balance = round(abs(sum(a.get("balance", 0) or 0 for a in mortgage_accounts)), 2)
     total_equity           = round(total_property_value - total_mortgage_balance, 2)
 
-    properties = []
-    for prop in property_accounts:
-        prop_val = prop.get("balance") or 0
-        # Best-effort: find the closest-named mortgage
-        matched_mortgage = 0.0
-        for mort in mortgage_accounts:
-            matched_mortgage += abs(mort.get("balance") or 0)
+    # Attribute each mortgage to a single property so a household with multiple
+    # properties/mortgages doesn't get the combined mortgage total charged against
+    # every property. Best-effort: match on shared name tokens; with exactly one
+    # property, all mortgages belong to it. Mortgages that match no property are
+    # left unallocated (and surfaced in the note) rather than double-counted.
+    def _tokens(s: str) -> set:
+        return {t for t in re.split(r"[^a-z0-9]+", (s or "").lower()) if len(t) > 2}
 
+    prop_tokens   = [_tokens(p.get("name")) for p in property_accounts]
+    prop_mortgage = [0.0 for _ in property_accounts]
+    unmatched_mortgage = 0.0
+
+    for mort in mortgage_accounts:
+        bal       = abs(mort.get("balance") or 0)
+        m_tokens  = _tokens(mort.get("name"))
+        best_idx, best_overlap = None, 0
+        for idx, pt in enumerate(prop_tokens):
+            overlap = len(m_tokens & pt)
+            if overlap > best_overlap:
+                best_idx, best_overlap = idx, overlap
+        if best_idx is None and len(property_accounts) == 1:
+            best_idx = 0   # single property: no ambiguity
+        if best_idx is None:
+            unmatched_mortgage += bal
+        else:
+            prop_mortgage[best_idx] += bal
+
+    properties = []
+    for idx, prop in enumerate(property_accounts):
+        prop_val = prop.get("balance") or 0
+        matched_mortgage = round(prop_mortgage[idx], 2)
         equity  = round(prop_val - matched_mortgage, 2)
         ltv_pct = round(matched_mortgage / prop_val * 100, 1) if prop_val > 0 else None
         properties.append({
             "account_name":      prop.get("name"),
             "property_value":    round(prop_val, 2),
-            "mortgage_balance":  round(matched_mortgage, 2),
+            "mortgage_balance":  matched_mortgage,
             "equity":            equity,
             "ltv_pct":           ltv_pct,
         })
@@ -138,9 +161,18 @@ async def get_home_equity(http_session) -> dict:
         "net_worth":                round(net_worth, 2),
         "liquid_cash":              round(liquid_cash, 2) if liquid_cash is not None else None,
         "credit_card_balance":      round(credit_total, 2) if credit_total is not None else None,
+        "unmatched_mortgage_balance": round(unmatched_mortgage, 2) if unmatched_mortgage else None,
         "note": (
             "Property values and mortgage balances are pulled from Emoney's account list. "
-            "Liquid cash and credit card total sourced from Card 10. "
+            "Per-property mortgage_balance is a best-effort match by account name; "
+            "total_equity/total_mortgage_balance are exact aggregates. "
+            + (
+                f"${round(unmatched_mortgage, 2):,.2f} of mortgage debt could not be matched "
+                "to a specific property and is excluded from per-property rows (but included "
+                "in the totals). "
+                if unmatched_mortgage else ""
+            )
+            + "Liquid cash and credit card total sourced from Card 10. "
             "Values reflect the last sync date shown in your Emoney dashboard."
         ),
     }

@@ -148,6 +148,36 @@ class TestGetHomeEquity:
             result = await get_home_equity(session)
         assert "error" in result
 
+    @pytest.mark.asyncio
+    async def test_multiple_properties_get_own_mortgage_only(self):
+        # Regression for #35: each property must be charged only its own
+        # mortgage, not the combined total of all mortgages.
+        accounts = _make_accounts(
+            net_worth=550_000, total_assets=1_000_000, total_liabilities=450_000,
+            groups=[
+                {"group": "Real Estate", "total": 1_000_000, "accounts": [
+                    {"name": "Lake House", "type": "RealEstateAsset", "balance": 400_000, "institution": "Zillow"},
+                    {"name": "City Condo", "type": "RealEstateAsset", "balance": 600_000, "institution": "Zillow"},
+                ]},
+                {"group": "Mortgages", "total": -450_000, "accounts": [
+                    {"name": "Lake House Loan",     "type": "Mortgage", "balance": -150_000, "institution": "WF"},
+                    {"name": "City Condo Mortgage", "type": "Mortgage", "balance": -300_000, "institution": "Chase"},
+                ]},
+            ],
+        )
+        session = make_mock_http_session()
+        with patch("emoney_mcp.scrapers.planning.get_accounts", return_value=accounts):
+            from emoney_mcp.scrapers.planning import get_home_equity
+            result = await get_home_equity(session)
+        by_name = {p["account_name"]: p for p in result["properties"]}
+        assert by_name["Lake House"]["mortgage_balance"] == 150_000
+        assert by_name["Lake House"]["equity"] == 250_000
+        assert by_name["City Condo"]["mortgage_balance"] == 300_000
+        assert by_name["City Condo"]["equity"] == 300_000
+        # Aggregate stays exact regardless of per-property matching.
+        assert result["total_mortgage_balance"] == 450_000
+        assert result["unmatched_mortgage_balance"] is None
+
 
 # ===========================================================================
 # get_fire_number

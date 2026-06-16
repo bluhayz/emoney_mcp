@@ -89,6 +89,11 @@ async def get_retirement_runway(
 
     def _years_to_depletion(portfolio: float, withdrawal: float, ret: float, inf: float) -> float | None:
         """Return years until portfolio hits zero. None if it never depletes."""
+        # Nothing to deplete: already at/below zero. Avoids a ZeroDivisionError in
+        # the portfolio*real_return denominator below when investable assets are $0
+        # (e.g. net worth held entirely in real estate).
+        if portfolio <= 0:
+            return 0.0 if withdrawal > 0 else None
         real_return = (1 + ret) / (1 + inf) - 1
         if real_return <= 0:
             if withdrawal <= 0:
@@ -109,7 +114,7 @@ async def get_retirement_runway(
         scenarios.append({
             "scenario":          label,
             "return_rate_pct":   int(ret * 100),
-            "years_to_depletion": round(years, 1) if years else None,
+            "years_to_depletion": round(years, 1) if years is not None else None,
             "sustainable":        years is None or years > 30,
         })
 

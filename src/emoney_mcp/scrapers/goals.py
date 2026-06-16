@@ -276,11 +276,14 @@ async def get_financial_health_score(http_session) -> dict:
         debt_score = 50
 
     # 4. Emergency fund (weight 15): liquid months of spending
-    liquid_group = next(
-        (g for g in accts.get("account_groups", []) if "cash" in g.get("group", "").lower()
-         or "bank" in g.get("group", "").lower()), None
+    # Sum ALL cash/bank groups — liquid assets can span multiple groups
+    # (e.g. "Checking & Savings" plus a separate "Money Market" group), and
+    # taking only the first match would understate emergency-fund coverage.
+    liquid_assets = sum(
+        g.get("total") or 0
+        for g in accts.get("account_groups", [])
+        if "cash" in g.get("group", "").lower() or "bank" in g.get("group", "").lower()
     )
-    liquid_assets = liquid_group["total"] if liquid_group else 0
     if monthly_spending > 0:
         months_covered = liquid_assets / monthly_spending
         if months_covered >= 6:

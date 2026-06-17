@@ -102,4 +102,6 @@ from .scrapers import (   # make sure private helpers are also importable
     get_vault_documents,
     # data-read wave 6 — plan goals funding (internal-api BFF)
     get_all_goals_funding_status,
+    # data-read wave 7 — lifetime cash flow (internal-api BFF)
+    get_lifetime_cash_flow_projection,
 )

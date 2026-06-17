@@ -1836,6 +1836,26 @@ async def list_tools() -> list[Tool]:
             ),
             inputSchema={"type": "object", "properties": {}, "required": []},
         ),
+        Tool(
+            name="get_lifetime_cash_flow_projection",
+            description=(
+                "eMoney's signature year-by-year lifetime cash-flow plan: per-year total inflow, "
+                "outflow, net cash flow, portfolio value, net worth, growth, and withdrawals, plus "
+                "summary stats (horizon, peak portfolio + year, ending net worth, first negative-cash-"
+                "flow year, and portfolio depletion year if any). Uses the plan's 'linear' average-"
+                "return assumptions (not Monte Carlo ranges or live markets). "
+                "Optional: start_year, end_year to limit the range. "
+                "Useful for 'Show my lifetime cash flow' or 'Does my money last / when does it peak?'"
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "start_year": {"type": "integer", "description": "First calendar year to include (default: plan start)"},
+                    "end_year":   {"type": "integer", "description": "Last calendar year to include (default: plan end)"},
+                },
+                "required": [],
+            },
+        ),
         # ── v1.0.2 Live endpoint discoveries ──────────────────────────────
         Tool(
             name="get_client_profile",
@@ -2231,6 +2251,9 @@ _DISPATCH = {
                                                _A("liquidation_haircut", float, 0.15)),
     "get_vault_documents":           _passthru("get_vault_documents"),
     "get_all_goals_funding_status":  _passthru("get_all_goals_funding_status"),
+    "get_lifetime_cash_flow_projection": _passthru("get_lifetime_cash_flow_projection",
+                                               _A("start_year", int, optional=True),
+                                               _A("end_year", int, optional=True)),
     # ── Retirement & long-range ───────────────────────────────────────────
     "get_retirement_runway":         _passthru("get_retirement_runway",
                                                _A("annual_spending", float, optional=True),

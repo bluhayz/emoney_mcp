@@ -167,6 +167,45 @@ def _ltcg_rate(taxable_income: float, filing_status: str) -> float:
     return 0.20
 
 
+def _bracket_ceiling(taxable_income: float, filing_status: str) -> float | None:
+    """Upper bound of the bracket the income currently sits in (None at the top)."""
+    fs = filing_status if filing_status in _BRACKETS else "mfj"
+    for ceiling, _rate in _BRACKETS[fs]:
+        if taxable_income <= ceiling:
+            return None if ceiling == float("inf") else ceiling
+    return None
+
+
+def _pretax_rmd_balance(retirement: dict) -> float:
+    """
+    Sum of RMD-subject pre-tax balances (traditional IRA + 401k/403b), excluding
+    Roth. Designated Roth accounts have no RMD (Roth IRAs always; Roth 401(k)/403(b)
+    since 2024 under SECURE 2.0), and the retirement_breakdown buckets conflate
+    pre-tax with Roth — so recompute from the individual account list.
+    """
+    accounts = retirement.get("retirement_accounts", [])
+
+    def _nt(a: dict) -> str:
+        return (a.get("name") or "").lower() + " " + (a.get("type") or "").lower()
+
+    k401 = sum(
+        a.get("balance", 0) or 0
+        for a in accounts
+        if ("401" in _nt(a) or "403" in _nt(a)) and "roth" not in _nt(a)
+    )
+    ira = sum(
+        a.get("balance", 0) or 0
+        for a in accounts
+        if "ira" in _nt(a) and "roth" not in _nt(a)
+    )
+    return k401 + ira
+
+
+def _rmd_factor(age: int) -> float:
+    """IRS Uniform Lifetime Table distribution period for an age (clamped to 100)."""
+    return _RMD_TABLE.get(age) or _RMD_TABLE.get(min(age, 100), 6.4)
+
+
 # ---------------------------------------------------------------------------
 # get_tax_loss_harvesting
 # ---------------------------------------------------------------------------
@@ -734,29 +773,8 @@ async def get_rmd_estimate(http_session, birth_year: int) -> dict:
     if "error" in retirement:
         return retirement
 
-    # Both retirement_breakdown buckets conflate pretax and Roth balances, but
-    # designated Roth accounts have NO RMD (Roth IRAs always; Roth 401(k)/403(b)
-    # starting 2024 under SECURE 2.0). Recompute each pretax balance from the
-    # individual account list, excluding anything whose name/type contains "roth".
-    accounts = retirement.get("retirement_accounts", [])
-
-    def _name_type(a: dict) -> str:
-        return (a.get("name") or "").lower() + " " + (a.get("type") or "").lower()
-
-    k401_balance = sum(
-        a.get("balance", 0) or 0
-        for a in accounts
-        if ("401" in _name_type(a) or "403" in _name_type(a))
-        and "roth" not in _name_type(a)
-    )
-    trad_ira_balance = sum(
-        a.get("balance", 0) or 0
-        for a in accounts
-        if "ira" in _name_type(a) and "roth" not in _name_type(a)
-    )
-    pretax_balance = k401_balance + trad_ira_balance
-
-    trad_balance = pretax_balance
+    # Only traditional (pre-tax) balances are RMD-subject; Roth is excluded.
+    trad_balance = _pretax_rmd_balance(retirement)
 
     years_until_rmd = max(0, rmd_start_age - age)
     rmd_age = max(age, rmd_start_age)
@@ -767,7 +785,7 @@ async def get_rmd_estimate(http_session, birth_year: int) -> dict:
     balance = future_balance_at_rmd
     for yr in range(10):
         calc_age = rmd_age + yr
-        factor = _RMD_TABLE.get(calc_age) or _RMD_TABLE.get(min(calc_age, 100), 6.4)
+        factor = _rmd_factor(calc_age)
         rmd_amount = round(balance / factor, 2)
         rmd_schedule.append({
             "year":       current_year + years_until_rmd + yr,
@@ -780,7 +798,7 @@ async def get_rmd_estimate(http_session, birth_year: int) -> dict:
 
     current_rmd = None
     if age >= rmd_start_age:
-        factor = _RMD_TABLE.get(age) or _RMD_TABLE.get(min(age, 100), 6.4)
+        factor = _rmd_factor(age)
         current_rmd = round(trad_balance / factor, 2)
 
     return {
@@ -802,6 +820,130 @@ async def get_rmd_estimate(http_session, birth_year: int) -> dict:
             "only traditional (pre-tax) balances are subject to RMDs; Roth IRAs have no "
             "RMD requirement during the owner's lifetime. "
             "RMD amounts shown are estimates; always verify with your custodian."
+        ),
+        "caveat": _IRS_CAVEAT,
+    }
+
+
+# ---------------------------------------------------------------------------
+# get_multi_year_tax_projection
+# ---------------------------------------------------------------------------
+
+async def get_multi_year_tax_projection(
+    http_session,
+    birth_year: int,
+    current_taxable_income: float,
+    years: int = 10,
+    filing_status: str = "mfj",
+    retirement_age: int | None = None,
+    social_security_annual: float = 0.0,
+    ss_start_age: int = 67,
+    income_growth: float = 0.03,
+) -> dict:
+    """
+    Project federal taxable income, bracket, and tax for the next ``years`` years
+    so low-income "conversion window" years (after wages stop, before RMDs and
+    Social Security ramp up) become visible.
+
+    Income modelled per year: wages (grown at ``income_growth`` until
+    ``retirement_age``, then 0), plus RMDs once age >= 73 (pre-tax balances from
+    Emoney, drawn down on the IRS Uniform Lifetime Table), plus 85% of Social
+    Security once age >= ``ss_start_age`` (the maximum taxable share).
+
+    Parameters
+    ----------
+    birth_year             : year of birth (e.g. 1962)
+    current_taxable_income : this year's ordinary taxable income (wages etc.)
+    years                  : projection horizon (default 10, max 40)
+    filing_status          : single | mfj | hoh (default mfj)
+    retirement_age         : age at which wages stop (default: never)
+    social_security_annual : expected annual SS benefit in today's dollars
+    ss_start_age           : age SS begins (default 67)
+    income_growth          : annual wage growth assumption (default 0.03)
+    """
+    years = max(1, min(years, 40))
+    fs = filing_status if filing_status in _BRACKETS else "mfj"
+    std_deduction = _STD_DEDUCTION[fs]
+    current_year = datetime.now().year
+    current_age = current_year - birth_year
+
+    retirement = await get_retirement_accounts(http_session)
+    if "error" in retirement:
+        return retirement
+    pretax_balance = _pretax_rmd_balance(retirement)
+
+    rows = []
+    balance = pretax_balance          # pre-tax balance carried forward
+    conversion_window_years = []
+    for i in range(years):
+        cal_year = current_year + i
+        age = current_age + i
+
+        # Grow the pre-tax balance each year, then take the RMD if due.
+        if i > 0:
+            balance = round(balance * 1.06, 2)
+        wages = round(current_taxable_income * ((1 + income_growth) ** i), 2)
+        if retirement_age is not None and age >= retirement_age:
+            wages = 0.0
+
+        rmd = 0.0
+        if age >= 73 and balance > 0:
+            rmd = round(balance / _rmd_factor(age), 2)
+            balance = round(balance - rmd, 2)
+
+        ss_taxable = round(0.85 * social_security_annual, 2) if age >= ss_start_age else 0.0
+
+        gross_income = round(wages + rmd + ss_taxable, 2)
+        taxable_income = round(max(0.0, gross_income - std_deduction), 2)
+        tax = _compute_tax(taxable_income, fs)
+        marginal = _marginal_rate(taxable_income, fs)
+        ceiling = _bracket_ceiling(taxable_income, fs)
+        headroom = round(ceiling - taxable_income, 2) if ceiling is not None else None
+        effective = round(tax / gross_income * 100, 1) if gross_income > 0 else 0.0
+
+        # A "conversion window" year: still in a low bracket (<= 12%) before RMDs
+        # force income up — the prime time for Roth conversions / gain harvesting.
+        is_window = marginal <= 0.12 and rmd == 0.0
+        if is_window:
+            conversion_window_years.append(cal_year)
+
+        rows.append({
+            "year":               cal_year,
+            "age":                age,
+            "wages":              wages,
+            "rmd":                rmd,
+            "taxable_social_security": ss_taxable,
+            "gross_income":       gross_income,
+            "taxable_income":     taxable_income,
+            "federal_tax":        tax,
+            "marginal_rate_pct":  round(marginal * 100, 1),
+            "effective_rate_pct": effective,
+            "bracket_headroom_to_next": headroom,
+            "conversion_window":  is_window,
+        })
+
+    return {
+        "as_of":                  datetime.now().strftime("%Y-%m-%d"),
+        "filing_status":          fs,
+        "horizon_years":          years,
+        "current_pretax_balance": round(pretax_balance, 2),
+        "projection":             rows,
+        "conversion_window_years": conversion_window_years,
+        "assumptions": {
+            "wage_growth_pct":       round(income_growth * 100, 1),
+            "pretax_growth_pct":     6.0,
+            "retirement_age":        retirement_age,
+            "ss_start_age":          ss_start_age,
+            "social_security_taxable_share_pct": 85,
+            "rmd_start_age":         73,
+        },
+        "note": (
+            "Simplified federal projection: wages grow then stop at retirement_age, "
+            "RMDs begin at 73 on pre-tax balances (6% growth), and 85% of Social "
+            "Security is treated as taxable (the maximum). Deductions beyond the "
+            "standard deduction, capital gains, and credits are not modeled. "
+            "'conversion_window' flags low-bracket years ideal for Roth conversions "
+            "or 0% capital-gain harvesting — see get_roth_conversion_ladder."
         ),
         "caveat": _IRS_CAVEAT,
     }

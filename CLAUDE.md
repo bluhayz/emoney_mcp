@@ -2,7 +2,7 @@
 
 MCP server bridging Claude (and other MCP clients) to Emoney Advisor (`emaplan.com`). Emoney has no public API; this server uses reverse-engineered internal JSON endpoints + Chrome cookie extraction for auth.
 
-**Current version: 1.0.26 · 107 MCP tools.** Read-only data tools (cards + SNB + Profile + Vault + plan goals/cash flow), transaction/rules **write** tools, report links, and a large set of pure-Python planning/tax calculators (IRS 2026 figures).
+**Current version: 1.0.27 · 109 MCP tools.** Read-only data tools (cards + SNB + Profile + Vault + plan goals/cash flow + investment depth), transaction/rules **write** tools, report links, and a large set of pure-Python planning/tax calculators (IRS 2026 figures).
 
 ---
 
@@ -19,7 +19,8 @@ src/emoney_mcp/
     ├── accounts.py    # get_accounts, get_retirement_accounts, get_net_worth_breakdown, get_debt_payoff_plan,
     │                  #   get_debt_overview, get_client_profile, get_aggregation_status
     ├── investments.py # get_holdings, get_asset_allocation, get_net_worth_history, get_performance,
-    │                  #   get_transactions, get_capital_gains
+    │                  #   get_transactions, get_capital_gains, get_dividend_income_analysis (#92),
+    │                  #   get_sector_geographic_allocation (#93)
     ├── spending.py    # SNB API: all transaction/budget/cashflow tools — get_spending(_transactions/_trends/_by_account),
     │                  #   get_income_summary, get_savings_rate, search_transactions, get_recurring_charges,
     │                  #   get_budget_vs_actual, get_year_over_year, get_cash_flow_projection/forecast,

@@ -297,6 +297,8 @@ Get me a link to the Liquidity Report.
 | `get_vault_documents` | **New.** eMoney Vault top-level folders (file count, size, sharing) + total storage usage |
 | `get_all_goals_funding_status` | **New.** Plan goals (retirement, leave-to-heirs, education/spending) with Monte Carlo success probability, surplus/shortfall, and status |
 | `get_lifetime_cash_flow_projection` | **New.** Year-by-year lifetime cash flow — inflow/outflow/net, portfolio value, net worth, withdrawals + peak/depletion summary |
+| `get_dividend_income_analysis` | **New.** Trailing dividends + interest, portfolio yield, top income producers |
+| `get_sector_geographic_allocation` | **New.** Equity geography (US/Intl/EM) + style-box class detail + concentration flags |
 | `get_version` | Installed version, cookie file path, and session status |
 | `get_features` | List all tools with descriptions and example questions |
 | `explore_emoney_cards` · `explore_emoney_site` · `explore_snb_write_endpoints` | Developer/discovery probes for finding new Emoney data sources and endpoints |

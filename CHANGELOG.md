@@ -2,7 +2,20 @@
 
 All notable changes to emoney-mcp are documented here.
 
-## [1.0.22] — 2026-06-17 (current)
+## [1.0.23] — 2026-06-17 (current)
+
+Fourth wave of the FP&A roadmap (epic #106) — 2 new **pure-calculator** tools
+(no new Emoney endpoints), bringing the total to **104**. This completes the
+calculator track; all remaining roadmap items need live endpoint discovery.
+
+### Added — scenario & estate
+
+- **`scrapers/retirement.py`** (#97) — `model_life_event_scenario`: models a named life event (early_retirement, home_purchase, new_child, job_loss, downsizing, market_crash) against a baseline retirement projection via lump-sum + spending-delta + one-time-shock deltas; contrasts ending balance/depletion and summarizes the key trade-off. Pure deterministic projection — pairs with run_monte_carlo_retirement and get_sequence_of_returns_stress_test.
+- **`scrapers/planning.py`** (#81) — `get_estate_liquidity_analysis`: settlement need (estate tax + final expenses + debts) vs. marketable assets (liquid + haircut semi-liquid) from the get_net_worth_breakdown liquidity lens; flags illiquid-heavy estates at forced-sale risk. The liquidity counterpart to get_gifting_and_estate_strategy.
+
+Adds 12 tests (527 total).
+
+## [1.0.22] — 2026-06-17
 
 Third wave of the FP&A roadmap (epic #106) — 4 new **pure-calculator** tools
 (no new Emoney endpoints), bringing the total to **102**.

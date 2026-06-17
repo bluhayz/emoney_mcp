@@ -26,7 +26,9 @@ import logging
 import re
 from datetime import datetime
 
-from .accounts import get_accounts, get_retirement_accounts, _calc_investable_assets
+from .accounts import (
+    get_accounts, get_retirement_accounts, get_net_worth_breakdown, _calc_investable_assets,
+)
 from .spending import _fetch_snb_data, _sum_income_spending
 from ._helpers import _get_card
 from .tax import _CONTRIBUTION_LIMITS, _IRS_CAVEAT
@@ -963,4 +965,119 @@ async def get_hsa_optimization(
             "states (e.g. CA, NJ) tax HSA contributions and growth."
         ),
         "caveat": _IRS_CAVEAT,
+    }
+
+
+# ---------------------------------------------------------------------------
+# get_estate_liquidity_analysis  (#81)
+# ---------------------------------------------------------------------------
+
+async def get_estate_liquidity_analysis(
+    http_session,
+    filing_status: str = "mfj",
+    final_expenses: float = 15_000.0,
+    liquidation_haircut: float = 0.15,
+) -> dict:
+    """
+    Assess whether the estate can PAY its settlement costs (estate tax + final
+    expenses + debts) without a forced sale of illiquid assets.
+
+    ``get_gifting_and_estate_strategy`` estimates estate-tax *exposure*; this
+    tool asks the next question — is there enough liquidity to cover it? It
+    classifies assets by liquidity (via get_net_worth_breakdown), estimates the
+    settlement need, and flags an illiquid-heavy estate (business / real estate)
+    at forced-sale risk.
+
+    Parameters
+    ----------
+    filing_status       : 'mfj' (uses the doubled exemption) or 'single'
+    final_expenses      : estimated funeral/probate/administration costs (default $15,000)
+    liquidation_haircut : discount applied to semi-liquid (marketable) assets to
+                          reflect time/tax to convert them (default 0.15 = 15%)
+    """
+    breakdown = await get_net_worth_breakdown(http_session)
+    if "error" in breakdown:
+        return breakdown
+
+    total_assets = breakdown.get("total_assets") or 0
+    net_worth    = breakdown.get("net_worth") or 0
+    debts        = round(max(0.0, total_assets - net_worth), 2)
+
+    liq_map = {b["bucket"]: b["value"] for b in breakdown.get("by_liquidity", [])}
+    liquid      = liq_map.get("Liquid", 0.0) or 0.0
+    semi_liquid = liq_map.get("Semi-liquid", 0.0) or 0.0
+    illiquid    = liq_map.get("Illiquid", 0.0) or 0.0
+
+    # Estate tax (approximate): top rate on the taxable estate above the exemption.
+    is_mfj = filing_status == "mfj"
+    exemption = _ESTATE_EXEMPTION_MFJ if is_mfj else _ESTATE_EXEMPTION_SINGLE
+    taxable_estate = max(0.0, net_worth - exemption)
+    estate_tax = round(taxable_estate * _ESTATE_TOP_RATE, 2)
+
+    settlement_need = round(estate_tax + final_expenses + debts, 2)
+
+    # Marketable resources available at settlement: cash in full + semi-liquid
+    # (brokerage/retirement) after a haircut for time/tax to liquidate.
+    marketable = round(liquid + semi_liquid * (1 - liquidation_haircut), 2)
+    surplus = round(marketable - settlement_need, 2)
+    coverage_ratio = round(marketable / settlement_need, 2) if settlement_need > 0 else None
+
+    illiquid_pct = round(illiquid / total_assets * 100, 1) if total_assets else 0.0
+    forced_sale_risk = surplus < 0 and illiquid_pct >= 40
+
+    if settlement_need == 0:
+        status = "no_settlement_cost"
+    elif surplus >= 0:
+        status = "liquid"
+    elif forced_sale_risk:
+        status = "forced_sale_risk"
+    else:
+        status = "tight"
+
+    return {
+        "as_of":              datetime.now().strftime("%Y-%m-%d"),
+        "filing_status":      filing_status,
+        "net_worth":          round(net_worth, 2),
+        "gross_assets":       round(total_assets, 2),
+        "liquidity_profile": {
+            "liquid":       round(liquid, 2),
+            "semi_liquid":  round(semi_liquid, 2),
+            "illiquid":     round(illiquid, 2),
+            "illiquid_pct": illiquid_pct,
+        },
+        "settlement_need": {
+            "estate_tax":      estate_tax,
+            "final_expenses":  round(final_expenses, 2),
+            "debts":           debts,
+            "total":           settlement_need,
+        },
+        "marketable_resources":   marketable,
+        "liquidation_haircut_pct": round(liquidation_haircut * 100, 1),
+        "surplus_or_shortfall":   surplus,
+        "coverage_ratio":         coverage_ratio,
+        "federal_exemption":      exemption,
+        "status":                 status,
+        "forced_sale_risk":       forced_sale_risk,
+        "interpretation": (
+            "No federal estate tax is projected and liquid assets cover debts and final expenses."
+            if status == "no_settlement_cost" and surplus >= 0 else
+            f"Marketable assets (${marketable:,.0f}) "
+            + ("cover" if surplus >= 0 else "fall ${:,.0f} short of".format(abs(surplus)))
+            + f" the ${settlement_need:,.0f} settlement need"
+            + ("; with {:.0f}% of assets illiquid, heirs may face a forced sale to pay it.".format(illiquid_pct)
+               if forced_sale_risk else ".")
+        ),
+        "note": (
+            "Estate tax is a simplified estimate — the top 40% rate applied to net worth above the "
+            f"{'married' if is_mfj else 'single'} federal exemption (${exemption:,.0f}); the real "
+            "schedule is graduated and state estate/inheritance taxes (12 states + DC) are not "
+            "modeled. Marketable resources = liquid cash + semi-liquid (brokerage/retirement) after "
+            "a haircut; retirement accounts may also owe income tax on liquidation. Life-insurance "
+            "death benefits (a common liquidity source) are not included — add them if held. "
+            "Pair with get_gifting_and_estate_strategy."
+        ),
+        "caveat": (
+            "Estimate only; estate settlement and tax are highly fact-specific. Consult an estate "
+            "attorney and tax professional."
+        ),
     }

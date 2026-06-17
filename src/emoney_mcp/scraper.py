@@ -95,4 +95,7 @@ from .scrapers import (   # make sure private helpers are also importable
     get_sequence_of_returns_stress_test,
     get_portfolio_risk_metrics,
     get_benchmark_comparison,
+    # calculator wave 4 — life-event scenario, estate liquidity
+    model_life_event_scenario,
+    get_estate_liquidity_analysis,
 )

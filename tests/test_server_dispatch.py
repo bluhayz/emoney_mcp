@@ -31,6 +31,7 @@ MINIMAL_ARGS = {
     "get_state_tax_estimate": {"state": "CA", "amount": "100000"},
     "get_healthcare_cost_projection": {"current_age": "60"},
     "get_income_sources_timeline": {"birth_year": "1962"},
+    "model_life_event_scenario": {"event": "market_crash"},
     "get_withdrawal_sequencing_strategy": {"annual_need": "80000"},
     "get_retirement_income_plan": {"retire_age": "65", "birth_year": "1962"},
     "get_mortgage_amortization_schedule": {"balance": "400000", "annual_rate": "0.065", "years_remaining": "25"},

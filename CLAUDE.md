@@ -2,7 +2,7 @@
 
 MCP server bridging Claude (and other MCP clients) to Emoney Advisor (`emaplan.com`). Emoney has no public API; this server uses reverse-engineered internal JSON endpoints + Chrome cookie extraction for auth.
 
-**Current version: 1.0.18 · 82 MCP tools.** Read-only data tools (cards + SNB + Profile), transaction/rules **write** tools, report links, and a large set of pure-Python planning/tax calculators (IRS 2026 figures).
+**Current version: 1.0.19 · 93 MCP tools.** Read-only data tools (cards + SNB + Profile), transaction/rules **write** tools, report links, and a large set of pure-Python planning/tax calculators (IRS 2026 figures).
 
 ---
 
@@ -10,7 +10,7 @@ MCP server bridging Claude (and other MCP clients) to Emoney Advisor (`emaplan.c
 
 ```
 src/emoney_mcp/
-├── server.py          # MCP entry point: list_tools(), call_tool(), _call_tool_inner(), private wrappers (82 tools)
+├── server.py          # MCP entry point: list_tools(), call_tool(), _call_tool_inner(), private wrappers (93 tools)
 ├── browser.py         # EmoneyHttpSession (curl_cffi + cookie persistence, 0o600), Chrome cookie extraction, nodriver fallback
 ├── scraper.py         # Backward-compat shim — re-exports scrapers/*; target of importlib.reload() in EMONEY_DEV mode
 └── scrapers/
@@ -26,19 +26,23 @@ src/emoney_mcp/
     │                  #   get_unusual_transactions, get_merchant_spending, get_50_30_20_analysis,
     │                  #   get_upcoming_bills, get_categories, explore_snb_write_endpoints (largest module)
     ├── goals.py       # get_goals, get_financial_summary, get_financial_health_score, get_quick_status,
-    │                  #   get_college_savings_gap, get_monthly_review
+    │                  #   get_college_savings_gap, get_monthly_review, get_emergency_fund_analysis,
+    │                  #   get_idle_cash_optimization, get_financial_alerts (orchestrator)
     ├── tax.py         # Tax math tools + IRS 2026 constants — get_tax_loss_harvesting, get_contribution_room,
     │                  #   get_roth_conversion_analysis, get_capital_gains_exposure, get_rmd_estimate,
     │                  #   get_tax_bracket_headroom, get_social_security_optimizer, get_quarterly_estimated_taxes,
-    │                  #   get_year_end_checklist, get_annual_tax_advantaged_summary
+    │                  #   get_year_end_checklist, get_annual_tax_advantaged_summary,
+    │                  #   get_multi_year_tax_projection, get_roth_conversion_ladder, get_irmaa_analysis
     ├── retirement.py  # get_retirement_runway, get_withdrawal_rate_analysis, get_net_worth_projection,
     │                  #   run_monte_carlo_retirement, get_dynamic_withdrawal_guardrails, run_scenario,
-    │                  #   get_financial_independence_roadmap
+    │                  #   get_financial_independence_roadmap, get_withdrawal_sequencing_strategy,
+    │                  #   get_retirement_income_plan
     ├── portfolio.py   # get_asset_location_efficiency, get_rebalancing_targets, explore_emoney_cards,
     │                  #   get_available_cards, get_portfolio_concentration, get_net_worth_velocity,
     │                  #   get_tax_drag_analysis
     ├── planning.py    # get_insurance_gap_analysis, get_home_equity, get_fire_number,
-    │                  #   get_gifting_and_estate_strategy
+    │                  #   get_gifting_and_estate_strategy, get_mortgage_amortization_schedule,
+    │                  #   get_mortgage_refinance_analysis, get_mortgage_payoff_vs_invest
     ├── transactions.py# WRITE ops via CS/Spending — update_transaction, hide_transaction,
     │                  #   get/update_transaction_splits, get/add/update/apply_transaction_rule (v0.9.0+)
     ├── reports.py     # get_reports (parse Reports page), get_report_url (CS/Reports/GetReportUrl) (v0.9.0+)
@@ -189,7 +193,7 @@ if not card:
 
 ## Testing
 
-**Framework**: `pytest` + `pytest-asyncio` (`asyncio_mode = "auto"`). **23 test files, 435 tests, no live network calls.** All tests use `make_mock_http_session()` from `tests/helpers.py`, or patch `_get_card` / `_fetch_snb_raw` / `_csrf_post` directly.
+**Framework**: `pytest` + `pytest-asyncio` (`asyncio_mode = "auto"`). **27 test files, 473 tests, no live network calls.** All tests use `make_mock_http_session()` from `tests/helpers.py`, or patch `_get_card` / `_fetch_snb_raw` / `_csrf_post` directly.
 
 ```python
 from helpers import make_mock_http_session, load_fixture

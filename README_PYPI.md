@@ -322,6 +322,14 @@ Get me a link to the Liquidity Report.
 | `get_healthcare_cost_projection` | Lifetime retirement healthcare costs, split pre-65 (ACA) and post-65 (Medicare), inflated |
 | `get_hsa_optimization` | HSA triple-tax framing, invest-vs-spend, and balance trajectory to a target age |
 
+### Advanced Planning Calculators (v1.0.22 — 4 new tools)
+| Tool | What it answers |
+|------|----------------|
+| `get_income_sources_timeline` | Chronological view of when each income stream switches on (SS, pension, annuity, RMDs at 73) and when the mortgage frees cash flow; flags bridge gap years |
+| `get_portfolio_risk_metrics` | Annualized volatility, max drawdown, Sharpe, and estimated beta from portfolio value history |
+| `get_benchmark_comparison` | Portfolio return vs. a blended stock/bond benchmark's long-run expected return |
+| `get_sequence_of_returns_stress_test` | Portfolio survival under an adverse early-returns sequence (2000/2008 starts) vs. the average case — the risk Monte Carlo averages away |
+
 ---
 
 ## Tax planning disclaimer

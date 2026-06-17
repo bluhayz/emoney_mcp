@@ -41,10 +41,13 @@ import random
 import statistics
 from datetime import datetime
 
-from .accounts import get_accounts, _calc_investable_assets, get_net_worth_breakdown
+from .accounts import (
+    get_accounts, _calc_investable_assets, get_net_worth_breakdown,
+    get_retirement_accounts,
+)
 from .goals import get_goals
 from .spending import _fetch_snb_data, get_savings_rate, _sum_income_spending
-from .tax import _compute_tax, _STD_DEDUCTION
+from .tax import _compute_tax, _STD_DEDUCTION, _pretax_rmd_balance, _rmd_factor
 
 
 async def get_retirement_runway(
@@ -1170,5 +1173,318 @@ async def get_retirement_income_plan(
             f"{round(growth_rate*100,1)}% after withdrawals. Inflation, taxes on "
             "withdrawals, and RMDs are not modeled here — see get_retirement_runway "
             "and get_withdrawal_sequencing_strategy."
+        ),
+    }
+
+
+# ---------------------------------------------------------------------------
+# get_income_sources_timeline  (#85)
+# ---------------------------------------------------------------------------
+
+async def get_income_sources_timeline(
+    http_session,
+    birth_year: int,
+    retirement_age: int | None = None,
+    social_security_annual: float = 0.0,
+    ss_start_age: int = 67,
+    pension_annual: float = 0.0,
+    pension_start_age: int | None = None,
+    annuity_annual: float = 0.0,
+    annuity_start_age: int | None = None,
+    mortgage_payment_monthly: float = 0.0,
+    mortgage_payoff_age: int | None = None,
+) -> dict:
+    """
+    Build a chronological timeline of when each retirement income stream switches
+    on (and when a major liability falls away, freeing cash flow).
+
+    Surfaces the retirement transition at a glance — especially "bridge" gap
+    years between leaving work and the first guaranteed income, and the jump in
+    taxable income when RMDs begin at 73.
+
+    Events modeled: wages stopping at ``retirement_age``; Social Security at
+    ``ss_start_age``; a pension and/or annuity at their start ages; RMDs at 73
+    (estimated from the pre-tax IRA/401k balance pulled from Emoney, grown to 73
+    at 6%); and the monthly mortgage payment ending at ``mortgage_payoff_age``
+    (which frees, not adds, that cash flow).
+
+    Parameters
+    ----------
+    birth_year             : year of birth (e.g. 1962) — from get_client_profile
+    retirement_age         : age wages stop (default: not modeled)
+    social_security_annual : annual SS benefit in today's dollars
+    ss_start_age           : age SS begins (default 67)
+    pension_annual         : annual pension income (default 0 = none)
+    pension_start_age      : age the pension begins (defaults to retirement_age)
+    annuity_annual         : annual annuity payout (default 0 = none)
+    annuity_start_age      : age the annuity begins
+    mortgage_payment_monthly : current mortgage P&I payment (frees cash at payoff)
+    mortgage_payoff_age    : age the mortgage is paid off
+    """
+    current_year = datetime.now().year
+    current_age = current_year - birth_year
+    if current_age < 0 or current_age > 120:
+        return {"error": "birth_year looks implausible — check the value."}
+
+    events: list[dict] = []
+
+    def _add(age, label, source, annual_amount, kind):
+        if age is None:
+            return
+        events.append({
+            "age":           int(age),
+            "year":          current_year + (int(age) - current_age),
+            "event":         label,
+            "source":        source,
+            "annual_amount": round(annual_amount, 2) if annual_amount is not None else None,
+            "type":          kind,   # income_start | income_end | cash_flow_freed
+        })
+
+    if retirement_age is not None:
+        _add(retirement_age, "Wages stop (retirement)", "Employment", None, "income_end")
+
+    if social_security_annual and social_security_annual > 0:
+        _add(ss_start_age, "Social Security begins", "Social Security",
+             social_security_annual, "income_start")
+
+    if pension_annual and pension_annual > 0:
+        p_age = pension_start_age if pension_start_age is not None else retirement_age
+        _add(p_age, "Pension begins", "Pension", pension_annual, "income_start")
+
+    if annuity_annual and annuity_annual > 0:
+        _add(annuity_start_age, "Annuity payout begins", "Annuity",
+             annuity_annual, "income_start")
+
+    # RMDs at 73 — estimate first-year amount from the pre-tax balance.
+    rmd_first_year = None
+    rmd_note = None
+    retirement = await get_retirement_accounts(http_session)
+    if "error" not in retirement:
+        pretax = _pretax_rmd_balance(retirement)
+        if pretax > 0:
+            years_to_73 = max(0, 73 - current_age)
+            bal_at_73 = pretax * (1.06 ** years_to_73)
+            rmd_first_year = round(bal_at_73 / _rmd_factor(73), 2)
+            _add(73, "Required Minimum Distributions begin", "Pre-tax IRA/401k",
+                 rmd_first_year, "income_start")
+        else:
+            rmd_note = "No pre-tax IRA/401k balance found — no RMDs modeled."
+    else:
+        rmd_note = "Pre-tax balance unavailable (session?) — RMD event not modeled."
+
+    if mortgage_payment_monthly and mortgage_payment_monthly > 0 and mortgage_payoff_age is not None:
+        _add(mortgage_payoff_age, "Mortgage paid off (cash flow freed)", "Mortgage",
+             mortgage_payment_monthly * 12, "cash_flow_freed")
+
+    events.sort(key=lambda e: (e["age"], e["type"] != "income_end"))
+
+    # Identify the bridge gap: from retirement to the first guaranteed income start.
+    bridge = None
+    if retirement_age is not None:
+        starts = [e["age"] for e in events
+                  if e["type"] == "income_start" and e["age"] >= retirement_age]
+        if starts:
+            first_income_age = min(starts)
+            if first_income_age > retirement_age:
+                bridge = {
+                    "from_age":   retirement_age,
+                    "to_age":     first_income_age,
+                    "gap_years":  first_income_age - retirement_age,
+                    "detail": (
+                        f"From age {retirement_age} to {first_income_age} there is no new "
+                        f"guaranteed income switching on — this 'bridge' period must be funded "
+                        f"from the portfolio. It is also the prime Roth-conversion / gain-harvest "
+                        f"window (low taxable income before SS and RMDs). See get_roth_conversion_ladder."
+                    ),
+                }
+
+    return {
+        "as_of":            datetime.now().strftime("%Y-%m-%d"),
+        "birth_year":       birth_year,
+        "current_age":      current_age,
+        "timeline":         events,
+        "bridge_gap":       bridge,
+        "first_year_rmd_estimate": rmd_first_year,
+        "rmd_note":         rmd_note,
+        "note": (
+            "Amounts are in today's dollars and reflect the income that switches on at each "
+            "event (not a running total). 'cash_flow_freed' marks a liability ending, which "
+            "improves cash flow rather than adding taxable income. RMDs are estimated from the "
+            "pre-tax balance grown to age 73 at 6%. Provide Social Security / pension / annuity "
+            "figures to populate those events; get them from get_social_security_optimizer and "
+            "your benefit statements."
+        ),
+    }
+
+
+# ---------------------------------------------------------------------------
+# get_sequence_of_returns_stress_test  (#98)
+# ---------------------------------------------------------------------------
+
+# S&P 500 total annual returns (approx, dividends reinvested) — used to build
+# real adverse-sequence overlays. Refresh the tail occasionally; the early years
+# (the 2000 and 2008 crashes) are what drive the stress test and are fixed history.
+_SP500_ANNUAL: dict[int, float] = {
+    2000: -0.091, 2001: -0.119, 2002: -0.221, 2003: 0.287, 2004: 0.109,
+    2005: 0.049,  2006: 0.158,  2007: 0.055,  2008: -0.370, 2009: 0.265,
+    2010: 0.151,  2011: 0.021,  2012: 0.160,  2013: 0.324,  2014: 0.137,
+    2015: 0.014,  2016: 0.120,  2017: 0.218,  2018: -0.044, 2019: 0.315,
+    2020: 0.184,  2021: 0.287,  2022: -0.181, 2023: 0.263,  2024: 0.250,
+}
+
+
+def _blended_sequence(start_year: int, years: int, equity_pct: float,
+                      bond_return: float, mean_return: float) -> list[float]:
+    """Blend historical S&P returns from ``start_year`` with a flat bond return,
+    padding with ``mean_return`` once history runs out."""
+    seq = []
+    for i in range(years):
+        sp = _SP500_ANNUAL.get(start_year + i)
+        if sp is None:
+            seq.append(mean_return)
+        else:
+            seq.append(equity_pct * sp + (1 - equity_pct) * bond_return)
+    return seq
+
+
+def _run_return_path(returns: list[float], portfolio: float, net_withdrawal: float,
+                     inflation: float = 0.03) -> dict:
+    """Deterministic withdrawal walk over a fixed return sequence."""
+    bal = portfolio
+    spending = net_withdrawal
+    depletion_year = None
+    min_balance = portfolio
+    for yr, ret in enumerate(returns):
+        bal = bal * (1 + ret) - spending
+        spending *= (1 + inflation)
+        if bal < min_balance:
+            min_balance = bal
+        if bal <= 0 and depletion_year is None:
+            depletion_year = yr + 1
+            bal = 0.0
+            break
+    return {
+        "ending_balance": round(max(0.0, bal), 2),
+        "depleted":       depletion_year is not None,
+        "depletion_year": depletion_year,
+        "min_balance":    round(min_balance, 2),
+    }
+
+
+async def get_sequence_of_returns_stress_test(
+    http_session,
+    years: int = 30,
+    annual_spending: float | None = None,
+    equity_pct: float = 0.6,
+    bond_return: float = 0.03,
+    mean_return: float = 0.07,
+    social_security_annual: float = 0.0,
+    withdrawal_rate: float | None = None,
+) -> dict:
+    """
+    Expose sequence-of-returns risk that an averages-based Monte Carlo hides: a
+    bad first decade can sink a plan that succeeds on average returns.
+
+    Runs the SAME withdrawal plan over several fixed return paths that share a
+    similar long-run average but differ in ORDER:
+      - average      : a flat ``mean_return`` every year (the naive baseline)
+      - adverse_2000 : the 2000–02 dot-com bust front-loaded (blended by equity_pct)
+      - adverse_2008 : the 2008 crash front-loaded
+      - favorable    : the adverse_2000 returns in REVERSE order (good decade first)
+
+    The adverse vs. favorable contrast — identical returns, opposite order — is
+    the clearest illustration of why withdrawal-phase investors fear a bad start.
+
+    Parameters
+    ----------
+    years                  : retirement horizon (default 30)
+    annual_spending        : annual withdrawal in dollars (default: actual 12-month spend)
+    equity_pct             : equity weight used to blend S&P history with bonds (default 0.6)
+    bond_return            : flat annual bond return for the non-equity sleeve (default 0.03)
+    mean_return            : flat return for the 'average' baseline + history padding (default 0.07)
+    social_security_annual : annual SS/pension offset to the withdrawal (default 0)
+    withdrawal_rate        : if supplied, overrides annual_spending (e.g. 0.04 = 4% of portfolio)
+    """
+    years = max(5, min(years, 60))
+    equity_pct = min(1.0, max(0.0, equity_pct))
+
+    accts = await get_accounts(http_session)
+    if "error" in accts:
+        return accts
+    portfolio = max(0.0, (accts.get("total_assets") or 0) - (accts.get("total_liabilities") or 0))
+    if portfolio <= 0:
+        return {"error": "No investable portfolio found."}
+
+    if withdrawal_rate is not None:
+        annual_spending = portfolio * withdrawal_rate
+    elif annual_spending is None:
+        txns, ok = await _fetch_snb_data(http_session, days=365)
+        annual_spending = round(sum(
+            t["amount"] for t in txns if not t["is_income"] and not t["is_excluded"]
+        ), 2) if ok else portfolio * 0.04
+
+    net_withdrawal = max(0.0, annual_spending - social_security_annual)
+
+    seq_2000 = _blended_sequence(2000, years, equity_pct, bond_return, mean_return)
+    seq_2008 = _blended_sequence(2008, years, equity_pct, bond_return, mean_return)
+    seq_avg  = [mean_return] * years
+    seq_fav  = list(reversed(seq_2000))
+
+    scenarios = {
+        "average":      {"label": "Flat average return", "returns": seq_avg},
+        "adverse_2000": {"label": "Dot-com bust first (2000 start)", "returns": seq_2000},
+        "adverse_2008": {"label": "Great Financial Crisis first (2008 start)", "returns": seq_2008},
+        "favorable":    {"label": "Same as adverse_2000 but reversed (good decade first)", "returns": seq_fav},
+    }
+
+    results = {}
+    for key, sc in scenarios.items():
+        r = _run_return_path(sc["returns"], portfolio, net_withdrawal)
+        avg_ret = round(sum(sc["returns"]) / len(sc["returns"]) * 100, 2)
+        results[key] = {
+            "label":              sc["label"],
+            "avg_annual_return_pct": avg_ret,
+            **r,
+        }
+
+    avg_end = results["average"]["ending_balance"]
+    adv2000_end = results["adverse_2000"]["ending_balance"]
+    fav_end = results["favorable"]["ending_balance"]
+    # The 2000 vs favorable pair shares the identical return set.
+    sequence_gap = round(fav_end - adv2000_end, 2)
+
+    any_depleted = any(results[k]["depleted"] for k in ("adverse_2000", "adverse_2008"))
+
+    return {
+        "as_of":              datetime.now().strftime("%Y-%m-%d"),
+        "portfolio_value":    round(portfolio, 2),
+        "annual_spending":    round(annual_spending, 2),
+        "social_security_annual": round(social_security_annual, 2),
+        "net_annual_withdrawal":  round(net_withdrawal, 2),
+        "withdrawal_rate_pct":    round(net_withdrawal / portfolio * 100, 2) if portfolio else None,
+        "horizon_years":      years,
+        "assumptions": {
+            "equity_pct":      round(equity_pct * 100, 1),
+            "bond_return_pct": round(bond_return * 100, 1),
+            "mean_return_pct": round(mean_return * 100, 1),
+            "inflation_pct":   3.0,
+        },
+        "scenarios":          results,
+        "sequence_risk": {
+            "identical_returns_outcome_gap": sequence_gap,
+            "detail": (
+                f"'adverse_2000' and 'favorable' use the SAME annual returns in opposite order, "
+                f"yet end ${adv2000_end:,.0f} vs ${fav_end:,.0f} — a ${abs(sequence_gap):,.0f} swing "
+                f"driven purely by sequence. The flat-average baseline ends ${avg_end:,.0f}."
+            ),
+            "vulnerable": any_depleted,
+        },
+        "note": (
+            "Same withdrawal plan, different return ORDER. Withdrawing during an early downturn "
+            "locks in losses (you sell more shares at low prices), so a bad first decade is far "
+            "more dangerous than the same returns later. Returns blend historical S&P 500 totals "
+            "(by equity_pct) with a flat bond return; years beyond available history use mean_return. "
+            "Taxes and RMDs are not modeled. Complements run_monte_carlo_retirement (which averages "
+            "over random sequences)."
         ),
     }

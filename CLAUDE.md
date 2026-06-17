@@ -2,7 +2,7 @@
 
 MCP server bridging Claude (and other MCP clients) to Emoney Advisor (`emaplan.com`). Emoney has no public API; this server uses reverse-engineered internal JSON endpoints + Chrome cookie extraction for auth.
 
-**Current version: 1.0.25 · 106 MCP tools.** Read-only data tools (cards + SNB + Profile + Vault + plan goals), transaction/rules **write** tools, report links, and a large set of pure-Python planning/tax calculators (IRS 2026 figures).
+**Current version: 1.0.26 · 107 MCP tools.** Read-only data tools (cards + SNB + Profile + Vault + plan goals/cash flow), transaction/rules **write** tools, report links, and a large set of pure-Python planning/tax calculators (IRS 2026 figures).
 
 ---
 
@@ -172,7 +172,7 @@ All card fetches go through `_get_card(http, card_id)` in `_helpers.py` — 300 
 |------|------|------|
 | `/projection/montecarlo/goals` | per-goal probability of success + surplus/shortfall | `get_all_goals_funding_status` (#96) |
 | `/projection/goalfunding/retirement` | retirement funding $ vs expense $ | #96 |
-| `/projection/linear/cashflow/details` | year-by-year lifetime cash flow | #82 (next) |
+| `/projection/linear/cashflow/details` | year-by-year lifetime cash flow | `get_lifetime_cash_flow_projection` (#82) |
 | `/projection/montecarlo/probabilityofsuccess`, `/projection/retirement`, `/projection/montecarlo/assetspread` | plan success / retirement projection | future |
 | `/expenses`, `/expenses/education`, `/expenses/spending`, `/expenses/funding`, `/assumptions` | goal definitions + plan inputs | future |
 | (client-level) `/calculatednetworth`, `/investments/total`, `/plans/<plan>/assetallocation/details/...` | investment depth | #91/#92/#93/#95 |

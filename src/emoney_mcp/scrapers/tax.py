@@ -123,6 +123,21 @@ _LTCG_THRESHOLDS: dict[str, list[tuple[float, float]]] = {
 # NIIT (3.8%) kicks in above these thresholds
 _NIIT_THRESHOLD = {"single": 200_000, "mfj": 250_000, "hoh": 200_000}
 
+# Medicare IRMAA tiers (Part B + Part D income-related surcharges).
+# Each tier: (single_MAGI_upper, mfj_MAGI_upper, part_b_monthly, part_d_monthly).
+# Surcharges are PER beneficiary; the MAGI tested is from two years prior.
+# 2026 figures are projected — CMS finalizes them late in the prior year — so,
+# like the tax tables, refresh _IRMAA_YEAR and these rows annually.
+_IRMAA_YEAR = 2026
+_IRMAA_TIERS: list[tuple[float, float, float, float]] = [
+    (108_000,      216_000,        0.00,  0.00),
+    (136_000,      272_000,       74.00, 13.70),
+    (170_000,      340_000,      185.00, 35.30),
+    (204_000,      408_000,      295.90, 57.00),
+    (510_000,      765_000,      406.90, 78.60),
+    (float("inf"), float("inf"), 443.90, 85.80),
+]
+
 # IRS Uniform Lifetime Table — age → distribution period
 _RMD_TABLE: dict[int, float] = {
     72: 27.4, 73: 26.5, 74: 25.5, 75: 24.6, 76: 23.7,
@@ -172,6 +187,17 @@ def _bracket_ceiling(taxable_income: float, filing_status: str) -> float | None:
     fs = filing_status if filing_status in _BRACKETS else "mfj"
     for ceiling, _rate in _BRACKETS[fs]:
         if taxable_income <= ceiling:
+            return None if ceiling == float("inf") else ceiling
+    return None
+
+
+def _target_bracket_ceiling(target_rate: float, filing_status: str) -> float | None:
+    """Upper bound of the bracket whose marginal rate is ``target_rate`` (the
+    income level to 'fill up to'). Returns None if ``target_rate`` isn't one of
+    the discrete bracket rates (so callers can reject invalid input)."""
+    fs = filing_status if filing_status in _BRACKETS else "mfj"
+    for ceiling, rate in _BRACKETS[fs]:
+        if abs(rate - target_rate) < 1e-9:
             return None if ceiling == float("inf") else ceiling
     return None
 
@@ -947,6 +973,191 @@ async def get_multi_year_tax_projection(
         ),
         "caveat": _IRS_CAVEAT,
     }
+
+
+# ---------------------------------------------------------------------------
+# get_roth_conversion_ladder
+# ---------------------------------------------------------------------------
+
+async def get_roth_conversion_ladder(
+    http_session,
+    birth_year: int,
+    current_taxable_income: float,
+    target_bracket: float = 0.24,
+    years: int = 10,
+    filing_status: str = "mfj",
+    retirement_age: int | None = None,
+    social_security_annual: float = 0.0,
+    ss_start_age: int = 67,
+    income_growth: float = 0.03,
+) -> dict:
+    """
+    Build a multi-year Roth conversion ladder that fills each year's bracket up
+    to the top of ``target_bracket`` — converting more in low-income years and
+    less (or nothing) once wages, RMDs, or Social Security crowd the bracket.
+
+    This is the strategic counterpart to get_roth_conversion_analysis (a single
+    conversion today): it spreads conversions across the low-bracket window
+    before RMDs begin, capped each year by the pre-tax balance remaining.
+
+    Parameters mirror get_multi_year_tax_projection. ``target_bracket`` is the
+    marginal rate to fill up to (e.g. 0.24 = top of the 24% bracket).
+    """
+    fs = filing_status if filing_status in _BRACKETS else "mfj"
+    ceiling = _target_bracket_ceiling(target_bracket, fs)
+    if ceiling is None:
+        return {"error": "target_bracket must be one of 0.10, 0.12, 0.22, 0.24, 0.32, 0.35."}
+
+    # Reuse the projection engine for the per-year income baseline (DRY).
+    proj = await get_multi_year_tax_projection(
+        http_session, birth_year=birth_year, current_taxable_income=current_taxable_income,
+        years=years, filing_status=fs, retirement_age=retirement_age,
+        social_security_annual=social_security_annual, ss_start_age=ss_start_age,
+        income_growth=income_growth,
+    )
+    if "error" in proj:
+        return proj
+
+    pretax_remaining = proj["current_pretax_balance"]
+    ladder = []
+    total_converted = 0.0
+    total_tax = 0.0
+    for row in proj["projection"]:
+        base_taxable = row["taxable_income"]
+        # Grow the remaining pre-tax balance and draw that year's RMD first.
+        pretax_remaining = round(pretax_remaining * 1.06, 2) if ladder else pretax_remaining
+        pretax_remaining = max(0.0, round(pretax_remaining - row["rmd"], 2))
+
+        room = ceiling - base_taxable
+        convert = max(0.0, round(min(room, pretax_remaining), 2))
+        conv_tax = round(_compute_tax(base_taxable + convert, fs) - _compute_tax(base_taxable, fs), 2)
+        conv_rate = round(conv_tax / convert * 100, 1) if convert > 0 else 0.0
+        pretax_remaining = max(0.0, round(pretax_remaining - convert, 2))
+        total_converted += convert
+        total_tax += conv_tax
+
+        ladder.append({
+            "year":                  row["year"],
+            "age":                   row["age"],
+            "baseline_taxable_income": base_taxable,
+            "recommended_conversion": convert,
+            "conversion_tax":        conv_tax,
+            "conversion_rate_pct":   conv_rate,
+            "fills_to_bracket_pct":  round(target_bracket * 100, 1),
+            "pretax_balance_remaining": pretax_remaining,
+        })
+
+    eff = round(total_tax / total_converted * 100, 1) if total_converted > 0 else 0.0
+    # First-year RMD avoided on the converted money (rough proxy for the benefit):
+    # what the converted total would have thrown off as an RMD at the first table age.
+    rmd_avoided_est = round(total_converted / _rmd_factor(73), 2) if total_converted > 0 else 0.0
+
+    return {
+        "as_of":                  datetime.now().strftime("%Y-%m-%d"),
+        "filing_status":          fs,
+        "target_bracket_pct":     round(target_bracket * 100, 1),
+        "fill_to_taxable_income": ceiling,
+        "horizon_years":          years,
+        "current_pretax_balance": proj["current_pretax_balance"],
+        "ladder":                 ladder,
+        "total_converted":        round(total_converted, 2),
+        "total_conversion_tax":   round(total_tax, 2),
+        "blended_conversion_rate_pct": eff,
+        "pretax_balance_after_ladder": ladder[-1]["pretax_balance_remaining"] if ladder else 0.0,
+        "est_annual_rmd_avoided": rmd_avoided_est,
+        "note": (
+            "Each year converts the gap between projected taxable income and the top "
+            "of the target bracket, capped by the pre-tax balance remaining. Baseline "
+            "income (incl. RMDs) is from get_multi_year_tax_projection; conversions are "
+            "assumed paid from outside funds (not withheld). Converting reduces future "
+            "RMDs — est_annual_rmd_avoided is a rough proxy. State tax not modeled."
+        ),
+        "caveat": _IRS_CAVEAT,
+    }
+
+
+# ---------------------------------------------------------------------------
+# get_irmaa_analysis
+# ---------------------------------------------------------------------------
+
+def _irmaa_tier(magi: float, mfj: bool) -> int:
+    """Index into _IRMAA_TIERS for a given MAGI."""
+    for i, row in enumerate(_IRMAA_TIERS):
+        upper = row[1] if mfj else row[0]
+        if magi <= upper:
+            return i
+    return len(_IRMAA_TIERS) - 1
+
+
+async def get_irmaa_analysis(
+    http_session,
+    magi: float,
+    filing_status: str = "mfj",
+    proposed_additional_income: float = 0.0,
+) -> dict:
+    """
+    Determine the Medicare IRMAA (Part B + Part D) surcharge tier for a given
+    MAGI, the distance to the next cliff, and — if ``proposed_additional_income``
+    is given — the extra annual surcharge that a Roth conversion or capital-gain
+    realization of that size would trigger.
+
+    IRMAA is a cliff (not a phase-in): $1 over a threshold bumps you to the next
+    tier's full surcharge. Surcharges are PER Medicare beneficiary, based on MAGI
+    from two years prior.
+
+    Parameters
+    ----------
+    magi                       : modified AGI to test (two-years-prior income)
+    filing_status              : 'mfj' or 'single' (hoh uses the single table)
+    proposed_additional_income : extra income to model on top of MAGI (e.g. a
+                                 planned Roth conversion); default 0
+    """
+    mfj = filing_status == "mfj"
+    cur = _irmaa_tier(magi, mfj)
+    s, j, part_b, part_d = _IRMAA_TIERS[cur]
+    monthly = round(part_b + part_d, 2)
+    annual_per_person = round(monthly * 12, 2)
+
+    # The current tier's upper bound is the next cliff.
+    next_cliff = None
+    distance = None
+    if cur < len(_IRMAA_TIERS) - 1:
+        next_cliff = j if mfj else s
+        distance = round(next_cliff - magi, 2)
+
+    result = {
+        "as_of":                    datetime.now().strftime("%Y-%m-%d"),
+        "irmaa_year":               _IRMAA_YEAR,
+        "magi":                     round(magi, 2),
+        "filing_status":            "mfj" if mfj else "single",
+        "current_tier":             cur + 1,        # 1 = no surcharge
+        "monthly_surcharge_part_b": part_b,
+        "monthly_surcharge_part_d": part_d,
+        "annual_surcharge_per_person": annual_per_person,
+        "next_cliff_magi":          next_cliff,
+        "distance_to_next_cliff":   distance,
+    }
+
+    if proposed_additional_income and proposed_additional_income > 0:
+        new_magi = magi + proposed_additional_income
+        new_tier = _irmaa_tier(new_magi, mfj)
+        _, _, nb, nd = _IRMAA_TIERS[new_tier]
+        new_annual = round((nb + nd) * 12, 2)
+        added = round(new_annual - annual_per_person, 2)
+        result["proposed_additional_income"] = round(proposed_additional_income, 2)
+        result["proposed_magi"] = round(new_magi, 2)
+        result["proposed_tier"] = new_tier + 1
+        result["added_annual_surcharge_per_person"] = added
+        result["crosses_cliff"] = new_tier > cur
+
+    result["note"] = (
+        "Surcharges are per Medicare beneficiary (double for a couple both enrolled). "
+        "IRMAA uses MAGI from two years prior and is a hard cliff — a dollar over a "
+        "threshold triggers the next tier's full surcharge. Tier 1 means no surcharge. "
+        f"{_IRMAA_YEAR} surcharge amounts are estimates pending CMS finalization."
+    )
+    result["caveat"] = _IRS_CAVEAT
+    return result
 
 
 # ---------------------------------------------------------------------------

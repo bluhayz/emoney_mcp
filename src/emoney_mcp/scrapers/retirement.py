@@ -1488,3 +1488,199 @@ async def get_sequence_of_returns_stress_test(
             "over random sequences)."
         ),
     }
+
+
+# ---------------------------------------------------------------------------
+# model_life_event_scenario  (#97)
+# ---------------------------------------------------------------------------
+
+# Recognized life events and their default knobs. Each maps to deltas applied
+# to the baseline retirement projection: a one-time lump change to the portfolio,
+# a recurring annual-spending change (optionally for a limited number of years),
+# and/or a one-time market shock (fractional drop in year 1).
+_LIFE_EVENTS = {
+    "early_retirement", "home_purchase", "new_child",
+    "job_loss", "downsizing", "market_crash",
+}
+
+
+def _project_depletion(portfolio: float, annual_withdrawal: float, years: int,
+                       real_return: float, shock_pct: float = 0.0,
+                       extra_spend: float = 0.0, extra_spend_years: int = 0) -> dict:
+    """Deterministic real-return depletion walk. Returns ending balance, the
+    year of depletion (1-based) if any, and the per-year balance path."""
+    bal = float(portfolio)
+    path = []
+    depletion_year = None
+    for yr in range(1, years + 1):
+        ret = real_return
+        if yr == 1 and shock_pct:
+            ret = (1 - shock_pct) * (1 + real_return) - 1   # shock then normal growth
+        spend = annual_withdrawal + (extra_spend if yr <= extra_spend_years else 0.0)
+        bal = bal * (1 + ret) - spend
+        if bal <= 0 and depletion_year is None:
+            depletion_year = yr
+            bal = 0.0
+            path.append(0.0)
+            break
+        path.append(round(bal, 2))
+    return {
+        "ending_balance": round(max(0.0, bal), 2),
+        "depleted":       depletion_year is not None,
+        "depletion_year": depletion_year,
+        "lasts_full_horizon": depletion_year is None,
+        "balance_path":   path,
+    }
+
+
+async def model_life_event_scenario(
+    http_session,
+    event: str,
+    params: dict | None = None,
+    years: int = 30,
+    annual_spending: float | None = None,
+    real_return: float = 0.04,
+) -> dict:
+    """
+    Model a named life event against a baseline retirement projection and report
+    the impact — the "what happens to the plan if ___?" question clients ask.
+
+    Runs a deterministic real-return depletion projection twice (baseline vs.
+    scenario) and contrasts ending balance and depletion year. Supported events
+    and their ``params`` knobs (all optional; sensible defaults applied):
+
+      - early_retirement : {years_earlier (5), annual_savings_foregone (30000)}
+            — start drawing sooner; lose the foregone savings and extend the horizon.
+      - home_purchase    : {down_payment (100000), monthly_payment_change (0)}
+            — lump out of the portfolio + a recurring annual spending increase.
+      - new_child        : {annual_cost (15000), years (18), college_lump (0)}
+            — temporary annual spending increase, optional college lump at the end.
+      - job_loss         : {months (6), monthly_expenses (annual_spending/12)}
+            — a one-time portfolio drawdown to cover the income gap.
+      - downsizing       : {equity_freed (200000), monthly_spending_change (-500)}
+            — lump INTO the portfolio + a recurring spending decrease.
+      - market_crash     : {drop_pct (0.30)}
+            — a one-time portfolio drop in year 1 (sequence-risk flavored).
+
+    Parameters
+    ----------
+    event           : one of the supported life events above
+    params          : event-specific overrides (object); defaults applied per event
+    years           : projection horizon (default 30)
+    annual_spending : baseline annual withdrawal (default: actual 12-month spend)
+    real_return     : assumed real (after-inflation) portfolio return (default 0.04)
+    """
+    ev = (event or "").strip().lower()
+    if ev not in _LIFE_EVENTS:
+        return {"error": (f"Unknown event '{event}'. Supported: "
+                          f"{', '.join(sorted(_LIFE_EVENTS))}.")}
+    p = params or {}
+    years = max(5, min(years, 60))
+
+    accts = await get_accounts(http_session)
+    if "error" in accts:
+        return accts
+    portfolio = _calc_investable_assets(accts)
+    if portfolio <= 0:
+        return {"error": "No investable portfolio found."}
+
+    if annual_spending is None:
+        txns, ok = await _fetch_snb_data(http_session, days=365)
+        annual_spending = round(sum(
+            t["amount"] for t in txns if not t["is_income"] and not t["is_excluded"]
+        ), 2) if ok else round(portfolio * 0.04, 2)
+
+    # Baseline projection.
+    base = _project_depletion(portfolio, annual_spending, years, real_return)
+
+    # Build the scenario deltas.
+    scen_portfolio = portfolio
+    scen_withdrawal = annual_spending
+    scen_years = years
+    shock = 0.0
+    extra_spend = 0.0
+    extra_spend_years = 0
+    tradeoff = ""
+
+    if ev == "early_retirement":
+        years_earlier = int(p.get("years_earlier", 5))
+        foregone = float(p.get("annual_savings_foregone", 30_000))
+        scen_portfolio = max(0.0, portfolio - foregone * years_earlier)
+        scen_years = min(60, years + years_earlier)
+        tradeoff = (f"Retiring {years_earlier} years earlier forgoes ~${foregone*years_earlier:,.0f} "
+                    f"of savings and adds {years_earlier} years of withdrawals.")
+    elif ev == "home_purchase":
+        down = float(p.get("down_payment", 100_000))
+        monthly_change = float(p.get("monthly_payment_change", 0))
+        scen_portfolio = max(0.0, portfolio - down)
+        scen_withdrawal = annual_spending + monthly_change * 12
+        tradeoff = (f"A ${down:,.0f} down payment leaves the portfolio"
+                    + (f" and adds ${monthly_change*12:,.0f}/yr of housing cost." if monthly_change else "."))
+    elif ev == "new_child":
+        annual_cost = float(p.get("annual_cost", 15_000))
+        child_years = int(p.get("years", 18))
+        college_lump = float(p.get("college_lump", 0))
+        extra_spend = annual_cost
+        extra_spend_years = min(child_years, years)
+        scen_portfolio = max(0.0, portfolio - college_lump)
+        tradeoff = (f"~${annual_cost:,.0f}/yr for {child_years} years"
+                    + (f" plus a ${college_lump:,.0f} college lump." if college_lump else "."))
+    elif ev == "job_loss":
+        months = int(p.get("months", 6))
+        monthly_exp = float(p.get("monthly_expenses", annual_spending / 12))
+        gap = monthly_exp * months
+        scen_portfolio = max(0.0, portfolio - gap)
+        tradeoff = (f"{months} months without income draws ~${gap:,.0f} from the portfolio up front.")
+    elif ev == "downsizing":
+        equity = float(p.get("equity_freed", 200_000))
+        monthly_change = float(p.get("monthly_spending_change", -500))
+        scen_portfolio = portfolio + equity
+        scen_withdrawal = max(0.0, annual_spending + monthly_change * 12)
+        tradeoff = (f"Freeing ${equity:,.0f} of home equity"
+                    + (f" and cutting ${abs(monthly_change)*12:,.0f}/yr of spending." if monthly_change else "."))
+    elif ev == "market_crash":
+        shock = min(0.9, max(0.0, float(p.get("drop_pct", 0.30))))
+        tradeoff = (f"A {shock*100:.0f}% market drop in year 1 — the sequence-of-returns danger zone "
+                    f"if it lands early in retirement (see get_sequence_of_returns_stress_test).")
+
+    scenario = _project_depletion(scen_portfolio, scen_withdrawal, scen_years, real_return,
+                                  shock_pct=shock, extra_spend=extra_spend,
+                                  extra_spend_years=extra_spend_years)
+
+    end_delta = round(scenario["ending_balance"] - base["ending_balance"], 2)
+
+    return {
+        "as_of":            datetime.now().strftime("%Y-%m-%d"),
+        "event":            ev,
+        "params_applied":   p,
+        "baseline_inputs": {
+            "investable_portfolio": round(portfolio, 2),
+            "annual_spending":      round(annual_spending, 2),
+            "horizon_years":        years,
+            "real_return_pct":      round(real_return * 100, 1),
+        },
+        "scenario_inputs": {
+            "investable_portfolio": round(scen_portfolio, 2),
+            "annual_spending":      round(scen_withdrawal, 2),
+            "horizon_years":        scen_years,
+            "one_time_shock_pct":   round(shock * 100, 1) if shock else 0,
+            "temporary_extra_spending": round(extra_spend, 2) if extra_spend else 0,
+            "temporary_extra_spending_years": extra_spend_years,
+        },
+        "baseline":         base,
+        "scenario":         scenario,
+        "impact": {
+            "ending_balance_delta": end_delta,
+            "baseline_lasts":  base["lasts_full_horizon"],
+            "scenario_lasts":  scenario["lasts_full_horizon"],
+            "newly_at_risk":   base["lasts_full_horizon"] and not scenario["lasts_full_horizon"],
+            "key_tradeoff":    tradeoff,
+        },
+        "note": (
+            "Simplified deterministic projection at a constant real return — it does NOT model "
+            "market volatility, taxes, Social Security, or RMDs. Use it to size the directional "
+            "impact of a decision, then pressure-test with run_monte_carlo_retirement and "
+            "get_sequence_of_returns_stress_test. 'real_return' is after inflation, so spending is "
+            "held flat in real terms."
+        ),
+    }

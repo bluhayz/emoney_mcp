@@ -330,6 +330,12 @@ Get me a link to the Liquidity Report.
 | `get_benchmark_comparison` | Portfolio return vs. a blended stock/bond benchmark's long-run expected return |
 | `get_sequence_of_returns_stress_test` | Portfolio survival under an adverse early-returns sequence (2000/2008 starts) vs. the average case — the risk Monte Carlo averages away |
 
+### Advanced Planning Calculators (v1.0.23 — 2 new tools)
+| Tool | What it answers |
+|------|----------------|
+| `model_life_event_scenario` | "What happens to the plan if ___?" — early retirement, home purchase, new child, job loss, downsizing, or a market crash, baseline vs. scenario |
+| `get_estate_liquidity_analysis` | Can the estate pay its tax + debts + final expenses without a forced sale? Flags illiquid-heavy estates at risk |
+
 ---
 
 ## Tax planning disclaimer

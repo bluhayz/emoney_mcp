@@ -316,6 +316,13 @@ Then point Claude Desktop at your local clone:
 | `get_benchmark_comparison` | Portfolio annualized return vs. a blended stock/bond benchmark's long-run expected return. Optional: `benchmark` (e.g. `60/40`) |
 | `get_sequence_of_returns_stress_test` | Same withdrawal plan over fixed return paths in different order (flat average, 2000/2008 crash front-loaded, and reversed) to expose sequence-of-returns risk. Optional: `years`, `annual_spending`, `equity_pct`, `bond_return`, `mean_return`, `social_security_annual`, `withdrawal_rate` |
 
+### 🧮 Advanced Planning Calculators (v1.0.23)
+
+| Tool | Description |
+|------|-------------|
+| `model_life_event_scenario` | "What happens to the plan if ___?" — models early_retirement, home_purchase, new_child, job_loss, downsizing, or market_crash against a baseline retirement projection and contrasts ending balance/depletion. Required: `event`. Optional: `params` (object), `years`, `annual_spending`, `real_return` |
+| `get_estate_liquidity_analysis` | Whether the estate can pay tax + debts + final expenses without a forced sale; flags illiquid-heavy estates at risk. Optional: `filing_status`, `final_expenses`, `liquidation_haircut` |
+
 ---
 
 ## Example questions to ask Claude
@@ -502,7 +509,7 @@ Tools with multiple independent data sources use `asyncio.gather()` for parallel
 Claude Desktop
      │  MCP stdio
      ▼
-emoney_mcp/server.py         ← tool registration + dispatch (102 tools)
+emoney_mcp/server.py         ← tool registration + dispatch (104 tools)
 emoney_mcp/scraper.py         ← re-export shim (backward-compatible)
 emoney_mcp/scrapers/          ← domain-split scraping package
   ├── _helpers.py             ←   shared URL constants + TTL-cached _get_card()

@@ -2,7 +2,7 @@
 
 MCP server bridging Claude (and other MCP clients) to Emoney Advisor (`emaplan.com`). Emoney has no public API; this server uses reverse-engineered internal JSON endpoints + Chrome cookie extraction for auth.
 
-**Current version: 1.0.22 · 102 MCP tools.** Read-only data tools (cards + SNB + Profile), transaction/rules **write** tools, report links, and a large set of pure-Python planning/tax calculators (IRS 2026 figures).
+**Current version: 1.0.23 · 104 MCP tools.** Read-only data tools (cards + SNB + Profile), transaction/rules **write** tools, report links, and a large set of pure-Python planning/tax calculators (IRS 2026 figures).
 
 ---
 
@@ -38,14 +38,15 @@ src/emoney_mcp/
     │                  #   run_monte_carlo_retirement, get_dynamic_withdrawal_guardrails, run_scenario,
     │                  #   get_financial_independence_roadmap, get_withdrawal_sequencing_strategy,
     │                  #   get_retirement_income_plan, get_income_sources_timeline (#85),
-    │                  #   get_sequence_of_returns_stress_test (#98)
+    │                  #   get_sequence_of_returns_stress_test (#98), model_life_event_scenario (#97)
     ├── portfolio.py   # get_asset_location_efficiency, get_rebalancing_targets, explore_emoney_cards,
     │                  #   get_available_cards, get_portfolio_concentration, get_net_worth_velocity,
     │                  #   get_tax_drag_analysis, get_portfolio_risk_metrics, get_benchmark_comparison (#94)
     ├── planning.py    # get_insurance_gap_analysis, get_home_equity, get_fire_number,
     │                  #   get_gifting_and_estate_strategy, get_mortgage_amortization_schedule,
     │                  #   get_mortgage_refinance_analysis, get_mortgage_payoff_vs_invest,
-    │                  #   get_healthcare_cost_projection, get_hsa_optimization (#102)
+    │                  #   get_healthcare_cost_projection, get_hsa_optimization (#102),
+    │                  #   get_estate_liquidity_analysis (#81)
     ├── transactions.py# WRITE ops via CS/Spending — update_transaction, hide_transaction,
     │                  #   get/update_transaction_splits, get/add/update/apply_transaction_rule (v0.9.0+)
     ├── reports.py     # get_reports (parse Reports page), get_report_url (CS/Reports/GetReportUrl) (v0.9.0+)

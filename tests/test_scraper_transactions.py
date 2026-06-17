@@ -74,7 +74,7 @@ class TestGetCapitalGains:
         from emoney_mcp.scraper import get_capital_gains
         result = await get_capital_gains(http_session, year=2026)
         # 279213.48 + 14414.46 + 33367.26 = 326995.20
-        assert result["total_proceeds"] == pytest.approx(326995.20, rel=0.01)
+        assert result["total_sale_proceeds"] == pytest.approx(326995.20, rel=0.01)
 
     @pytest.mark.asyncio
     async def test_dividends_identified(self, http_session):

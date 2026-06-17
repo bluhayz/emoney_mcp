@@ -26,6 +26,7 @@ _match_tax_bucket(name, type_map)     — fuzzy lookup in type_map
 """
 
 import logging
+import re
 
 from ._helpers import _get_card
 
@@ -343,6 +344,11 @@ async def get_debt_payoff_plan(
     _MORTGAGE_KEYWORDS = {"mortgage", "home loan", "heloc"}
     _CC_KEYWORDS       = {"credit", "card", "visa", "mastercard", "mc", "amex",
                           "discover", "citi", "chase", "capital one"}
+    # Match on word boundaries so short/generic keywords don't false-positive on
+    # incidental substrings (e.g. "mc" inside "Comcast", "card" inside "Cardinal").
+    _CC_PATTERN = re.compile(
+        r"\b(?:" + "|".join(re.escape(k) for k in _CC_KEYWORDS) + r")\b"
+    )
 
     all_debts    = []
     mortgages    = []
@@ -362,7 +368,7 @@ async def get_debt_payoff_plan(
                 })
                 continue
 
-            is_cc = any(kw in name_lower for kw in _CC_KEYWORDS)
+            is_cc = bool(_CC_PATTERN.search(name_lower))
             apr   = assumed_credit_card_apr if is_cc else assumed_loan_apr
             debt_type = "credit_card" if is_cc else "loan"
 
@@ -720,6 +726,11 @@ async def get_client_profile(http_session) -> dict:
         "dependents": dependents,
         "properties": properties,
         "household_size": len(clients) + len(dependents),
+        "pii_notice": (
+            "This response contains personal data (names, dates of birth, and email "
+            "addresses) for the whole household, including any dependents/minors. It "
+            "flows into the LLM conversation/context — handle and retain accordingly."
+        ),
         "note": (
             "Use primary.age and primary.birth_year as inputs to tax/retirement tools. "
             "Profile data reflects the last advisor-confirmed sync, not real-time."

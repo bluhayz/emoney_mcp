@@ -15,6 +15,7 @@ No data is modified — all requests are GET only.
 import re
 from urllib.parse import urljoin
 
+from ..browser import is_emoney_host
 from ._helpers import BASE_URL
 
 # ---------------------------------------------------------------------------
@@ -139,6 +140,21 @@ async def explore_emoney_site(http_session) -> dict:
                     "url":        url,
                     "status":     status,
                     "note":       "redirected to login — page may not exist or requires different permissions",
+                    "endpoints":  [],
+                    "nav_links":  [],
+                    "title":      "",
+                })
+                continue
+
+            # Never mine HTML/endpoints from a response that redirected off the
+            # trusted emaplan.com host (SSO provider, error page, misconfigured
+            # redirect) — those endpoints would not be legitimate Emoney internals.
+            if not is_emoney_host(final_url):
+                pages_visited.append({
+                    "section":    section,
+                    "url":        url,
+                    "status":     status,
+                    "note":       f"redirected off emaplan.com to {final_url} — content not mined",
                     "endpoints":  [],
                     "nav_links":  [],
                     "title":      "",

@@ -18,10 +18,12 @@ import ctypes
 import json
 import logging
 import os
+import shutil
 import sqlite3
 import tempfile
 import threading
 from pathlib import Path
+from urllib.parse import urlparse
 
 from curl_cffi.requests import AsyncSession
 
@@ -50,6 +52,20 @@ _CHROME_STATE_SRC = (
     Path(os.environ.get("LOCALAPPDATA", ""))
     / "Google/Chrome/User Data/Local State"
 )
+
+
+def is_emoney_host(url: str) -> bool:
+    """Return True if the URL's host is on the trusted emaplan.com domain.
+
+    Used to confirm a response (after following redirects) actually landed on
+    Emoney before trusting it for auth checks or HTML/endpoint mining — so a
+    redirect through a third-party domain can't be mistaken for Emoney content.
+    """
+    try:
+        host = (urlparse(url).hostname or "").lower()
+    except Exception:
+        return False
+    return host == "emaplan.com" or host.endswith(".emaplan.com")
 
 
 def _is_signin_url(url: str) -> bool:
@@ -113,9 +129,54 @@ def _copy_locked_file(src: Path, dst: str) -> bool:
 # macOS Chrome cookie extraction (Keychain + AES-128-CBC)
 # ---------------------------------------------------------------------------
 
-_MACOS_CHROME_COOKIE_SRC = (
-    Path.home() / "Library/Application Support/Google/Chrome/Default/Cookies"
-)
+_MACOS_CHROME_SUPPORT = Path.home() / "Library/Application Support/Google"
+
+
+def _macos_cookie_db_candidates() -> list[Path]:
+    """Chrome Cookies DBs across channels (stable/Beta/Dev/Canary) and profiles.
+
+    Returns the stable channel's Default profile first, then its other profiles,
+    then the other channels — so the most common case is tried first. Mirrors the
+    profile-glob discovery used on Windows instead of hardcoding Default only.
+    """
+    candidates: list[Path] = []
+    for channel_dir in sorted(_MACOS_CHROME_SUPPORT.glob("Chrome*")):
+        default = channel_dir / "Default" / "Cookies"
+        if default.exists():
+            candidates.append(default)
+        for prof in sorted(channel_dir.glob("Profile */Cookies")):
+            candidates.append(prof)
+    return candidates
+
+
+def _read_macos_cookie_rows(db_path: Path) -> list:
+    """Read emaplan cookie rows from a Chrome Cookies DB, WAL writes included.
+
+    Copies the DB *and* its -wal/-shm sidecars to a temp dir and opens the copy
+    normally (not immutable=1), so the newest cookies still living in the WAL —
+    e.g. a session cookie written moments ago — aren't missed.
+    """
+    tmpdir = tempfile.mkdtemp(prefix="emoney_cookies_")
+    try:
+        tmp_db = Path(tmpdir) / "Cookies"
+        shutil.copy2(db_path, tmp_db)
+        for suffix in ("-wal", "-shm"):
+            side = db_path.with_name(db_path.name + suffix)
+            if side.exists():
+                shutil.copy2(side, Path(tmpdir) / ("Cookies" + suffix))
+        conn = sqlite3.connect(f"file:{tmp_db}", uri=True)
+        try:
+            return conn.execute(
+                "SELECT name, encrypted_value, host_key FROM cookies "
+                "WHERE host_key LIKE '%emaplan%'"
+            ).fetchall()
+        finally:
+            conn.close()
+    except Exception as e:
+        _log.debug("macOS cookie DB read failed for %s: %s", db_path, type(e).__name__)
+        return []
+    finally:
+        shutil.rmtree(tmpdir, ignore_errors=True)
 
 
 def _get_chrome_macos_key() -> bytes | None:
@@ -179,38 +240,35 @@ def _decrypt_macos_cookie(enc_val: bytes, key: bytes) -> str | None:
 
 
 def _extract_macos_cookies() -> dict:
-    """Read + decrypt emaplan.com cookies from macOS Chrome. {} on any failure."""
-    if not _MACOS_CHROME_COOKIE_SRC.exists():
+    """Read + decrypt emaplan.com cookies from macOS Chrome. {} on any failure.
+
+    Searches every Chrome channel/profile and returns the first one that yields
+    emaplan cookies (the profile the user is logged in to).
+    """
+    candidates = _macos_cookie_db_candidates()
+    if not candidates:
         return {}
     key = _get_chrome_macos_key()
     if key is None:
         return {}
-    try:
-        # Open immutable so Chrome's lock on the live DB doesn't block the read.
-        conn = sqlite3.connect(f"file:{_MACOS_CHROME_COOKIE_SRC}?immutable=1", uri=True)
-        rows = conn.execute(
-            "SELECT name, encrypted_value, host_key FROM cookies "
-            "WHERE host_key LIKE '%emaplan%'"
-        ).fetchall()
-        conn.close()
-    except Exception as e:
-        _log.debug("macOS cookie DB read failed: %s", type(e).__name__)
-        return {}
 
-    cookies: dict = {}
     v20_skipped = 0
-    for name, enc_val, host in rows:
-        enc_bytes = bytes(enc_val)
-        if enc_bytes[:3] == b"v20":
-            # App-Bound Encryption (Chrome 127+) — not decryptable via the
-            # Keychain PBKDF2 path. Count and skip rather than failing silently.
-            v20_skipped += 1
-            continue
-        val = _decrypt_macos_cookie(enc_bytes, key)
-        if val is not None:
-            cookies[name] = val
+    for db_path in candidates:
+        cookies: dict = {}
+        for name, enc_val, host in _read_macos_cookie_rows(db_path):
+            enc_bytes = bytes(enc_val)
+            if enc_bytes[:3] == b"v20":
+                # App-Bound Encryption (Chrome 127+) — not decryptable via the
+                # Keychain PBKDF2 path. Count and skip rather than failing silently.
+                v20_skipped += 1
+                continue
+            val = _decrypt_macos_cookie(enc_bytes, key)
+            if val is not None:
+                cookies[name] = val
+        if cookies:
+            return cookies
 
-    if v20_skipped and not cookies:
+    if v20_skipped:
         _log.warning(
             "macOS Chrome cookies use App-Bound Encryption (v20, Chrome 127+), which "
             "automatic extraction does not support (%d emaplan cookie(s) skipped). "
@@ -218,7 +276,7 @@ def _extract_macos_cookies() -> dict:
             "and sign in via the browser window that opens.",
             v20_skipped,
         )
-    return cookies
+    return {}
 
 
 def extract_chrome_emaplan_cookies() -> dict:
@@ -349,7 +407,10 @@ class EmoneyHttpSession:
         http = await self.get_http()
         try:
             resp = await http.get(HOME_URL, allow_redirects=True, timeout=20)
-            return not _is_signin_url(str(resp.url))
+            final_url = str(resp.url)
+            # Must land back on emaplan.com (not a third-party SSO/error domain)
+            # AND not be sitting in the signin/OAuth flow.
+            return is_emoney_host(final_url) and not _is_signin_url(final_url)
         except Exception:
             return False
 

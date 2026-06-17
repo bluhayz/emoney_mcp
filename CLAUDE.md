@@ -2,7 +2,7 @@
 
 MCP server bridging Claude (and other MCP clients) to Emoney Advisor (`emaplan.com`). Emoney has no public API; this server uses reverse-engineered internal JSON endpoints + Chrome cookie extraction for auth.
 
-**Current version: 1.0.23 · 104 MCP tools.** Read-only data tools (cards + SNB + Profile), transaction/rules **write** tools, report links, and a large set of pure-Python planning/tax calculators (IRS 2026 figures).
+**Current version: 1.0.24 · 105 MCP tools.** Read-only data tools (cards + SNB + Profile + Vault), transaction/rules **write** tools, report links, and a large set of pure-Python planning/tax calculators (IRS 2026 figures).
 
 ---
 
@@ -50,6 +50,8 @@ src/emoney_mcp/
     ├── transactions.py# WRITE ops via CS/Spending — update_transaction, hide_transaction,
     │                  #   get/update_transaction_splits, get/add/update/apply_transaction_rule (v0.9.0+)
     ├── reports.py     # get_reports (parse Reports page), get_report_url (CS/Reports/GetReportUrl) (v0.9.0+)
+    ├── vault.py       # get_vault_documents (#104) — scrapes vaultApi.BaseUrl from /ema/CS/Vault,
+    │                  #   then GETs /ema/api/v1/vault/<guid>/items?path=Vault (same-origin JSON, cookie auth)
     └── explore.py     # explore_emoney_site — dev/discovery crawler that mines pages for endpoints
 ```
 

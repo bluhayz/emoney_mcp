@@ -1767,6 +1767,50 @@ async def list_tools() -> list[Tool]:
                 "required": [],
             },
         ),
+        # ── Calculator wave 4 (#97, #81) ──────────────────────────────────
+        Tool(
+            name="model_life_event_scenario",
+            description=(
+                "Models a named life event against a baseline retirement projection — the 'what "
+                "happens to the plan if ___?' question. Runs a deterministic real-return depletion "
+                "projection twice (baseline vs. scenario) and contrasts ending balance and depletion "
+                "year. Events: early_retirement, home_purchase, new_child, job_loss, downsizing, "
+                "market_crash — each with optional params (e.g. {drop_pct:0.4} or {down_payment:150000}). "
+                "Required: event. Optional: params (object), years (30), annual_spending, real_return (0.04). "
+                "A simplified model — pressure-test with run_monte_carlo_retirement and the stress test."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "event":           {"type": "string", "description": "early_retirement | home_purchase | new_child | job_loss | downsizing | market_crash"},
+                    "params":          {"type": "object", "description": "Event-specific overrides (e.g. {\"drop_pct\": 0.4}); defaults applied per event"},
+                    "years":           {"type": "integer", "description": "Projection horizon (default 30)"},
+                    "annual_spending": {"type": "number",  "description": "Baseline annual withdrawal (default: actual 12-month spend)"},
+                    "real_return":     {"type": "number",  "description": "Assumed real (after-inflation) return (default 0.04)"},
+                },
+                "required": ["event"],
+            },
+        ),
+        Tool(
+            name="get_estate_liquidity_analysis",
+            description=(
+                "Assesses whether the estate can PAY its settlement costs (estate tax + final expenses "
+                "+ debts) without a forced sale of illiquid assets. Classifies assets by liquidity, "
+                "estimates the settlement need, and flags illiquid-heavy estates (business/real estate) "
+                "at forced-sale risk. The liquidity counterpart to get_gifting_and_estate_strategy. "
+                "Optional: filing_status ('mfj'/'single'), final_expenses (15000), liquidation_haircut (0.15). "
+                "Useful for 'Could my heirs cover estate costs without selling the house?'"
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "filing_status":       {"type": "string", "description": "'mfj' (doubled exemption) or 'single' (default 'mfj')"},
+                    "final_expenses":      {"type": "number", "description": "Funeral/probate/administration costs (default 15000)"},
+                    "liquidation_haircut": {"type": "number", "description": "Discount on semi-liquid assets for time/tax to convert (default 0.15)"},
+                },
+                "required": [],
+            },
+        ),
         # ── v1.0.2 Live endpoint discoveries ──────────────────────────────
         Tool(
             name="get_client_profile",
@@ -2150,6 +2194,16 @@ _DISPATCH = {
                                                _A("mean_return", float, 0.07),
                                                _A("social_security_annual", float, 0.0),
                                                _A("withdrawal_rate", float, optional=True)),
+    "model_life_event_scenario":     _passthru("model_life_event_scenario",
+                                               _A("event", str),
+                                               _A("params", _identity, optional=True),
+                                               _A("years", int, 30),
+                                               _A("annual_spending", float, optional=True),
+                                               _A("real_return", float, 0.04)),
+    "get_estate_liquidity_analysis": _passthru("get_estate_liquidity_analysis",
+                                               _A("filing_status", str, "mfj"),
+                                               _A("final_expenses", float, 15_000.0),
+                                               _A("liquidation_haircut", float, 0.15)),
     # ── Retirement & long-range ───────────────────────────────────────────
     "get_retirement_runway":         _passthru("get_retirement_runway",
                                                _A("annual_spending", float, optional=True),

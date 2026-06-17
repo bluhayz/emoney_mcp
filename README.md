@@ -297,6 +297,16 @@ Then point Claude Desktop at your local clone:
 | `get_mortgage_payoff_vs_invest` | Extra mortgage payments vs. investing the difference, after tax. Required: `balance`, `annual_rate`, `years_remaining`, `extra_monthly` |
 | `get_financial_alerts` | One prioritized "what needs attention" list aggregating broken aggregations, unusual transactions, bills, budget overruns, emergency-fund, and concentration signals. Optional: `days_ahead` |
 
+### 🧮 Advanced Planning Calculators (v1.0.21)
+
+| Tool | Description |
+|------|-------------|
+| `get_charitable_giving_strategy` | Recommends the most tax-efficient giving vehicle — QCD (70½+), donor-advised-fund bunching, or in-kind appreciated securities — with estimated benefit per vehicle and the lots to gift. Required: `annual_giving`. Optional: `age`, `filing_status`, `current_income` |
+| `get_tax_gain_harvesting` | Room in the 0% LTCG bracket and which taxable lots to sell to reset cost basis tax-free (counterpart to tax-loss harvesting). Optional: `filing_status`, `annual_income` |
+| `get_state_tax_estimate` | State income tax on an incremental amount (Roth conversion, capital gain, or withdrawal); 50 states + DC, with Washington's 7% LTCG tax. Required: `state`, `amount`. Optional: `filing_status`, `income_type` |
+| `get_healthcare_cost_projection` | Lifetime retirement healthcare costs split pre-65 (ACA) and post-65 (Medicare + Medigap + OOP), inflated and scaled for one person or a couple. Required: `current_age`. Optional: `retirement_age`, `coverage`, `life_expectancy`, `health_inflation` |
+| `get_hsa_optimization` | HSA triple-tax framing, invest-vs-spend guidance, and balance trajectory to a target age (balance pulled from Emoney). Optional: `current_age`, `current_hsa_balance`, `annual_contribution`, `coverage`, `target_age` |
+
 ---
 
 ## Example questions to ask Claude
@@ -483,7 +493,7 @@ Tools with multiple independent data sources use `asyncio.gather()` for parallel
 Claude Desktop
      │  MCP stdio
      ▼
-emoney_mcp/server.py         ← tool registration + dispatch (82 tools)
+emoney_mcp/server.py         ← tool registration + dispatch (98 tools)
 emoney_mcp/scraper.py         ← re-export shim (backward-compatible)
 emoney_mcp/scrapers/          ← domain-split scraping package
   ├── _helpers.py             ←   shared URL constants + TTL-cached _get_card()

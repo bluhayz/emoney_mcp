@@ -1562,6 +1562,118 @@ async def list_tools() -> list[Tool]:
                 "required": [],
             },
         ),
+        # ── Calculator wave 2 (#89, #90, #102) ────────────────────────────
+        Tool(
+            name="get_charitable_giving_strategy",
+            description=(
+                "Recommends the most tax-efficient way to give: a Qualified Charitable Distribution "
+                "(QCD at 70½+, excluded from AGI and counts toward RMDs), donor-advised-fund bunching "
+                "(when annual giving is below the standard deduction), or gifting appreciated long-term "
+                "securities in-kind (avoids capital-gains tax while deducting full value). Identifies "
+                "which taxable-account lots to gift, with an estimated tax benefit per vehicle. "
+                "Required: annual_giving. Optional: age (QCD eligibility), filing_status, current_income. "
+                "Useful for 'What's the best way to give $20k/yr to charity?' or 'Should I do a QCD?'"
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "annual_giving":  {"type": "number",  "description": "Your typical annual charitable gift in dollars"},
+                    "age":            {"type": "integer", "description": "Your age (QCDs require 70½+)"},
+                    "filing_status":  {"type": "string",  "description": "'single', 'mfj', or 'hoh' (default 'mfj')"},
+                    "current_income": {"type": "number",  "description": "Annual ordinary income (inferred from transactions if omitted)"},
+                },
+                "required": ["annual_giving"],
+            },
+        ),
+        Tool(
+            name="get_tax_gain_harvesting",
+            description=(
+                "Shows how much long-term capital gain can be realized at the 0% LTCG rate this year "
+                "and which taxable-account lots to sell to reset cost basis tax-free (the wash-sale "
+                "rule restricts losses, not gains, so you can repurchase immediately). Gains stack on "
+                "top of ordinary income, so the 0% room shrinks as income rises. The counterpart to "
+                "get_tax_loss_harvesting. Optional: filing_status, annual_income (inferred if omitted). "
+                "Useful for 'How much gain can I harvest at 0% this year?' in a low-income/gap year."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "filing_status": {"type": "string", "description": "'single', 'mfj', or 'hoh' (default 'mfj')"},
+                    "annual_income": {"type": "number", "description": "Ordinary income before gains (inferred from transactions if omitted)"},
+                },
+                "required": [],
+            },
+        ),
+        Tool(
+            name="get_state_tax_estimate",
+            description=(
+                "Estimates the STATE income tax on an incremental amount of income — the piece every "
+                "other tool here omits (all federal-only). Layer it on a Roth conversion, capital-gain "
+                "realization, or retirement withdrawal to see the true combined marginal cost. Uses each "
+                "state's representative top marginal rate (exact for flat-tax states; marginal treatment "
+                "for graduated states). Knows the 9 no-income-tax states and Washington's 7% LTCG tax. "
+                "Required: state, amount. Optional: filing_status, income_type ('ordinary' or 'ltcg'). "
+                "Useful for 'What's the CA tax on a $100k Roth conversion?' or 'Does my state tax cap gains?'"
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "state":         {"type": "string", "description": "2-letter code (e.g. 'CA') or full name (e.g. 'California')"},
+                    "amount":        {"type": "number", "description": "Incremental income to tax (conversion, gain, or withdrawal) in dollars"},
+                    "filing_status": {"type": "string", "description": "'single', 'mfj', or 'hoh' (default 'mfj')"},
+                    "income_type":   {"type": "string", "description": "'ordinary' (default) or 'ltcg' (long-term capital gain)"},
+                },
+                "required": ["state", "amount"],
+            },
+        ),
+        Tool(
+            name="get_healthcare_cost_projection",
+            description=(
+                "Projects lifetime retirement healthcare costs as a plan line item, split into pre-65 "
+                "(ACA marketplace premiums + out-of-pocket) and post-65 (Medicare Part B/D + Medigap + "
+                "OOP) phases, inflated at a medical-specific rate and scaled for one person or a couple. "
+                "Healthcare is the expense retirees most underestimate. Long-term care is NOT included. "
+                "Required: current_age. Optional: retirement_age (65), coverage ('individual'/'couple'), "
+                "life_expectancy (90), health_inflation (0.05). "
+                "Useful for 'How much should I budget for healthcare in retirement?'"
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "current_age":      {"type": "integer", "description": "Your age today"},
+                    "retirement_age":   {"type": "integer", "description": "Age you leave employer coverage (default 65)"},
+                    "coverage":         {"type": "string",  "description": "'individual' (one person) or 'couple' (two) (default 'individual')"},
+                    "life_expectancy":  {"type": "integer", "description": "Age through which to project (default 90)"},
+                    "health_inflation": {"type": "number",  "description": "Annual medical inflation assumption (default 0.05)"},
+                },
+                "required": ["current_age"],
+            },
+        ),
+        Tool(
+            name="get_hsa_optimization",
+            description=(
+                "Frames the HSA as the most tax-advantaged account available (triple tax benefit: "
+                "deductible in, tax-free growth, tax-free qualified medical withdrawals), compares "
+                "investing the balance vs. spending it on current bills, and projects the balance to a "
+                "target age. Pulls the HSA balance from Emoney if not supplied. Optional: current_age "
+                "(enables 55+ catch-up), current_hsa_balance, annual_contribution, coverage "
+                "('family'/'individual'), marginal_rate (0.24), growth_rate (0.06), target_age (65). "
+                "Useful for 'Should I invest my HSA?' or 'What will my HSA be worth at 65?'"
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "current_age":         {"type": "integer", "description": "Your age (enables the 55+ catch-up)"},
+                    "current_hsa_balance": {"type": "number",  "description": "Current HSA balance (pulled from Emoney if omitted)"},
+                    "annual_contribution": {"type": "number",  "description": "Planned annual contribution (defaults to the IRS limit)"},
+                    "coverage":            {"type": "string",  "description": "'family' or 'individual' HDHP coverage (default 'family')"},
+                    "marginal_rate":       {"type": "number",  "description": "Your marginal tax rate for the deduction value (default 0.24)"},
+                    "growth_rate":         {"type": "number",  "description": "Assumed annual investment return (default 0.06)"},
+                    "target_age":          {"type": "integer", "description": "Age to project the balance to (default 65)"},
+                },
+                "required": [],
+            },
+        ),
         # ── v1.0.2 Live endpoint discoveries ──────────────────────────────
         Tool(
             name="get_client_profile",
@@ -1895,6 +2007,33 @@ _DISPATCH = {
                                                _A("current_income", float, optional=True)),
     "get_annual_tax_advantaged_summary": _passthru("get_annual_tax_advantaged_summary",
                                                    _A("age", int, optional=True)),
+    "get_charitable_giving_strategy": _passthru("get_charitable_giving_strategy",
+                                                _A("annual_giving", float),
+                                                _A("age", int, optional=True),
+                                                _A("filing_status", str, "mfj"),
+                                                _A("current_income", float, optional=True)),
+    "get_tax_gain_harvesting":       _passthru("get_tax_gain_harvesting",
+                                               _A("filing_status", str, "mfj"),
+                                               _A("annual_income", float, optional=True)),
+    "get_state_tax_estimate":        _passthru("get_state_tax_estimate",
+                                               _A("state", str),
+                                               _A("amount", float),
+                                               _A("filing_status", str, "mfj"),
+                                               _A("income_type", str, "ordinary")),
+    "get_healthcare_cost_projection": _passthru("get_healthcare_cost_projection",
+                                                _A("current_age", int),
+                                                _A("retirement_age", int, 65),
+                                                _A("coverage", str, "individual"),
+                                                _A("life_expectancy", int, 90),
+                                                _A("health_inflation", float, 0.05)),
+    "get_hsa_optimization":          _passthru("get_hsa_optimization",
+                                               _A("current_age", int, optional=True),
+                                               _A("current_hsa_balance", float, optional=True),
+                                               _A("annual_contribution", float, optional=True),
+                                               _A("coverage", str, "family"),
+                                               _A("marginal_rate", float, 0.24),
+                                               _A("growth_rate", float, 0.06),
+                                               _A("target_age", int, 65)),
     # ── Retirement & long-range ───────────────────────────────────────────
     "get_retirement_runway":         _passthru("get_retirement_runway",
                                                _A("annual_spending", float, optional=True),

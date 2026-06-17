@@ -84,4 +84,10 @@ from .scrapers import (   # make sure private helpers are also importable
     run_scenario,
     get_insurance_gap_analysis,
     get_available_cards,
+    # calculator wave 2 — charitable, gain harvesting, state tax, healthcare, HSA
+    get_charitable_giving_strategy,
+    get_tax_gain_harvesting,
+    get_state_tax_estimate,
+    get_healthcare_cost_projection,
+    get_hsa_optimization,
 )

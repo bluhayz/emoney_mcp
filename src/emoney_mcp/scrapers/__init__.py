@@ -126,6 +126,9 @@ from .tax import (
     get_quarterly_estimated_taxes,
     get_year_end_checklist,
     get_annual_tax_advantaged_summary,
+    get_charitable_giving_strategy,
+    get_tax_gain_harvesting,
+    get_state_tax_estimate,
     _compute_tax,
     _marginal_rate,
     _ltcg_rate,
@@ -163,6 +166,8 @@ from .planning import (
     get_mortgage_amortization_schedule,
     get_mortgage_refinance_analysis,
     get_mortgage_payoff_vs_invest,
+    get_healthcare_cost_projection,
+    get_hsa_optimization,
 )
 
 from .explore import (
@@ -262,6 +267,7 @@ __all__ = [
     "get_irmaa_analysis", "get_tax_bracket_headroom",
     "get_social_security_optimizer", "get_quarterly_estimated_taxes",
     "get_year_end_checklist", "get_annual_tax_advantaged_summary",
+    "get_charitable_giving_strategy", "get_tax_gain_harvesting", "get_state_tax_estimate",
     "_compute_tax", "_marginal_rate", "_ltcg_rate",
     # retirement
     "get_retirement_runway", "get_withdrawal_rate_analysis",
@@ -279,6 +285,7 @@ __all__ = [
     "get_home_equity", "get_fire_number", "get_gifting_and_estate_strategy",
     "get_mortgage_amortization_schedule", "get_mortgage_refinance_analysis",
     "get_mortgage_payoff_vs_invest",
+    "get_healthcare_cost_projection", "get_hsa_optimization",
     # explore
     "explore_emoney_site",
     # transactions (write)

@@ -106,6 +106,9 @@ from .goals import (
     get_quick_status,
     get_college_savings_gap,
     get_monthly_review,
+    get_emergency_fund_analysis,
+    get_idle_cash_optimization,
+    get_financial_alerts,
     _goal_type_label,
 )
 
@@ -115,6 +118,9 @@ from .tax import (
     get_roth_conversion_analysis,
     get_capital_gains_exposure,
     get_rmd_estimate,
+    get_multi_year_tax_projection,
+    get_roth_conversion_ladder,
+    get_irmaa_analysis,
     get_tax_bracket_headroom,
     get_social_security_optimizer,
     get_quarterly_estimated_taxes,
@@ -133,6 +139,8 @@ from .retirement import (
     get_dynamic_withdrawal_guardrails,
     run_scenario,
     get_financial_independence_roadmap,
+    get_withdrawal_sequencing_strategy,
+    get_retirement_income_plan,
 )
 
 from .portfolio import (
@@ -152,6 +160,9 @@ from .planning import (
     get_home_equity,
     get_fire_number,
     get_gifting_and_estate_strategy,
+    get_mortgage_amortization_schedule,
+    get_mortgage_refinance_analysis,
+    get_mortgage_payoff_vs_invest,
 )
 
 from .explore import (
@@ -242,16 +253,19 @@ __all__ = [
     # goals
     "get_goals", "get_financial_summary", "get_financial_health_score",
     "get_quick_status", "get_college_savings_gap", "get_monthly_review",
+    "get_emergency_fund_analysis", "get_idle_cash_optimization", "get_financial_alerts",
     "_goal_type_label",
     # tax
     "get_tax_loss_harvesting", "get_contribution_room",
     "get_roth_conversion_analysis", "get_capital_gains_exposure",
-    "get_rmd_estimate", "get_tax_bracket_headroom",
+    "get_rmd_estimate", "get_multi_year_tax_projection", "get_roth_conversion_ladder",
+    "get_irmaa_analysis", "get_tax_bracket_headroom",
     "get_social_security_optimizer", "get_quarterly_estimated_taxes",
     "get_year_end_checklist", "get_annual_tax_advantaged_summary",
     "_compute_tax", "_marginal_rate", "_ltcg_rate",
     # retirement
     "get_retirement_runway", "get_withdrawal_rate_analysis",
+    "get_withdrawal_sequencing_strategy", "get_retirement_income_plan",
     "get_net_worth_projection", "run_monte_carlo_retirement",
     "get_dynamic_withdrawal_guardrails", "run_scenario",
     "get_financial_independence_roadmap",
@@ -263,6 +277,8 @@ __all__ = [
     # planning
     "get_insurance_gap_analysis",
     "get_home_equity", "get_fire_number", "get_gifting_and_estate_strategy",
+    "get_mortgage_amortization_schedule", "get_mortgage_refinance_analysis",
+    "get_mortgage_payoff_vs_invest",
     # explore
     "explore_emoney_site",
     # transactions (write)

@@ -532,3 +532,206 @@ async def get_gifting_and_estate_strategy(
             "Consult an estate planning attorney for a formal plan."
         ),
     }
+
+
+# ---------------------------------------------------------------------------
+# Mortgage analysis suite (#99)
+# ---------------------------------------------------------------------------
+
+def _monthly_payment(principal: float, annual_rate: float, months: int) -> float:
+    """Standard fully-amortizing monthly payment."""
+    if months <= 0:
+        return 0.0
+    r = annual_rate / 12
+    if r == 0:
+        return principal / months
+    return principal * r * (1 + r) ** months / ((1 + r) ** months - 1)
+
+
+def _amortize(principal: float, annual_rate: float, months: int, extra_monthly: float = 0.0):
+    """Run an amortization; return (months_to_payoff, total_interest)."""
+    r = annual_rate / 12
+    pay = _monthly_payment(principal, annual_rate, months) + max(0.0, extra_monthly)
+    bal = principal
+    total_interest = 0.0
+    m = 0
+    while bal > 0.01 and m < 1200:     # 100-year safety cap; cent-level epsilon
+        interest = bal * r
+        principal_paid = pay - interest
+        if principal_paid <= 0:        # payment can't cover interest
+            return None, None
+        bal -= principal_paid
+        total_interest += interest
+        m += 1
+    return m, round(total_interest, 2)
+
+
+async def get_mortgage_amortization_schedule(
+    http_session,
+    balance: float,
+    annual_rate: float,
+    years_remaining: float,
+    extra_monthly: float = 0.0,
+) -> dict:
+    """
+    Amortization schedule for a mortgage: per-year interest vs. principal, total
+    interest, and payoff date — with an optional extra monthly principal payment.
+
+    Parameters
+    ----------
+    balance         : current mortgage balance
+    annual_rate     : annual interest rate (e.g. 0.065 for 6.5%)
+    years_remaining : years left on the loan
+    extra_monthly   : extra principal paid each month (default 0)
+    """
+    months = int(round(years_remaining * 12))
+    if balance <= 0 or months <= 0:
+        return {"error": "balance and years_remaining must be positive."}
+    exact_payment = _monthly_payment(balance, annual_rate, months)
+    base_payment = round(exact_payment, 2)
+    r = annual_rate / 12
+    pay = exact_payment + max(0.0, extra_monthly)   # unrounded internally to avoid residual drift
+
+    schedule = []
+    bal = balance
+    total_interest = 0.0
+    year_int = year_prin = 0.0
+    m = 0
+    while bal > 0.01 and m < 1200:
+        interest = bal * r
+        principal_paid = min(pay - interest, bal)
+        if principal_paid <= 0:
+            return {"error": "Monthly payment does not cover interest; increase the term or payment."}
+        bal -= principal_paid
+        total_interest += interest
+        year_int += interest
+        year_prin += principal_paid
+        m += 1
+        if m % 12 == 0 or bal <= 0:
+            schedule.append({
+                "year":             (m + 11) // 12,
+                "interest_paid":    round(year_int, 2),
+                "principal_paid":   round(year_prin, 2),
+                "ending_balance":   round(max(0.0, bal), 2),
+            })
+            year_int = year_prin = 0.0
+
+    payoff_year = datetime.now().year + (m + 11) // 12
+    base_months, base_interest = _amortize(balance, annual_rate, months)
+    interest_saved = round((base_interest or 0) - total_interest, 2) if extra_monthly > 0 else 0.0
+    return {
+        "as_of":               datetime.now().strftime("%Y-%m-%d"),
+        "balance":             round(balance, 2),
+        "annual_rate_pct":     round(annual_rate * 100, 3),
+        "monthly_payment":     base_payment,
+        "extra_monthly":       round(extra_monthly, 2),
+        "months_to_payoff":    m,
+        "payoff_year_est":     payoff_year,
+        "total_interest":      round(total_interest, 2),
+        "interest_saved_vs_no_extra": interest_saved,
+        "yearly_schedule":     schedule,
+        "note": "Excludes taxes, insurance, and PMI. Rate assumed fixed.",
+    }
+
+
+async def get_mortgage_refinance_analysis(
+    http_session,
+    balance: float,
+    current_rate: float,
+    current_years_remaining: float,
+    new_rate: float,
+    new_term_years: float,
+    closing_costs: float = 0.0,
+) -> dict:
+    """
+    Compare the current mortgage to a refinance: monthly payment change, break-even
+    month on closing costs, and lifetime interest difference.
+    """
+    cur_months = int(round(current_years_remaining * 12))
+    new_months = int(round(new_term_years * 12))
+    if balance <= 0 or cur_months <= 0 or new_months <= 0:
+        return {"error": "balance and both terms must be positive."}
+
+    cur_pay = round(_monthly_payment(balance, current_rate, cur_months), 2)
+    new_pay = round(_monthly_payment(balance, new_rate, new_months), 2)
+    monthly_savings = round(cur_pay - new_pay, 2)
+    _, cur_interest = _amortize(balance, current_rate, cur_months)
+    _, new_interest = _amortize(balance, new_rate, new_months)
+
+    break_even = None
+    if monthly_savings > 0 and closing_costs > 0:
+        break_even = round(closing_costs / monthly_savings, 1)
+
+    return {
+        "as_of":                datetime.now().strftime("%Y-%m-%d"),
+        "balance":              round(balance, 2),
+        "current": {"rate_pct": round(current_rate * 100, 3), "years": current_years_remaining,
+                    "monthly_payment": cur_pay, "total_interest": cur_interest},
+        "refinanced": {"rate_pct": round(new_rate * 100, 3), "years": new_term_years,
+                       "monthly_payment": new_pay, "total_interest": new_interest},
+        "monthly_savings":      monthly_savings,
+        "closing_costs":        round(closing_costs, 2),
+        "break_even_months":    break_even,
+        "lifetime_interest_change": round((new_interest or 0) - (cur_interest or 0), 2),
+        "note": (
+            "A negative lifetime_interest_change means the refi saves interest overall; "
+            "a longer new term can lower the monthly payment while raising total interest. "
+            "Break-even is closing costs ÷ monthly savings."
+        ),
+    }
+
+
+async def get_mortgage_payoff_vs_invest(
+    http_session,
+    balance: float,
+    annual_rate: float,
+    years_remaining: float,
+    extra_monthly: float,
+    investment_return: float = 0.07,
+    tax_rate_on_gains: float = 0.15,
+) -> dict:
+    """
+    Compare putting an extra monthly amount toward the mortgage versus investing
+    it — over the loan's remaining life, after tax on investment gains.
+    """
+    months = int(round(years_remaining * 12))
+    if balance <= 0 or months <= 0 or extra_monthly <= 0:
+        return {"error": "balance, years_remaining, and extra_monthly must be positive."}
+
+    base_months, base_interest = _amortize(balance, annual_rate, months)
+    fast_months, fast_interest = _amortize(balance, annual_rate, months, extra_monthly)
+    interest_saved = round((base_interest or 0) - (fast_interest or 0), 2)
+
+    # Invest the same extra each month until the original payoff date.
+    r = investment_return / 12
+    contributions = extra_monthly * months
+    fv = 0.0
+    for _ in range(months):
+        fv = fv * (1 + r) + extra_monthly
+    gains = max(0.0, fv - contributions)
+    after_tax_value = round(fv - gains * tax_rate_on_gains, 2)
+    invest_net_gain = round(after_tax_value - contributions, 2)
+
+    winner = "invest" if invest_net_gain > interest_saved else "pay_off_mortgage"
+    return {
+        "as_of":                 datetime.now().strftime("%Y-%m-%d"),
+        "extra_monthly":         round(extra_monthly, 2),
+        "pay_off_mortgage": {
+            "interest_saved":    interest_saved,
+            "months_earlier":    (base_months or 0) - (fast_months or 0),
+        },
+        "invest_instead": {
+            "assumed_return_pct": round(investment_return * 100, 1),
+            "future_value":       round(fv, 2),
+            "after_tax_value":    after_tax_value,
+            "net_gain_vs_contributions": invest_net_gain,
+        },
+        "advantage":             winner,
+        "advantage_amount":      round(abs(invest_net_gain - interest_saved), 2),
+        "note": (
+            "Paying down a mortgage is a guaranteed, risk-free return equal to the rate; "
+            "investing carries market risk for a higher expected (not guaranteed) return. "
+            "Ignores the mortgage-interest deduction and state tax. A guaranteed rate near "
+            "the expected after-tax market return favors paying down for the certainty."
+        ),
+    }

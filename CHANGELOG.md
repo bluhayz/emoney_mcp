@@ -2,7 +2,17 @@
 
 All notable changes to emoney-mcp are documented here.
 
-## [1.0.25] — 2026-06-17 (current)
+## [1.0.26] — 2026-06-17 (current)
+
+Third data-read tool (epic #106) — eMoney's signature lifetime plan. 106 → 107 tools.
+
+### Added
+
+- **`scrapers/plan_api.py`** (#82) — `get_lifetime_cash_flow_projection`: year-by-year lifetime cash flow from the plan's `projection/linear/cashflow/details` endpoint — per-year total inflow, outflow, net cash flow, portfolio value, net worth, growth, and withdrawals, plus summary stats (horizon, peak portfolio + year, ending net worth, first negative-cash-flow year, portfolio depletion year). Optional `start_year`/`end_year` range. Reuses the internal-api BFF auth from #96. Verified end-to-end against a live session (59-year projection).
+
+Adds 5 tests (547 total).
+
+## [1.0.25] — 2026-06-17
 
 Second data-read tool (epic #106) — reaches the My Plan **internal-api BFF**,
 unlocking the plan/goals/projection data family. 105 → 106 tools.

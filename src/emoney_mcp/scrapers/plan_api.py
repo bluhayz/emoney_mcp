@@ -15,10 +15,16 @@ get_all_goals_funding_status(http_session)
     each education/spending goal): probability of success, surplus/shortfall, and
     the retirement funding-vs-expense dollars. Answers "Are my goals on track?"
 
+get_lifetime_cash_flow_projection(http_session, start_year, end_year)
+    eMoney's signature year-by-year lifetime plan: per-year inflow, outflow, net
+    cash flow, portfolio value, net worth, growth, and withdrawals, plus summary
+    stats (peak portfolio, ending net worth, first shortfall/depletion year).
+
 Discovered via live network capture (epic #106, discovery pass 2 / token flow).
 Endpoints used:
-  GET .../plans/<plan>/projection/montecarlo/goals       (per-goal success)
-  GET .../plans/<plan>/projection/goalfunding/retirement (retirement $ funding)
+  GET .../plans/<plan>/projection/montecarlo/goals        (per-goal success)
+  GET .../plans/<plan>/projection/goalfunding/retirement  (retirement $ funding)
+  GET .../plans/<plan>/projection/linear/cashflow/details (lifetime cash flow)
 """
 
 import re
@@ -164,5 +170,120 @@ async def get_all_goals_funding_status(http_session) -> dict:
             "At Risk (<70%). Retirement funding/expense dollars are the plan's "
             "total dedicated funding vs. projected goal cost. Figures reflect the advisor's "
             "plan assumptions, not live market values."
+        ),
+    }
+
+
+def _num(v):
+    """Round numeric values; pass through None/non-numerics."""
+    return round(v, 2) if isinstance(v, (int, float)) else None
+
+
+def _withdrawals_total(w: dict) -> float:
+    """Sum the withdrawal sub-totals for a projection year."""
+    if not isinstance(w, dict):
+        return 0.0
+    total = 0.0
+    for sub in w.values():
+        if isinstance(sub, dict) and isinstance(sub.get("total"), (int, float)):
+            total += sub["total"]
+    return round(total, 2)
+
+
+async def get_lifetime_cash_flow_projection(
+    http_session,
+    start_year: int | None = None,
+    end_year: int | None = None,
+) -> dict:
+    """
+    eMoney's signature year-by-year lifetime cash-flow plan.
+
+    Returns one row per projected year — total cash inflow, outflow, net cash
+    flow, portfolio value, net worth, portfolio growth, and total withdrawals —
+    plus summary stats (horizon, peak portfolio and its year, ending net worth,
+    and the first year net cash flow turns negative or the portfolio depletes).
+
+    The projection reflects the advisor's plan assumptions (the "linear" /
+    average-return scenario), not live markets or Monte Carlo ranges.
+
+    Parameters
+    ----------
+    start_year : optional first calendar year to include (default: plan start)
+    end_year   : optional last calendar year to include (default: plan end)
+    """
+    client_id, plan_id, err = await _get_plan_ids(http_session)
+    if err:
+        return err
+
+    jwt, apikey = await _get_snb_credentials(http_session)
+    if not jwt or not apikey:
+        return {"error": "Could not retrieve plan API credentials (Spending page). "
+                         "Session may have expired — call sync_chrome_session."}
+    headers = _snb_headers(jwt, apikey)
+
+    http = await http_session.get_http()
+    url = f"{_INTERNAL_API}/clients/{client_id}/plans/{plan_id}/projection/linear/cashflow/details"
+    try:
+        resp = await http.get(url, headers=headers, timeout=45)
+    except Exception as e:
+        return {"error": f"Lifetime cash-flow request failed ({type(e).__name__})."}
+    if resp.status_code != 200 or "json" not in resp.headers.get("content-type", ""):
+        return {"error": f"Lifetime cash-flow projection unavailable (HTTP {resp.status_code}). "
+                         "The plan may not be calculated yet."}
+
+    data = resp.json()
+    raw_years = data.get("years") if isinstance(data, dict) else None
+    if not raw_years:
+        return {"error": "Projection returned no yearly data."}
+
+    rows = []
+    for y in raw_years:
+        yr = y.get("year")
+        if start_year is not None and yr is not None and yr < start_year:
+            continue
+        if end_year is not None and yr is not None and yr > end_year:
+            continue
+        pv = y.get("portfolioValue") or {}
+        rows.append({
+            "year":             yr,
+            "total_inflow":     _num(y.get("totalCashInflow")),
+            "total_outflow":    _num(y.get("totalCashOutflow")),
+            "net_cash_flow":    _num(y.get("netCashFlow")),
+            "withdrawals":      _withdrawals_total(y.get("withdrawals")),
+            "portfolio_value":  _num(pv.get("totalPortfolioAssets")),
+            "net_worth":        _num(pv.get("totalNetWorth")),
+            "portfolio_growth": _num(pv.get("portfolioGrowth")),
+        })
+
+    if not rows:
+        return {"error": "No projection years matched the requested range."}
+
+    # Summary stats
+    peak = max(rows, key=lambda r: r["portfolio_value"] or 0)
+    first_negative = next((r["year"] for r in rows if (r["net_cash_flow"] or 0) < 0), None)
+    depletion_year = next((r["year"] for r in rows if (r["portfolio_value"] or 0) <= 0), None)
+    ending = rows[-1]
+
+    return {
+        "horizon_years":   len(rows),
+        "first_year":      rows[0]["year"],
+        "last_year":       ending["year"],
+        "scenario":        "linear (average-return plan assumptions)",
+        "summary": {
+            "starting_portfolio_value": rows[0]["portfolio_value"],
+            "ending_portfolio_value":   ending["portfolio_value"],
+            "ending_net_worth":         ending["net_worth"],
+            "peak_portfolio_value":     peak["portfolio_value"],
+            "peak_portfolio_year":      peak["year"],
+            "first_negative_cash_flow_year": first_negative,
+            "portfolio_depletion_year": depletion_year,
+        },
+        "years": rows,
+        "note": (
+            "Year-by-year lifetime cash flow from the plan's 'linear' projection (average-return "
+            "assumptions, not Monte Carlo ranges). net_cash_flow turning negative is normal in "
+            "retirement (portfolio funds the gap); portfolio_depletion_year is null when the plan "
+            "never runs out. Figures use the advisor's plan assumptions and inflation, not live "
+            "market values. For probability-of-success see get_all_goals_funding_status."
         ),
     }

@@ -3,6 +3,7 @@
 import importlib
 import inspect
 import json
+import logging
 import time
 
 from dotenv import load_dotenv
@@ -22,6 +23,8 @@ from .browser import (
 from . import scraper
 
 load_dotenv()
+
+_log = logging.getLogger("emoney_mcp.server")
 
 app = Server("emoney-mcp")
 
@@ -132,10 +135,11 @@ async def list_tools() -> list[Tool]:
         Tool(
             name="get_capital_gains",
             description=(
-                "Summarizes realized capital gains from sell transactions for a given year. "
-                "Returns total proceeds, sell transaction detail, dividends, and interest received. "
-                "Optional parameter: year (default current year). "
-                "Useful for 'What are my realized gains this year for taxes?'"
+                "Summarizes sell-transaction activity for a given year. Returns "
+                "total_sale_proceeds (gross sale dollars — NOT realized gain/loss, which "
+                "needs cost basis and is not computed here), sell transaction detail, "
+                "dividends, and interest received. Do not report proceeds as 'capital gains'. "
+                "Optional parameter: year (default current year)."
             ),
             inputSchema={
                 "type": "object",
@@ -1316,6 +1320,8 @@ async def list_tools() -> list[Tool]:
                 "from Emoney's Profile page. Includes Drew, Lacey, and dependents (e.g. Parker). "
                 "Use the returned age and birth_year values to auto-populate retirement and tax tools "
                 "instead of passing them manually. "
+                "PII NOTICE: returns personal data (names, DOB, email) for the whole household, "
+                "including dependents/minors — this data flows into the LLM conversation. "
                 "Useful for 'How old is Drew?' or 'What are our dates of birth?'"
             ),
             inputSchema={"type": "object", "properties": {}, "required": []},
@@ -1380,7 +1386,13 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
     try:
         return await _call_tool_inner(name, arguments)
     except Exception as e:
-        return [TextContent(type="text", text=json.dumps({"error": str(e), "tool": name}, indent=2))]
+        # Last-resort handler. Keep the client message simple, but log the
+        # exception type + full traceback server-side and include error_type in
+        # the response so a scraper signature drift / real bug is distinguishable
+        # from an ordinary user-facing error.
+        _log.exception("Unhandled error in tool %r: %s", name, type(e).__name__)
+        return [TextContent(type="text", text=json.dumps(
+            {"error": str(e), "error_type": type(e).__name__, "tool": name}, indent=2))]
 
 
 # ---------------------------------------------------------------------------
@@ -1414,6 +1426,17 @@ def _identity(v):
     return v
 
 
+def _bool(v):
+    """Coerce to bool. The bare bool() builtin is a footgun here: bool("false")
+    is True. Well-behaved MCP clients send a native bool per the schema, but a
+    stringly-typed "false"/"0"/"no" must not silently flip to True."""
+    if isinstance(v, bool):
+        return v
+    if isinstance(v, str):
+        return v.strip().lower() in ("true", "1", "yes", "y", "on")
+    return bool(v)
+
+
 def _kwargs(specs, args: dict) -> dict:
     out = {}
     for name, conv, default, optional in specs:
@@ -1439,6 +1462,10 @@ def _passthru(fn_name: str, *specs):
             return err
         fn = getattr(scraper, fn_name)
         return await fn(sess, **_kwargs(specs, arguments))
+    # Expose routing metadata so tests can verify each _A(...) name matches the
+    # real scraper function's signature (guards against signature drift).
+    handler._scraper_fn = fn_name   # type: ignore[attr-defined]
+    handler._specs = specs          # type: ignore[attr-defined]
     return handler
 
 
@@ -1511,7 +1538,7 @@ _DISPATCH = {
                                                _A("category_id", str, optional=True),
                                                _A("description", str, optional=True)),
     "hide_transaction":              _passthru("hide_transaction", _A("transaction_id", str),
-                                               _A("hidden", bool, True)),
+                                               _A("hidden", _bool, True)),
     "get_transaction_splits":        _passthru("get_transaction_splits", _A("transaction_id", str)),
     "update_transaction_splits":     _passthru("update_transaction_splits",
                                                _A("transaction_splits", _identity)),
@@ -1637,7 +1664,18 @@ async def _call_tool_inner(name: str, arguments: dict) -> list[TextContent]:
     # and reloading on every call has measurable overhead. _passthru resolves the
     # scraper function by name at call time, so reload is picked up.
     import os
+    import sys
     if os.environ.get("EMONEY_DEV"):
+        # scraper.py is only a re-export shim over scrapers/*, and importlib.reload
+        # is non-recursive — so reload the edited leaf submodules and the package
+        # first, otherwise an edit to scrapers/spending.py wouldn't be picked up.
+        for mod_name in [m for m in sys.modules if m.startswith("emoney_mcp.scrapers.")]:
+            try:
+                importlib.reload(sys.modules[mod_name])
+            except Exception as e:
+                _log.debug("EMONEY_DEV reload failed for %s: %s", mod_name, type(e).__name__)
+        if "emoney_mcp.scrapers" in sys.modules:
+            importlib.reload(sys.modules["emoney_mcp.scrapers"])
         importlib.reload(scraper)
 
     try:
@@ -1833,7 +1871,7 @@ def _get_features() -> dict:
                         "parameters": "days (default 30, max 365), account_id (optional)",
                     },
                     "get_capital_gains": {
-                        "description": "Realized capital gains summary for a given tax year.",
+                        "description": "Sell-transaction summary for a tax year (gross sale proceeds, dividends, interest — not realized gain/loss).",
                         "examples": ["What are my realized gains this year?"],
                         "parameters": "year (default: current year)",
                     },

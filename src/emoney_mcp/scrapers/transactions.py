@@ -23,11 +23,19 @@ Rule object shape:
    StartDay, EndDay, UserDescription, CategoryID:{Value,IsValid}}
 """
 
+import logging
 import os
 
 from ._helpers import BASE_URL
 
 _SPENDING = f"{BASE_URL}/ema/CS/Spending"
+_log = logging.getLogger("emoney_mcp.scrapers.transactions")
+
+# Allowlist of fields accepted per split when building the UpdateTransactionSplits
+# form body — so caller-supplied dict keys can't smuggle arbitrary form fields
+# into the Emoney write request.
+_ALLOWED_SPLIT_KEYS = {"TransactionSplitID", "CategoryID", "SplitAmount", "UserDescription"}
+_ALLOWED_SPLIT_SUBKEYS = {"Value", "IsValid"}
 
 
 def _maybe_raw(out: dict, raw) -> dict:
@@ -195,8 +203,14 @@ async def update_transaction_splits(
     flat: dict = {}
     for i, split in enumerate(transaction_splits):
         for key, val in split.items():
+            if key not in _ALLOWED_SPLIT_KEYS:
+                _log.debug("Ignoring unexpected transaction-split field: %r", key)
+                continue
             if isinstance(val, dict):
                 for subkey, subval in val.items():
+                    if subkey not in _ALLOWED_SPLIT_SUBKEYS:
+                        _log.debug("Ignoring unexpected split subfield: %s[%r]", key, subkey)
+                        continue
                     flat[f"transactionSplits[{i}][{key}][{subkey}]"] = str(subval) if subval is not None else ""
             else:
                 flat[f"transactionSplits[{i}][{key}]"] = str(val) if val is not None else ""

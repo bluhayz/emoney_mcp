@@ -201,3 +201,34 @@ class TestSpecialHandlers:
         out = await server._call_tool_inner("get_features", {})
         payload = json.loads(out[0].text)
         assert isinstance(payload, dict) and payload  # non-empty
+
+
+# ---------------------------------------------------------------------------
+# Signature-drift guard (#67): every _A(...) arg on a _passthru handler must
+# name a real parameter on its scraper function. The route-all test above uses
+# a permissive mock that swallows any kwarg, so it can't catch this — this test
+# checks against the *real* scraper signatures via inspect.
+# ---------------------------------------------------------------------------
+
+class TestDispatchSignatureParity:
+
+    def test_passthru_arg_names_exist_on_scraper(self):
+        import inspect
+        from emoney_mcp import scraper
+
+        for tool_name, handler in server._DISPATCH.items():
+            fn_name = getattr(handler, "_scraper_fn", None)
+            specs   = getattr(handler, "_specs", None)
+            if fn_name is None or specs is None:
+                continue  # bespoke lambda handler, not a _passthru
+
+            fn = getattr(scraper, fn_name)
+            params = inspect.signature(fn).parameters
+            accepts_kwargs = any(p.kind == p.VAR_KEYWORD for p in params.values())
+
+            for spec in specs:
+                arg_name = spec[0]
+                assert arg_name in params or accepts_kwargs, (
+                    f"{tool_name}: _A({arg_name!r}) does not match any parameter of "
+                    f"scraper.{fn_name}{tuple(params)}"
+                )

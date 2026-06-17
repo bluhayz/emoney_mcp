@@ -414,10 +414,10 @@ async def get_capital_gains(http_session, year: int | None = None) -> dict:
         "year":              year,
         "start_date":        start_str,
         "end_date":          end_str,
-        "sell_transactions": len(sales),
-        "total_proceeds":    round(total_proceeds, 2),
-        "total_dividends":   round(total_dividends, 2),
-        "total_interest":    round(total_interest, 2),
+        "sell_transactions":   len(sales),
+        "total_sale_proceeds": round(total_proceeds, 2),
+        "total_dividends":     round(total_dividends, 2),
+        "total_interest":      round(total_interest, 2),
         "sales_detail":      [
             {
                 "date":        t["date"],
@@ -428,8 +428,10 @@ async def get_capital_gains(http_session, year: int | None = None) -> dict:
             for t in sorted(sales, key=lambda x: x.get("date") or "", reverse=True)
         ],
         "note": (
-            "Proceeds shown from sell transactions. Net gain/loss requires cost basis "
-            "data which is available in get_holdings per position. Short-term vs. "
-            "long-term split requires holding period data not currently exposed by the API."
+            "IMPORTANT: total_sale_proceeds is the gross dollar amount of sell "
+            "transactions, NOT realized capital gain/loss. Actual gain/loss requires "
+            "cost basis (see get_holdings per position) and is not computed here — do "
+            "not report this figure as 'capital gains'. Short-term vs. long-term split "
+            "requires holding-period data not currently exposed by the API."
         ),
     }

@@ -104,4 +104,7 @@ from .scrapers import (   # make sure private helpers are also importable
     get_all_goals_funding_status,
     # data-read wave 7 — lifetime cash flow (internal-api BFF)
     get_lifetime_cash_flow_projection,
+    # data-read wave 8 — investment depth (dividends, sector/geo)
+    get_dividend_income_analysis,
+    get_sector_geographic_allocation,
 )

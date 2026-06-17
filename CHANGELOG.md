@@ -2,7 +2,23 @@
 
 All notable changes to emoney-mcp are documented here.
 
-## [1.0.26] — 2026-06-17 (current)
+## [1.0.27] — 2026-06-17 (current)
+
+Investment-depth data reads (epic #106). 107 → 109 tools.
+
+### Added
+
+- **`scrapers/investments.py`** (#92) — `get_dividend_income_analysis`: trailing dividends + interest (counting only `Income Dividend`/`Income Interest` cash receipts, excluding `Reinvest Dividend` offsets), portfolio yield vs. current value, top income-producing tickers, and a trailing-based forward estimate. Optional `days` (default 365).
+- **`scrapers/investments.py`** (#93) — `get_sector_geographic_allocation`: asset-type breakdown, equity geography (US / International / Emerging Markets), detailed style-box class breakdown, and single-class concentration flags, from `GetInvestmentData.AssetAllocation`.
+
+### Not built (data not exposed by eMoney)
+
+- **#91 fee/expense-ratio analysis** — eMoney holdings carry no expense-ratio field; would need an external ticker→ER table. Deferred.
+- **#95 lot-level cost basis & fixed-income ladder** — holdings expose only aggregate `CostBasis` (no per-lot detail) and no maturity dates. Deferred.
+
+Adds 9 tests (556 total).
+
+## [1.0.26] — 2026-06-17
 
 Third data-read tool (epic #106) — eMoney's signature lifetime plan. 106 → 107 tools.
 

@@ -127,7 +127,7 @@ Then point Claude Desktop at your local clone:
 | `get_asset_allocation` | Portfolio asset allocation by asset class (Equities, Fixed Income, Cash, etc.) plus top 10 holdings by weight |
 | `get_performance` | Portfolio value change today + MTD net worth change + computed returns from historical data |
 | `get_transactions` | Investment transactions (buys, sells, dividends). Parameters: `days` (default 30, max 365), `account_id` (optional GUID) |
-| `get_capital_gains` | Realized gains summary — sell proceeds, dividends, interest by tax year. Parameter: `year` (default current) |
+| `get_capital_gains` | Sell-transaction summary — gross sale proceeds, dividends, interest by tax year (proceeds are not realized gain/loss, which needs cost basis). Parameter: `year` (default current) |
 
 ### 🎯 Goals
 
@@ -467,7 +467,7 @@ Tools with multiple independent data sources use `asyncio.gather()` for parallel
 Claude Desktop
      │  MCP stdio
      ▼
-emoney_mcp/server.py         ← tool registration + dispatch (76 tools)
+emoney_mcp/server.py         ← tool registration + dispatch (82 tools)
 emoney_mcp/scraper.py         ← re-export shim (backward-compatible)
 emoney_mcp/scrapers/          ← domain-split scraping package
   ├── _helpers.py             ←   shared URL constants + TTL-cached _get_card()

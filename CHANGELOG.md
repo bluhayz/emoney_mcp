@@ -2,7 +2,81 @@
 
 All notable changes to emoney-mcp are documented here.
 
-## [1.0.14] — 2026-06-15 (current)
+## [1.0.18] — 2026-06-16 (current)
+
+### Fixed
+
+- **CI publish** — pinned `astral-sh/setup-uv` to `v8.2.0`. The earlier `v6`→`v8` bump broke the publish job because setup-uv stopped publishing a moving `v8` major tag at v8 ("immutable releases"), so `@v8` failed to resolve. This release re-publishes the 1.0.17 content that the broken job failed to ship.
+
+### Changed
+
+- **CI** — `astral-sh/setup-uv` moved off the deprecated Node.js 20 runtime (now node24).
+
+## [1.0.17] — 2026-06-16
+
+Tier 3 issue batch — hardening, docs, and tech-debt.
+
+### Security / hardening
+
+- **`scrapers/transactions.py`** (#56) — `update_transaction_splits` now allowlists accepted split fields (`TransactionSplitID`, `CategoryID`, `SplitAmount`, `UserDescription`) so caller-supplied dict keys can't smuggle arbitrary form fields into the Emoney write request.
+- **`browser.py`, `scrapers/explore.py`** (#62, #64) — added a shared `is_emoney_host()` check; `is_logged_in()` and `explore_emoney_site` now confirm the response landed on `emaplan.com` before trusting it for auth or HTML/endpoint mining.
+
+### Fixed
+
+- **`scrapers/accounts.py`** (#38) — `get_debt_payoff_plan` matches credit-card keywords on word boundaries, so short generics (`mc`, `card`) no longer misclassify accounts like "Comcast" as a credit card.
+- **`server.py`** (#43) — added a `_bool` converter for the `hidden` arg (`bool("false")` was `True`).
+- **`browser.py`** (#58, #59) — macOS cookie extraction now searches all Chrome channels/profiles (not just `Default`) and copies the `-wal`/`-shm` sidecars before reading, so freshly written cookies aren't missed.
+- **`server.py`** (#45) — the top-level `call_tool` handler logs the exception type + traceback server-side and includes `error_type` in the response.
+- **`server.py`** (#44) — `EMONEY_DEV` hot-reload now reloads `scrapers/*` submodules and the package before the shim (`importlib.reload` is non-recursive).
+
+### Documentation
+
+- **`scrapers/tax.py`** (#68) — `_IRS_CAVEAT` now discloses the tax math is federal-only (state/local not modeled).
+- **`scrapers/investments.py`, `server.py`** (#69) — `get_capital_gains` renames `total_proceeds` → `total_sale_proceeds` with a stronger note/description (proceeds are not realized gains).
+- **`scrapers/accounts.py`, `server.py`** (#63) — `get_client_profile` adds a `pii_notice` and flags PII in the tool description.
+
+### Tech-debt / testing
+
+- **`scrapers/spending.py`** (#65) — extracted a shared `_detect_cadence` helper used by `get_recurring_charges` and `get_upcoming_bills`.
+- **`server.py`, `tests/test_server_dispatch.py`** (#67) — `_passthru` exposes routing metadata; a new test verifies every `_A(...)` arg name matches the real scraper signature (catches drift the permissive mock can't).
+
+## [1.0.16] — 2026-06-16
+
+Tier 2 issue batch — robustness, crash guards, clearer errors, and output semantics.
+
+### Fixed
+
+- **`scrapers/accounts.py`** (#39) — `get_aggregation_status` reports `"unknown"` instead of fail-open `True` when `IsConnected` is absent.
+- **`server.py`** (#42) — a missing required tool argument now raises a clear `ValueError("Missing required argument: '<name>'")` instead of a bare KeyError.
+- **`scrapers/spending.py`** (#47) — `get_categories` skips a non-numeric category key instead of crashing on `int(k)`.
+- **`scrapers/spending.py`** (#48) — `get_upcoming_bills` threads the computed `category` into each bill (was dead code).
+- **`scrapers/spending.py`** (#49) — `get_50_30_20_analysis` excludes the current partial month, consistent with the cash-flow tools.
+- **`scrapers/transactions.py`** (#50) — `get_transaction_rules` surfaces Nexus maintenance 500s (`IsNexusAvailable:false`) as errors instead of masking them as "0 rules".
+- **`scrapers/portfolio.py`** (#51) — `get_available_cards` returns a clear error on an empty `card_ids` list.
+- **`scrapers/goals.py`** (#52) — `get_college_savings_gap` adds a `goal_start_passed` flag for past-dated goals.
+- **`scrapers/planning.py`** (#53) — `get_fire_number` adds an explicit `fi_status` (`already_fi` / `no_current_savings` / `on_track` / `unreachable_in_50y`) instead of collapsing those into `years_to_fi = None`.
+- **`browser.py`, `server.py`** (#60) — nodriver login-thread failures are captured and surfaced via `_get_session_or_err` instead of an opaque "waiting for login".
+- **`browser.py`, `scrapers/{transactions,reports}.py`** (#61) — `get_csrf_token` returns `None` on failure; callers short-circuit with a clear error instead of POSTing an empty token.
+
+## [1.0.15] — 2026-06-16
+
+Tier 1 issue batch — financial-correctness bugs and crashes.
+
+### Fixed
+
+- **`scrapers/planning.py`** (#35) — `get_home_equity` attributes each mortgage to a single property by name match instead of charging the combined mortgage total to every property; unmatched debt is surfaced separately. Aggregate totals were already exact.
+- **`scrapers/tax.py`** (#36) — `get_rmd_estimate` excludes Roth 401(k)/403(b) from the RMD base (no RMD under SECURE 2.0), mirroring the existing Roth IRA exclusion.
+- **`scrapers/investments.py`, `scrapers/_helpers.py`** (#37, #66) — `get_net_worth_history` uses the drift-free `_month_offset` labels via a new shared `_parse_card8_history` helper, also used by `get_net_worth_velocity` so the two can't diverge.
+- **`scrapers/retirement.py`** (#40) — `get_retirement_runway` guards `portfolio <= 0` before dividing (was a `ZeroDivisionError` at $0 investable assets).
+- **`scrapers/goals.py`** (#54) — `get_financial_health_score` sums all cash/bank groups for liquid assets instead of only the first match.
+- **`scrapers/portfolio.py`** (#55) — `_classify_asset` defaults unrecognized holdings to `"unknown"` (neutral score) instead of the highest tax-efficiency rating, which understated tax drag.
+- **`browser.py`** (#57) — macOS cookie extraction detects Chrome 127+ App-Bound Encryption (`v20`) and logs a clear manual-login fallback instead of silently returning `{}`.
+
+### Closed (no change)
+
+- **#34** — closed as invalid: HOH and Single tax brackets correctly share identical upper bounds above the 12% tier; not a copy-paste bug.
+
+## [1.0.14] — 2026-06-15
 
 ### Changed
 

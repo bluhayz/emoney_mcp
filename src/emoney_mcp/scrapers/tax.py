@@ -59,6 +59,8 @@ from .spending import get_income_summary
 _TAX_YEAR = 2026
 _IRS_CAVEAT = (
     "Figures use 2026 IRS limits and tax brackets. "
+    "Federal tax only — state and local income taxes are not modeled, so the true "
+    "marginal cost in a high-tax state (e.g. CA, NY) will be higher. "
     "Consult a qualified tax professional before acting on any estimates."
 )
 

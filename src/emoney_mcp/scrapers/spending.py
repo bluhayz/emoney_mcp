@@ -230,6 +230,46 @@ _CADENCE_TO_MONTHLY = {
     "annual":    1 / 12,   # 1 charge covers 12 months
 }
 
+
+def _detect_cadence(records_sorted: list[dict]) -> dict | None:
+    """Detect a recurring cadence from charge records sorted oldest-first.
+
+    Shared by get_recurring_charges and get_upcoming_bills so the gap/cadence
+    math stays in one place. Each record needs a "date" (YYYY-MM-DD) and an
+    "amount". Returns the matched cadence plus the derived stats, or None if
+    there are fewer than 2 records or no cadence in _CADENCES matches.
+
+    Returned dict: cadence, avg_gap_days, avg_amount, gap_variance, tolerance,
+    dates, amounts.
+    """
+    if len(records_sorted) < 2:
+        return None
+    dates   = [r["date"] for r in records_sorted]
+    amounts = [r["amount"] for r in records_sorted]
+
+    gaps = []
+    for i in range(1, len(dates)):
+        d1 = datetime.strptime(dates[i - 1], "%Y-%m-%d")
+        d2 = datetime.strptime(dates[i],     "%Y-%m-%d")
+        gaps.append((d2 - d1).days)
+
+    avg_gap      = sum(gaps) / len(gaps)
+    avg_amount   = sum(amounts) / len(amounts)
+    gap_variance = sum(abs(g - avg_gap) for g in gaps) / len(gaps)
+
+    for cadence_name, cadence_days, tolerance in _CADENCES:
+        if abs(avg_gap - cadence_days) <= tolerance:
+            return {
+                "cadence":      cadence_name,
+                "avg_gap_days": avg_gap,
+                "avg_amount":   avg_amount,
+                "gap_variance": gap_variance,
+                "tolerance":    tolerance,
+                "dates":        dates,
+                "amounts":      amounts,
+            }
+    return None
+
 # ---------------------------------------------------------------------------
 # In-memory TTL cache for SNB API responses
 # ---------------------------------------------------------------------------
@@ -1081,37 +1121,22 @@ async def get_recurring_charges(http_session) -> dict:
 
     recurring = []
     for merchant, records in merchant_records.items():
-        if len(records) < 2:
+        records_sorted = sorted(records, key=lambda r: r["date"])
+        cad = _detect_cadence(records_sorted)
+        if cad is None:
             continue
 
-        records_sorted = sorted(records, key=lambda r: r["date"])
-        dates = [r["date"] for r in records_sorted]
-        amounts = [r["amount"] for r in records_sorted]
-
-        gaps = []
-        for i in range(1, len(dates)):
-            d1 = datetime.strptime(dates[i - 1], "%Y-%m-%d")
-            d2 = datetime.strptime(dates[i],     "%Y-%m-%d")
-            gaps.append((d2 - d1).days)
-
-        avg_gap = sum(gaps) / len(gaps)
-        avg_amount = sum(amounts) / len(amounts)
-        gap_variance = sum(abs(g - avg_gap) for g in gaps) / len(gaps)
-
-        for cadence_name, cadence_days, tolerance in _CADENCES:
-            if abs(avg_gap - cadence_days) <= tolerance:
-                monthly_cost = round(avg_amount * _CADENCE_TO_MONTHLY[cadence_name], 2)
-                recurring.append({
-                    "merchant":          merchant,
-                    "cadence":           cadence_name,
-                    "avg_amount":        round(avg_amount, 2),
-                    "monthly_cost_est":  monthly_cost,
-                    "occurrences":       len(records),
-                    "last_charge":       dates[-1],
-                    "consistent":        gap_variance < tolerance,
-                    "avg_gap_days":      round(avg_gap, 1),
-                })
-                break
+        monthly_cost = round(cad["avg_amount"] * _CADENCE_TO_MONTHLY[cad["cadence"]], 2)
+        recurring.append({
+            "merchant":          merchant,
+            "cadence":           cad["cadence"],
+            "avg_amount":        round(cad["avg_amount"], 2),
+            "monthly_cost_est":  monthly_cost,
+            "occurrences":       len(records),
+            "last_charge":       cad["dates"][-1],
+            "consistent":        cad["gap_variance"] < cad["tolerance"],
+            "avg_gap_days":      round(cad["avg_gap_days"], 1),
+        })
 
     recurring.sort(key=lambda x: x["monthly_cost_est"], reverse=True)
 
@@ -2298,29 +2323,14 @@ async def get_upcoming_bills(http_session, days_ahead: int = 30) -> dict:
     today_str = now.strftime("%Y-%m-%d")
 
     for merchant, charges in merchant_charges.items():
-        if len(charges) < 2:
-            continue
         charges_sorted = sorted(charges, key=lambda c: c["date"])
-        dates  = [c["date"] for c in charges_sorted]
-        amounts = [c["amount"] for c in charges_sorted]
-
-        gaps = []
-        for i in range(1, len(dates)):
-            d1 = datetime.strptime(dates[i - 1], "%Y-%m-%d")
-            d2 = datetime.strptime(dates[i],     "%Y-%m-%d")
-            gaps.append((d2 - d1).days)
-
-        avg_gap    = sum(gaps) / len(gaps)
-        avg_amount = sum(amounts) / len(amounts)
-
-        # Match a cadence
-        cadence_name  = None
-        for cname, cdays, ctol in _CADENCES:
-            if abs(avg_gap - cdays) <= ctol:
-                cadence_name = cname
-                break
-        if cadence_name is None:
+        cad = _detect_cadence(charges_sorted)
+        if cad is None:
             continue
+        dates        = cad["dates"]
+        avg_gap      = cad["avg_gap_days"]
+        avg_amount   = cad["avg_amount"]
+        cadence_name = cad["cadence"]
 
         last_date     = datetime.strptime(dates[-1], "%Y-%m-%d")
         next_expected = last_date + timedelta(days=round(avg_gap))

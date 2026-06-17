@@ -180,6 +180,10 @@ from .vault import (
     get_vault_documents,
 )
 
+from .plan_api import (
+    get_all_goals_funding_status,
+)
+
 from .explore import (
     explore_emoney_site,
 )
@@ -302,6 +306,8 @@ __all__ = [
     "get_estate_liquidity_analysis",
     # vault
     "get_vault_documents",
+    # plan_api (internal-api BFF)
+    "get_all_goals_funding_status",
     # explore
     "explore_emoney_site",
     # transactions (write)

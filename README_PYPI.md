@@ -295,6 +295,7 @@ Get me a link to the Liquidity Report.
 | `get_available_cards` | **New.** Inventory of all responding Emoney data cards with key-type fingerprints |
 | `get_aggregation_status` | **New.** Which linked institutions are broken/disconnected and each account's last-updated date |
 | `get_vault_documents` | **New.** eMoney Vault top-level folders (file count, size, sharing) + total storage usage |
+| `get_all_goals_funding_status` | **New.** Plan goals (retirement, leave-to-heirs, education/spending) with Monte Carlo success probability, surplus/shortfall, and status |
 | `get_version` | Installed version, cookie file path, and session status |
 | `get_features` | List all tools with descriptions and example questions |
 | `explore_emoney_cards` · `explore_emoney_site` · `explore_snb_write_endpoints` | Developer/discovery probes for finding new Emoney data sources and endpoints |

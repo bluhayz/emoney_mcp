@@ -451,6 +451,60 @@ class EmoneyHttpSession:
 
 
 # ---------------------------------------------------------------------------
+# nodriver concurrency patch
+# ---------------------------------------------------------------------------
+
+_nodriver_patched = False
+
+
+def _patch_nodriver_aopen_race() -> None:
+    """Make nodriver's ``Connection.aopen`` concurrency-safe (idempotent).
+
+    nodriver 0.50.3's ``aopen`` is a check-then-act race::
+
+        if not self.socket or bool(self.socket.close_code):
+            self.socket = await websockets.connect(...)   # awaits/yields here
+            self._listener_task = asyncio.create_task(self._listener())
+
+    ``send()`` calls ``attach() -> aopen()``, and nodriver's own auto-attach
+    event handlers fire ``asyncio.create_task(callback(...))`` during
+    ``browser.get()`` / target discovery. Two coroutines can both pass the
+    ``if not self.socket`` check before either assigns it, so **two**
+    ``_listener`` tasks get created and both call ``ws.recv()`` on the same
+    socket. websockets >= 14 (required by nodriver) then asserts
+    ``cannot call get() concurrently``; nodriver's listener swallows that and
+    loops straight back into ``recv()``, producing an infinite
+    ``background listener error`` storm that wedges login.
+
+    Serializing ``aopen`` per connection makes the check-then-act atomic, so
+    only one socket + one listener is ever created. We call the original under
+    the lock rather than reimplementing it, to stay resilient to nodriver
+    internals changing.
+    """
+    global _nodriver_patched
+    if _nodriver_patched:
+        return
+
+    import nodriver.core.connection as _ndconn
+
+    _orig_aopen = _ndconn.Connection.aopen
+
+    async def _safe_aopen(self):
+        # Lazily attach a per-connection lock. getattr/setattr here are
+        # synchronous (no await between them), so this is itself race-free
+        # within the event loop.
+        lock = self.__dict__.get("_aopen_lock")
+        if lock is None:
+            lock = asyncio.Lock()
+            self._aopen_lock = lock
+        async with lock:
+            await _orig_aopen(self)
+
+    _ndconn.Connection.aopen = _safe_aopen
+    _nodriver_patched = True
+
+
+# ---------------------------------------------------------------------------
 # nodriver login session — runs in its own OS thread / event loop
 # ---------------------------------------------------------------------------
 
@@ -493,6 +547,9 @@ class EmoneyLoginSession:
 
         def log(msg):
             print(f"[nodriver-thread] {msg}", file=sys.stderr, flush=True)
+
+        # Guard against nodriver's aopen() listener race before launching.
+        _patch_nodriver_aopen_race()
 
         chrome = r"C:\Program Files\Google\Chrome\Application\chrome.exe"
         log("starting nd.start()")

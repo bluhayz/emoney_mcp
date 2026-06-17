@@ -2,7 +2,25 @@
 
 All notable changes to emoney-mcp are documented here.
 
-## [1.0.20] — 2026-06-17 (current)
+## [1.0.21] — 2026-06-17 (current)
+
+Second wave of the FP&A roadmap (epic #106) — 5 new **pure-calculator** tools
+(no new Emoney endpoints), bringing the total to **98**.
+
+### Added — advanced tax planning
+
+- **`scrapers/tax.py`** (#89) — `get_charitable_giving_strategy`: recommends the most tax-efficient giving vehicle — QCD (age 70½+, excluded from AGI, counts toward RMDs), donor-advised-fund bunching (when giving is below the standard deduction), or in-kind gifts of appreciated long-term securities (avoids capital-gains tax) — with an estimated benefit per vehicle and the specific lots to gift.
+- **`scrapers/tax.py`** (#90) — `get_tax_gain_harvesting`: 0%-LTCG-bracket room and which taxable lots to sell to reset cost basis tax-free (the counterpart to `get_tax_loss_harvesting`; gains stack on ordinary income).
+- **`scrapers/tax.py`** (#90) — `get_state_tax_estimate`: state income tax on an incremental amount (Roth conversion, gain, or withdrawal) via a 50-state + DC top-marginal-rate table — the first non-federal tax modeling in the server. Knows the 9 no-income-tax states and Washington's 7% LTCG tax.
+
+### Added — healthcare
+
+- **`scrapers/planning.py`** (#102) — `get_healthcare_cost_projection`: lifetime retirement healthcare costs split into pre-65 (ACA) and post-65 (Medicare + Medigap + OOP) phases, inflated and scaled for one person or a couple.
+- **`scrapers/planning.py`** (#102) — `get_hsa_optimization`: triple-tax-advantage framing, invest-vs-spend guidance, and a balance trajectory to a target age (HSA balance pulled from Emoney).
+
+Adds 23 tests (498 total).
+
+## [1.0.20] — 2026-06-17
 
 ### Fixed
 

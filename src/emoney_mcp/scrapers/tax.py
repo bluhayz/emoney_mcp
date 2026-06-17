@@ -138,6 +138,77 @@ _IRMAA_TIERS: list[tuple[float, float, float, float]] = [
     (float("inf"), float("inf"), 443.90, 85.80),
 ]
 
+# Qualified Charitable Distribution annual cap (per taxpayer, indexed).
+# $108,000 for 2025; the IRS indexes it each year — refresh with _TAX_YEAR.
+_QCD_ANNUAL_LIMIT = 108_000
+_QCD_ELIGIBLE_AGE = 70.5   # QCDs allowed from age 70½
+
+# State income tax — representative TOP MARGINAL rate per state (2025 figures).
+# This is a deliberately simple model: the rate is applied to the *incremental*
+# income supplied (a Roth conversion, capital gain, or withdrawal), which is the
+# correct treatment for a marginal add-on. It is NOT a full graduated-bracket
+# state return. Nine states levy no broad income tax (rate 0.0). Washington has
+# no ordinary-income tax but a 7% tax on long-term capital gains above a annually
+# indexed threshold (~$270k) — handled specially in get_state_tax_estimate.
+# `flat` marks states whose single rate applies at all income levels (so the
+# marginal estimate is exact, not an upper bound).
+_STATE_TAX: dict[str, dict] = {
+    "AL": {"name": "Alabama",        "rate": 0.0500, "flat": False},
+    "AK": {"name": "Alaska",         "rate": 0.0000, "flat": True, "no_income_tax": True},
+    "AZ": {"name": "Arizona",        "rate": 0.0250, "flat": True},
+    "AR": {"name": "Arkansas",       "rate": 0.0390, "flat": False},
+    "CA": {"name": "California",     "rate": 0.1330, "flat": False, "note": "Top 13.3% includes the 1% mental-health surcharge above $1M."},
+    "CO": {"name": "Colorado",       "rate": 0.0440, "flat": True},
+    "CT": {"name": "Connecticut",    "rate": 0.0699, "flat": False},
+    "DE": {"name": "Delaware",       "rate": 0.0660, "flat": False},
+    "DC": {"name": "District of Columbia", "rate": 0.1075, "flat": False},
+    "FL": {"name": "Florida",        "rate": 0.0000, "flat": True, "no_income_tax": True},
+    "GA": {"name": "Georgia",        "rate": 0.0539, "flat": True},
+    "HI": {"name": "Hawaii",         "rate": 0.1100, "flat": False},
+    "ID": {"name": "Idaho",          "rate": 0.0569, "flat": True},
+    "IL": {"name": "Illinois",       "rate": 0.0495, "flat": True},
+    "IN": {"name": "Indiana",        "rate": 0.0300, "flat": True},
+    "IA": {"name": "Iowa",           "rate": 0.0380, "flat": True},
+    "KS": {"name": "Kansas",         "rate": 0.0558, "flat": False},
+    "KY": {"name": "Kentucky",       "rate": 0.0400, "flat": True},
+    "LA": {"name": "Louisiana",      "rate": 0.0300, "flat": True},
+    "ME": {"name": "Maine",          "rate": 0.0715, "flat": False},
+    "MD": {"name": "Maryland",       "rate": 0.0575, "flat": False, "note": "Excludes county/local income taxes (often +2.25–3.2%)."},
+    "MA": {"name": "Massachusetts",  "rate": 0.0900, "flat": False, "note": "5% flat plus a 4% surtax on income above $1M."},
+    "MI": {"name": "Michigan",       "rate": 0.0425, "flat": True},
+    "MN": {"name": "Minnesota",      "rate": 0.0985, "flat": False},
+    "MS": {"name": "Mississippi",    "rate": 0.0440, "flat": True},
+    "MO": {"name": "Missouri",       "rate": 0.0470, "flat": False},
+    "MT": {"name": "Montana",        "rate": 0.0590, "flat": False},
+    "NE": {"name": "Nebraska",       "rate": 0.0584, "flat": False},
+    "NV": {"name": "Nevada",         "rate": 0.0000, "flat": True, "no_income_tax": True},
+    "NH": {"name": "New Hampshire",  "rate": 0.0000, "flat": True, "no_income_tax": True, "note": "No tax on wages; the interest/dividends tax was fully repealed in 2025."},
+    "NJ": {"name": "New Jersey",     "rate": 0.1075, "flat": False},
+    "NM": {"name": "New Mexico",     "rate": 0.0590, "flat": False},
+    "NY": {"name": "New York",       "rate": 0.1090, "flat": False, "note": "Excludes NYC/Yonkers local income tax (NYC adds up to ~3.88%)."},
+    "NC": {"name": "North Carolina", "rate": 0.0425, "flat": True},
+    "ND": {"name": "North Dakota",   "rate": 0.0250, "flat": False},
+    "OH": {"name": "Ohio",           "rate": 0.0350, "flat": False},
+    "OK": {"name": "Oklahoma",       "rate": 0.0475, "flat": False},
+    "OR": {"name": "Oregon",         "rate": 0.0990, "flat": False, "note": "Excludes local transit/county taxes."},
+    "PA": {"name": "Pennsylvania",   "rate": 0.0307, "flat": True, "note": "Flat 3.07%; PA does not tax most retirement income (IRA/401k/pension distributions)."},
+    "RI": {"name": "Rhode Island",   "rate": 0.0599, "flat": False},
+    "SC": {"name": "South Carolina", "rate": 0.0620, "flat": False},
+    "SD": {"name": "South Dakota",   "rate": 0.0000, "flat": True, "no_income_tax": True},
+    "TN": {"name": "Tennessee",      "rate": 0.0000, "flat": True, "no_income_tax": True},
+    "TX": {"name": "Texas",          "rate": 0.0000, "flat": True, "no_income_tax": True},
+    "UT": {"name": "Utah",           "rate": 0.0455, "flat": True},
+    "VT": {"name": "Vermont",        "rate": 0.0875, "flat": False},
+    "VA": {"name": "Virginia",       "rate": 0.0575, "flat": False},
+    "WA": {"name": "Washington",     "rate": 0.0000, "flat": True, "no_income_tax": True, "ltcg_rate": 0.07, "note": "No income tax, but a 7% tax applies to long-term capital gains above ~$270k/yr."},
+    "WV": {"name": "West Virginia",  "rate": 0.0482, "flat": False},
+    "WI": {"name": "Wisconsin",      "rate": 0.0765, "flat": False},
+    "WY": {"name": "Wyoming",        "rate": 0.0000, "flat": True, "no_income_tax": True},
+}
+
+# Accept full state names → code (built once at import).
+_STATE_NAME_TO_CODE = {v["name"].lower(): k for k, v in _STATE_TAX.items()}
+
 # IRS Uniform Lifetime Table — age → distribution period
 _RMD_TABLE: dict[int, float] = {
     72: 27.4, 73: 26.5, 74: 25.5, 75: 24.6, 76: 23.7,
@@ -1725,5 +1796,392 @@ async def get_annual_tax_advantaged_summary(
             "Contribution amounts shown are the IRS annual limits, not your actual YTD contributions. "
             "Check your payroll portal or brokerage for actual YTD contribution amounts. "
             "Balances are as of the last Emoney sync."
+        ),
+    }
+
+
+# ---------------------------------------------------------------------------
+# get_charitable_giving_strategy  (#89)
+# ---------------------------------------------------------------------------
+
+async def get_charitable_giving_strategy(
+    http_session,
+    annual_giving: float,
+    age: int | None = None,
+    filing_status: str = "mfj",
+    current_income: float | None = None,
+) -> dict:
+    """
+    Recommend the most tax-efficient vehicle for a recurring charitable gift:
+    a Qualified Charitable Distribution (QCD), donor-advised-fund (DAF) bunching,
+    or gifting appreciated long-term securities instead of cash.
+
+    Three levers are evaluated against the user's situation:
+
+    - **QCD** — at age 70½+ a direct IRA-to-charity transfer (up to the annual
+      cap) is excluded from AGI entirely, which also counts toward the RMD and
+      lowers IRMAA/Social-Security taxation. Beats a cash gift because it never
+      enters AGI (no need to itemize).
+    - **DAF / bunching** — when annual giving alone won't clear the standard
+      deduction, concentrating several years of gifts into one (via a DAF) lets
+      you itemize in the bunch year and take the standard deduction in the off
+      years. The benefit is the deduction recovered above the standard deduction.
+    - **Appreciated securities** — gifting long-term appreciated shares (vs.
+      selling and donating cash) avoids the capital-gains tax on the embedded
+      gain *and* still deducts full fair-market value. Identifies the taxable-
+      account lots with the largest unrealized gains as candidates.
+
+    Parameters
+    ----------
+    annual_giving  : your typical annual charitable gift in dollars
+    age            : your age (determines QCD eligibility at 70½)
+    filing_status  : 'single', 'mfj', or 'hoh' (default 'mfj')
+    current_income : annual ordinary income (for marginal-rate / itemize math;
+                     inferred from 12-month transactions if omitted)
+    """
+    if annual_giving is None or annual_giving <= 0:
+        return {"error": "annual_giving must be a positive dollar amount."}
+
+    fs = filing_status if filing_status in _BRACKETS else "mfj"
+    std_ded = _STD_DEDUCTION.get(fs, 30_000)
+
+    inferred_income = False
+    if current_income is None:
+        inc_result = await get_income_summary(http_session, days=365)
+        if "error" not in inc_result:
+            current_income = inc_result.get("total_income", 0) or 0
+            inferred_income = True
+        else:
+            current_income = 0.0
+
+    taxable_income = max(0.0, current_income - std_ded)
+    marginal = _marginal_rate(taxable_income, fs)
+    ltcg = _ltcg_rate(taxable_income, fs)
+
+    strategies: list[dict] = []
+
+    # --- 1. QCD (age 70½+) ---
+    qcd_eligible = age is not None and age >= _QCD_ELIGIBLE_AGE
+    retirement = await get_retirement_accounts(http_session)
+    pretax_ira = 0.0
+    if "error" not in retirement:
+        # QCDs may only come from IRAs (not 401k/403b), so isolate IRA balances.
+        for a in retirement.get("retirement_accounts", []):
+            nt = (a.get("name") or "").lower() + " " + (a.get("type") or "").lower()
+            if "ira" in nt and "roth" not in nt:
+                pretax_ira += a.get("balance", 0) or 0
+    qcd_amount = min(annual_giving, _QCD_ANNUAL_LIMIT, pretax_ira) if qcd_eligible else 0.0
+    # The QCD benefit vs. a cash gift: a cash gift only helps if you itemize and
+    # only at your marginal rate on the amount above the standard deduction; a QCD
+    # always escapes AGI. Approximate the edge as marginal rate on the QCD amount.
+    qcd_benefit = round(qcd_amount * marginal, 2) if qcd_amount > 0 else 0.0
+    strategies.append({
+        "vehicle":   "Qualified Charitable Distribution (QCD)",
+        "eligible":  qcd_eligible and pretax_ira > 0,
+        "recommended_amount": round(qcd_amount, 2),
+        "estimated_tax_benefit": qcd_benefit,
+        "detail": (
+            (f"At age {age} you can direct up to ${min(_QCD_ANNUAL_LIMIT, pretax_ira):,.0f} "
+             f"from a traditional IRA straight to charity. It is excluded from AGI, counts "
+             f"toward your RMD, and lowers IRMAA and Social-Security taxation.")
+            if qcd_eligible and pretax_ira > 0 else
+            (f"Not yet eligible — QCDs require age 70½+ (you are {age})."
+             if age is not None and not qcd_eligible else
+             "Requires age 70½+ and a traditional (pre-tax) IRA balance to draw from."
+             if pretax_ira <= 0 else
+             "Provide your age to assess QCD eligibility.")
+        ),
+    })
+
+    # --- 2. DAF / bunching ---
+    # If a single year of giving + a modest assumed SALT/other won't clear the
+    # standard deduction, bunching N years clears it and recovers the excess.
+    years_to_bunch = 1
+    if annual_giving < std_ded:
+        # how many years of giving to exceed the standard deduction
+        years_to_bunch = max(2, -(-int(std_ded) // max(1, int(annual_giving))))
+    bunched_gift = round(annual_giving * years_to_bunch, 2)
+    itemized_excess = max(0.0, bunched_gift - std_ded)
+    # Benefit = deduction recovered above the standard deduction, at marginal rate,
+    # net of the standard deduction forgone in the off years (already captured by
+    # only counting the excess over one standard deduction).
+    daf_benefit = round(itemized_excess * marginal, 2)
+    strategies.append({
+        "vehicle":   "Donor-Advised Fund (bunching)",
+        "eligible":  annual_giving < std_ded,
+        "recommended_bunch_years": years_to_bunch,
+        "bunched_contribution": bunched_gift,
+        "estimated_tax_benefit": daf_benefit,
+        "detail": (
+            (f"Your ${annual_giving:,.0f}/yr gift is below the ${std_ded:,.0f} standard "
+             f"deduction, so giving it yields no itemizing benefit in a normal year. "
+             f"Bunching ~{years_to_bunch} years (${bunched_gift:,.0f}) into a DAF lets you "
+             f"itemize once — recovering ${itemized_excess:,.0f} of deductions above the "
+             f"standard deduction (≈${daf_benefit:,.0f} at your {int(marginal*100)}% rate) — "
+             f"then take the standard deduction in the off years.")
+            if annual_giving < std_ded else
+            (f"Your ${annual_giving:,.0f}/yr gift already exceeds the ${std_ded:,.0f} standard "
+             f"deduction, so you itemize every year — bunching adds little. A DAF still helps "
+             f"if you want to front-load a high-income year's deduction.")
+        ),
+    })
+
+    # --- 3. Appreciated securities ---
+    cge = await get_capital_gains_exposure(http_session, filing_status=fs, annual_income=current_income)
+    appreciated_lots: list[dict] = []
+    cap_gains_avoided = 0.0
+    if "error" not in cge:
+        positions = [p for p in cge.get("taxable_account_positions", [])
+                     if (p.get("unrealized_gain") or 0) > 0]
+        positions.sort(key=lambda p: p.get("unrealized_gain", 0), reverse=True)
+        gift_remaining = annual_giving
+        for p in positions:
+            if gift_remaining <= 0:
+                break
+            value = p.get("current_value", 0) or 0
+            gift_value = min(value, gift_remaining)
+            frac = gift_value / value if value else 0
+            gain_gifted = round((p.get("unrealized_gain", 0) or 0) * frac, 2)
+            tax_avoided = round(gain_gifted * (ltcg + (0.038 if cge.get("niit_applies") else 0.0)), 2)
+            cap_gains_avoided += tax_avoided
+            appreciated_lots.append({
+                "ticker":              p.get("ticker"),
+                "description":         p.get("description"),
+                "account":             p.get("account"),
+                "gift_market_value":   round(gift_value, 2),
+                "embedded_gain_gifted": gain_gifted,
+                "capital_gains_tax_avoided": tax_avoided,
+            })
+            gift_remaining -= gift_value
+    strategies.append({
+        "vehicle":   "Gift appreciated securities (in-kind)",
+        "eligible":  len(appreciated_lots) > 0,
+        "estimated_tax_benefit": round(cap_gains_avoided, 2),
+        "candidate_lots": appreciated_lots,
+        "detail": (
+            (f"Donating ${annual_giving:,.0f} of long-term appreciated shares in-kind (instead "
+             f"of cash) avoids ≈${cap_gains_avoided:,.0f} of capital-gains tax on the embedded "
+             f"gain while still deducting full fair-market value. Best lots are listed.")
+            if appreciated_lots else
+            "No appreciated taxable-account lots found to gift in-kind (or holdings unavailable)."
+        ),
+    })
+
+    # Recommend the eligible strategy with the highest estimated benefit.
+    eligible = [s for s in strategies if s.get("eligible")]
+    recommended = max(eligible, key=lambda s: s.get("estimated_tax_benefit", 0)) if eligible else None
+
+    return {
+        "as_of":                 datetime.now().strftime("%Y-%m-%d"),
+        "annual_giving":         round(annual_giving, 2),
+        "filing_status":         fs,
+        "age":                   age,
+        "estimated_annual_income": round(current_income, 2),
+        "income_inferred":       inferred_income,
+        "marginal_rate_pct":     int(marginal * 100),
+        "standard_deduction":    std_ded,
+        "strategies":            strategies,
+        "recommended_vehicle":   recommended["vehicle"] if recommended else None,
+        "recommended_tax_benefit": recommended["estimated_tax_benefit"] if recommended else 0.0,
+        "note": (
+            "Strategies can be combined (e.g. QCD for the IRA portion plus an in-kind gift of "
+            "appreciated stock). Benefit estimates are directional: the DAF figure assumes the "
+            "standard deduction is the only competing itemized total, and QCD/cash comparisons "
+            "use your marginal rate. AGI/itemized-deduction limits (60% of AGI for cash, 30% for "
+            "appreciated securities) are not modeled."
+        ),
+        "caveat": _IRS_CAVEAT,
+    }
+
+
+# ---------------------------------------------------------------------------
+# get_tax_gain_harvesting  (#90)
+# ---------------------------------------------------------------------------
+
+async def get_tax_gain_harvesting(
+    http_session,
+    filing_status: str = "mfj",
+    annual_income: float | None = None,
+) -> dict:
+    """
+    Identify how much long-term capital gain can be realized at the 0% LTCG rate
+    this year — "tax-gain harvesting" — and which taxable-account lots to sell to
+    reset cost basis for free.
+
+    In the 0% LTCG bracket, selling appreciated long-term positions and
+    immediately rebuying them steps up cost basis at no tax cost (the wash-sale
+    rule applies only to *losses*, not gains). This is a recurring free benefit
+    for moderate-income years (early retirement, a gap year, etc.).
+
+    Parameters
+    ----------
+    filing_status : 'single', 'mfj', or 'hoh' (default 'mfj')
+    annual_income : ordinary income before gains (inferred from 12-month
+                    transactions if omitted). LTCG stacks on top of ordinary
+                    income, so this sets where the 0% bracket runs out.
+    """
+    fs = filing_status if filing_status in _LTCG_THRESHOLDS else "mfj"
+    std_ded = _STD_DEDUCTION.get(fs, 30_000)
+
+    inferred = False
+    if annual_income is None:
+        inc_result = await get_income_summary(http_session, days=365)
+        if "error" not in inc_result:
+            annual_income = inc_result.get("total_income", 0) or 0
+            inferred = True
+        else:
+            annual_income = 0.0
+
+    ordinary_taxable = max(0.0, annual_income - std_ded)
+
+    # The 0% LTCG band runs up to this taxable-income ceiling; ordinary income
+    # fills it first, and gains stack on top.
+    zero_pct_ceiling = _LTCG_THRESHOLDS[fs][0][0]
+    room_at_0pct = round(max(0.0, zero_pct_ceiling - ordinary_taxable), 2)
+
+    cge = await get_capital_gains_exposure(http_session, filing_status=fs, annual_income=annual_income)
+    if "error" in cge:
+        return cge
+
+    positions = [p for p in cge.get("taxable_account_positions", [])
+                 if (p.get("unrealized_gain") or 0) > 0]
+    positions.sort(key=lambda p: p.get("unrealized_gain", 0), reverse=True)
+    total_taxable_gain = round(sum(p.get("unrealized_gain", 0) or 0 for p in positions), 2)
+
+    # Fill the 0% room with the largest gains first.
+    harvest_plan: list[dict] = []
+    remaining = room_at_0pct
+    harvested_gain = 0.0
+    for p in positions:
+        if remaining <= 0:
+            break
+        gain = p.get("unrealized_gain", 0) or 0
+        harvest_gain = min(gain, remaining)
+        frac = harvest_gain / gain if gain else 0
+        harvest_value = round((p.get("current_value", 0) or 0) * frac, 2)
+        harvest_plan.append({
+            "ticker":             p.get("ticker"),
+            "description":        p.get("description"),
+            "account":            p.get("account"),
+            "sell_market_value":  harvest_value,
+            "gain_harvested_at_0pct": round(harvest_gain, 2),
+        })
+        harvested_gain += harvest_gain
+        remaining -= harvest_gain
+
+    harvested_gain = round(harvested_gain, 2)
+    # Tax saved = future LTCG tax avoided on the stepped-up basis. If they'd later
+    # sell at the 15% rate, harvesting now at 0% saves 15% of the harvested gain.
+    future_tax_saved = round(harvested_gain * 0.15, 2)
+
+    return {
+        "as_of":                 datetime.now().strftime("%Y-%m-%d"),
+        "filing_status":         fs,
+        "estimated_annual_income": round(annual_income, 2),
+        "income_inferred":       inferred,
+        "ordinary_taxable_income": round(ordinary_taxable, 2),
+        "zero_pct_ltcg_ceiling": zero_pct_ceiling,
+        "room_in_0pct_bracket":  room_at_0pct,
+        "total_unrealized_gain_taxable": total_taxable_gain,
+        "harvestable_gain_at_0pct": harvested_gain,
+        "estimated_future_tax_saved": future_tax_saved,
+        "harvest_plan":          harvest_plan,
+        "note": (
+            "Realizing long-term gains inside the 0% LTCG band resets cost basis tax-free; "
+            "you can repurchase immediately (the wash-sale rule restricts losses, not gains). "
+            "Gains stack ON TOP of ordinary income — every extra dollar of ordinary income "
+            "shrinks the 0% room, and gains beyond the room are taxed at 15%. Harvesting also "
+            "raises AGI, which can affect ACA subsidies and (at 63+) IRMAA — see get_irmaa_analysis. "
+            "Assumes positions are long-term (held > 1 year)."
+        ),
+        "caveat": _IRS_CAVEAT,
+    }
+
+
+# ---------------------------------------------------------------------------
+# get_state_tax_estimate  (#90)
+# ---------------------------------------------------------------------------
+
+def _resolve_state(state: str) -> str | None:
+    """Map a 2-letter code or full state name to the canonical code, or None."""
+    if not state:
+        return None
+    s = state.strip()
+    if s.upper() in _STATE_TAX:
+        return s.upper()
+    return _STATE_NAME_TO_CODE.get(s.lower())
+
+
+async def get_state_tax_estimate(
+    http_session,
+    state: str,
+    amount: float,
+    filing_status: str = "mfj",
+    income_type: str = "ordinary",
+) -> dict:
+    """
+    Estimate the STATE income tax on an incremental amount of income — the piece
+    every other tool in this server omits (all federal-only). Layer this on top
+    of a Roth conversion, capital-gain realization, or retirement withdrawal to
+    see the true combined marginal cost.
+
+    Uses each state's representative top marginal rate applied to ``amount``. For
+    a state with a flat tax this is exact; for graduated states it is the marginal
+    (top-of-the-stack) treatment, which is the right model for *additional* income
+    on top of an existing base. Nine states have no income tax (estimate $0);
+    Washington taxes long-term capital gains at 7% above a threshold even though
+    it has no ordinary-income tax.
+
+    Parameters
+    ----------
+    state       : 2-letter code ('CA') or full name ('California')
+    amount      : the incremental income in dollars to tax (conversion, gain, withdrawal)
+    filing_status : 'single', 'mfj', or 'hoh' (informational; rates shown are top marginal)
+    income_type : 'ordinary' (default) or 'ltcg' (long-term capital gain)
+    """
+    if amount is None or amount < 0:
+        return {"error": "amount must be a non-negative dollar figure."}
+
+    code = _resolve_state(state)
+    if code is None:
+        return {"error": (f"Unknown state '{state}'. Use a 2-letter code (e.g. 'CA') "
+                          f"or full name (e.g. 'California').")}
+
+    info = _STATE_TAX[code]
+    it = income_type.lower() if income_type else "ordinary"
+    if it not in ("ordinary", "ltcg"):
+        it = "ordinary"
+
+    # Most states tax LTCG as ordinary income (same rate). Washington is the
+    # exception: 0% ordinary but a dedicated 7% LTCG tax above a threshold.
+    rate = info["rate"]
+    if it == "ltcg" and "ltcg_rate" in info:
+        rate = info["ltcg_rate"]
+
+    state_tax = round(amount * rate, 2)
+
+    return {
+        "state":                 info["name"],
+        "state_code":            code,
+        "income_type":           it,
+        "amount":                round(amount, 2),
+        "filing_status":         filing_status,
+        "state_marginal_rate_pct": round(rate * 100, 3),
+        "estimated_state_tax":   state_tax,
+        "no_state_income_tax":   bool(info.get("no_income_tax")) and not (it == "ltcg" and "ltcg_rate" in info),
+        "rate_is_flat":          bool(info.get("flat")),
+        "state_note":            info.get("note"),
+        "note": (
+            "State tax is estimated by applying the state's representative top marginal rate to "
+            "the supplied amount — exact for flat-tax states, and the correct marginal treatment "
+            "for additional income stacked on an existing base in graduated states (it can "
+            "overstate tax on income that actually falls in lower brackets). Local/city income "
+            "taxes (e.g. NYC, MD counties) and state-specific exclusions (e.g. PA's exemption of "
+            "retirement income) are noted where applicable but not auto-applied. Rates are 2025 "
+            "figures — verify against current state schedules."
+        ),
+        "caveat": (
+            "Estimate only. State tax law is intricate (credits, exclusions, retirement-income "
+            "carve-outs, local surtaxes). Consult a qualified tax professional."
         ),
     }

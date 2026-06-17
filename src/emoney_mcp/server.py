@@ -1811,6 +1811,18 @@ async def list_tools() -> list[Tool]:
                 "required": [],
             },
         ),
+        # ── Data reads (#104) ─────────────────────────────────────────────
+        Tool(
+            name="get_vault_documents",
+            description=(
+                "Lists the eMoney Vault's top-level document folders — each with file count, size, "
+                "creation date, and sharing status — plus total storage usage. The Vault holds "
+                "documents shared between you and your advisor (statements, estate documents, tax "
+                "returns, etc.). Returns the folder inventory, not individual files. No parameters. "
+                "Useful for 'What's in my vault?' or 'How much have I uploaded?'"
+            ),
+            inputSchema={"type": "object", "properties": {}, "required": []},
+        ),
         # ── v1.0.2 Live endpoint discoveries ──────────────────────────────
         Tool(
             name="get_client_profile",
@@ -2204,6 +2216,7 @@ _DISPATCH = {
                                                _A("filing_status", str, "mfj"),
                                                _A("final_expenses", float, 15_000.0),
                                                _A("liquidation_haircut", float, 0.15)),
+    "get_vault_documents":           _passthru("get_vault_documents"),
     # ── Retirement & long-range ───────────────────────────────────────────
     "get_retirement_runway":         _passthru("get_retirement_runway",
                                                _A("annual_spending", float, optional=True),

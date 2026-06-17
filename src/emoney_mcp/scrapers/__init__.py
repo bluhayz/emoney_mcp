@@ -176,6 +176,10 @@ from .planning import (
     get_estate_liquidity_analysis,
 )
 
+from .vault import (
+    get_vault_documents,
+)
+
 from .explore import (
     explore_emoney_site,
 )
@@ -296,6 +300,8 @@ __all__ = [
     "get_mortgage_payoff_vs_invest",
     "get_healthcare_cost_projection", "get_hsa_optimization",
     "get_estate_liquidity_analysis",
+    # vault
+    "get_vault_documents",
     # explore
     "explore_emoney_site",
     # transactions (write)

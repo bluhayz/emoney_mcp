@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "emoney-mcp"
-version = "1.0.19"
+version = "1.0.20"
 description = "MCP server for Emoney Advisor financial planning"
 readme = "README_PYPI.md"
 requires-python = ">=3.11"
@@ -13,7 +13,11 @@ dependencies = [
     "python-dotenv>=1.0.0",
     "curl_cffi>=0.7",
     "beautifulsoup4>=4.12",
-    "nodriver>=0.34",
+    # Upper-bounded: nodriver 0.50.x's Connection.aopen() has a listener race
+    # that, with websockets >= 14's strict asyncio impl, produces an infinite
+    # "cannot call get() concurrently" loop. browser.py serializes aopen() to
+    # work around it; the cap keeps the float from landing on an untested major.
+    "nodriver>=0.34,<0.51",
     "pycryptodomex>=3.20",
 ]
 

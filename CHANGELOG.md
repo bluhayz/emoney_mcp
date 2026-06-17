@@ -2,7 +2,32 @@
 
 All notable changes to emoney-mcp are documented here.
 
-## [1.0.19] — 2026-06-17 (current)
+## [1.0.20] — 2026-06-17 (current)
+
+### Fixed
+
+- **`browser.py`** — nodriver login fallback no longer wedges in an infinite
+  `background listener error: cannot call get() concurrently` loop. nodriver
+  0.50.3's `Connection.aopen()` is a check-then-act race: under concurrent
+  `send()` calls (its own auto-attach handlers fire during `browser.get()`),
+  two coroutines can both pass the `if not self.socket` check and each spawn a
+  `_listener` task reading the same websocket. websockets >= 14 (required by
+  nodriver) then asserts `cannot call get() concurrently`, and nodriver's
+  listener swallows it and loops straight back into `recv()`. Added
+  `_patch_nodriver_aopen_race()` — applied before `nd.start()` — which
+  serializes `aopen()` per connection with an `asyncio.Lock` so exactly one
+  socket + one listener is created. Idempotent; calls the original under the
+  lock to stay resilient to nodriver internals changing.
+
+### Changed
+
+- **`pyproject.toml`** — upper-bounded `nodriver>=0.34,<0.51` so the unpinned
+  float (PyPI/`uvx` installs ignore `uv.lock`) can't land on an untested major
+  and re-trigger the listener race.
+
+Adds 2 regression tests (475 total).
+
+## [1.0.19] — 2026-06-17
 
 First wave of the FP&A roadmap (epic #106) — 11 new **pure-calculator** tools
 (no new Emoney endpoints), bringing the total to **93**.

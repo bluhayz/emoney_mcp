@@ -245,5 +245,5 @@ Run tests: `pytest tests/ -v --tb=short`
   - `security` — `pip-audit` (advisory only, `continue-on-error`).
   - `publish` — **gated on `needs: test`** and `if: push to main`. Builds with `uv` and publishes to PyPI **only when the `pyproject.toml` version changed** (compares against `HEAD~1`); otherwise it logs a skip. A failing test suite blocks the release.
 - **Always bump `version` in `pyproject.toml`** when you want a release — the publish job no-ops on an unchanged version, and Claude Desktop only picks up new builds from PyPI.
-- Actions pinned to Node.js 24 majors: `actions/checkout@v5`, `actions/setup-python@v6`, `astral-sh/setup-uv@v8`.
+- Actions pinned to Node.js 24: `actions/checkout@v5`, `actions/setup-python@v6`, `astral-sh/setup-uv@v8.2.0` (setup-uv stopped publishing a moving `v8` major tag at v8 — "immutable releases", so pin the full version).
 - **Build system**: `hatchling`. Package root is `src/emoney_mcp/`. `readme = "README_PYPI.md"`.

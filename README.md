@@ -280,6 +280,8 @@ Then point Claude Desktop at your local clone:
 | `get_vault_documents` | **eMoney Vault inventory.** Top-level document folders with file count, size, created date, and sharing status, plus total storage usage |
 | `get_all_goals_funding_status` | **Plan goals funding.** Every goal (retirement, leave-to-heirs, education/spending) with Monte Carlo probability of success, surplus/shortfall, On Track/Monitor/At Risk status, and retirement funding-vs-expense dollars |
 | `get_lifetime_cash_flow_projection` | **Lifetime cash flow.** Year-by-year inflow, outflow, net cash flow, portfolio value, net worth, growth, and withdrawals, plus peak/ending/depletion summary. Optional `start_year`/`end_year` |
+| `get_dividend_income_analysis` | **Portfolio income.** Trailing dividends + interest, portfolio yield, top income-producing tickers, forward estimate. Optional `days` |
+| `get_sector_geographic_allocation` | **Allocation detail.** Asset-type breakdown, equity geography (US/Intl/EM), style-box class detail, and concentration flags (GICS sector not exposed by eMoney) |
 | `explore_emoney_site` | Dev/discovery crawler — GETs major Emoney pages and mines HTML/JS for API endpoints, form actions, and nav links |
 | `explore_snb_write_endpoints` | Dev/discovery probe of candidate SNB write endpoints |
 | `clear_cache` | **Selective cache invalidation.** Purge card or SNB transaction cache without a full session reset. Parameter: `module` (`'cards'`, `'spending'`, or `'all'`; default `'all'`) |
@@ -512,7 +514,7 @@ Tools with multiple independent data sources use `asyncio.gather()` for parallel
 Claude Desktop
      │  MCP stdio
      ▼
-emoney_mcp/server.py         ← tool registration + dispatch (107 tools)
+emoney_mcp/server.py         ← tool registration + dispatch (109 tools)
 emoney_mcp/scraper.py         ← re-export shim (backward-compatible)
 emoney_mcp/scrapers/          ← domain-split scraping package
   ├── _helpers.py             ←   shared URL constants + TTL-cached _get_card()

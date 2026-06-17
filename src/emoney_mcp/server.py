@@ -1856,6 +1856,37 @@ async def list_tools() -> list[Tool]:
                 "required": [],
             },
         ),
+        # ── Data reads (#92, #93 — investment depth) ──────────────────────
+        Tool(
+            name="get_dividend_income_analysis",
+            description=(
+                "Analyzes portfolio income (dividends + interest) over a trailing window: total "
+                "trailing dividends and interest, portfolio yield vs. current value, the top "
+                "income-producing tickers, and a simple forward estimate. Counts only actual cash "
+                "receipts (excludes reinvestment offsets). Optional: days (default 365). "
+                "Note: no taxable-vs-sheltered split (the transaction feed lacks the owning account). "
+                "Useful for 'How much income does my portfolio produce?' or 'What's my dividend yield?'"
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "days": {"type": "integer", "description": "Trailing window in days (default 365)"},
+                },
+                "required": [],
+            },
+        ),
+        Tool(
+            name="get_sector_geographic_allocation",
+            description=(
+                "Breaks the portfolio down beyond broad asset class: by asset type, by equity "
+                "geography (US / International / Emerging Markets), and by detailed asset class "
+                "(style box), with single-class concentration flags. NOTE: eMoney classifies equities "
+                "by style box (Large/Mid/Small × Value/Blend/Growth), not GICS sector, so a true "
+                "sector (tech/financials) look-through is not available — geography and style tilt are. "
+                "No parameters. Useful for 'How much US vs international am I?' or 'Where's my hidden concentration?'"
+            ),
+            inputSchema={"type": "object", "properties": {}, "required": []},
+        ),
         # ── v1.0.2 Live endpoint discoveries ──────────────────────────────
         Tool(
             name="get_client_profile",
@@ -2254,6 +2285,9 @@ _DISPATCH = {
     "get_lifetime_cash_flow_projection": _passthru("get_lifetime_cash_flow_projection",
                                                _A("start_year", int, optional=True),
                                                _A("end_year", int, optional=True)),
+    "get_dividend_income_analysis":  _passthru("get_dividend_income_analysis",
+                                               _A("days", int, 365)),
+    "get_sector_geographic_allocation": _passthru("get_sector_geographic_allocation"),
     # ── Retirement & long-range ───────────────────────────────────────────
     "get_retirement_runway":         _passthru("get_retirement_runway",
                                                _A("annual_spending", float, optional=True),

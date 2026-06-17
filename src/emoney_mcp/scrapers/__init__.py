@@ -65,6 +65,8 @@ from .investments import (
     get_performance,
     get_transactions,
     get_capital_gains,
+    get_dividend_income_analysis,
+    get_sector_geographic_allocation,
 )
 
 from .spending import (
@@ -259,6 +261,7 @@ __all__ = [
     # investments
     "get_holdings", "get_asset_allocation", "get_net_worth_history",
     "get_performance", "get_transactions", "get_capital_gains",
+    "get_dividend_income_analysis", "get_sector_geographic_allocation",
     # spending
     "get_spending", "get_spending_transactions", "get_spending_trends",
     "get_income_summary", "get_savings_rate", "search_transactions",

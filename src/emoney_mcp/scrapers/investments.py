@@ -435,3 +435,179 @@ async def get_capital_gains(http_session, year: int | None = None) -> dict:
             "requires holding-period data not currently exposed by the API."
         ),
     }
+
+
+# ---------------------------------------------------------------------------
+# get_dividend_income_analysis  (#92)
+# ---------------------------------------------------------------------------
+
+async def get_dividend_income_analysis(http_session, days: int = 365) -> dict:
+    """
+    Analyze portfolio income (dividends + interest) over a trailing window.
+
+    Sums ``Income Dividend`` and ``Income Interest`` transactions (the actual
+    cash receipts) — ``Reinvest Dividend`` lines are the offsetting reinvestment
+    of those dividends and are excluded to avoid double-counting. Reports total
+    trailing income, the portfolio yield against current value, the top
+    income-producing tickers, and a simple forward estimate (trailing income).
+
+    Parameters
+    ----------
+    days : trailing window in days (default 365)
+
+    Note: the transaction feed has no account field, so a taxable-vs-sheltered
+    income split is not derivable here.
+    """
+    txn_result = await get_transactions(http_session, days=days)
+    if "error" in txn_result:
+        return txn_result
+    txns = txn_result.get("transactions", []) or []
+
+    dividends = 0.0
+    interest  = 0.0
+    by_ticker: dict[str, float] = {}
+    for t in txns:
+        ty  = t.get("type")
+        amt = t.get("amount") or 0.0
+        if ty == "Income Dividend":
+            dividends += amt
+            tk = t.get("ticker") or "—"
+            by_ticker[tk] = round(by_ticker.get(tk, 0.0) + amt, 2)
+        elif ty == "Income Interest":
+            interest += amt
+            tk = t.get("ticker") or "—"
+            by_ticker[tk] = round(by_ticker.get(tk, 0.0) + amt, 2)
+
+    total_income = round(dividends + interest, 2)
+
+    # Portfolio value for the yield calc
+    ts = int(time.time() * 1000)
+    http = await http_session.get_http()
+    resp = await http.get(f"{_INV_URL}/GetInvestmentData?_={ts}", timeout=30)
+    portfolio_value = None
+    if resp.status_code == 200 and "json" in resp.headers.get("content-type", ""):
+        d = resp.json()
+        portfolio_value = (d.get("Holdings") or 0) + (d.get("Cash") or 0) or d.get("CurrentValue")
+
+    yield_pct = round(total_income / portfolio_value * 100, 2) if portfolio_value else None
+
+    top = sorted(by_ticker.items(), key=lambda kv: kv[1], reverse=True)
+    top_income = [{"ticker": k, "income": v} for k, v in top[:10] if v > 0]
+
+    return {
+        "trailing_window_days":    days,
+        "trailing_dividends":      round(dividends, 2),
+        "trailing_interest":       round(interest, 2),
+        "trailing_total_income":   total_income,
+        "portfolio_value":         round(portfolio_value, 2) if portfolio_value else None,
+        "portfolio_yield_pct":     yield_pct,
+        "projected_forward_income": total_income,
+        "top_income_producers":    top_income,
+        "note": (
+            "Income = 'Income Dividend' + 'Income Interest' cash receipts over the trailing "
+            "window; 'Reinvest Dividend' lines are excluded (they reinvest the same dividends). "
+            "projected_forward_income uses trailing income as the estimate (no forward yield model). "
+            "Yield = trailing income / current portfolio value. A taxable-vs-sheltered split is not "
+            "available — the investment transaction feed does not include the owning account."
+        ),
+    }
+
+
+# ---------------------------------------------------------------------------
+# get_sector_geographic_allocation  (#93)
+# ---------------------------------------------------------------------------
+
+# Equity asset-class names eMoney assigns to non-US buckets (style-box taxonomy).
+_INTERNATIONAL_CLASSES = {"international"}
+_EMERGING_CLASSES      = {"emerg mkts", "emerging markets", "emerging"}
+
+
+async def get_sector_geographic_allocation(http_session) -> dict:
+    """
+    Break the portfolio down beyond broad asset class — by asset type, by
+    equity geography (US / International / Emerging Markets), and by detailed
+    asset class (style box) — and flag single-class concentration.
+
+    eMoney classifies equities by **style box** (Large/Mid/Small × Value/Blend/
+    Growth) plus International and Emerging Markets, not by GICS **sector**
+    (technology, financials, ...). So a true sector look-through is not
+    available; this surfaces geographic concentration and style tilt, which the
+    broad asset-class view hides.
+    """
+    ts = int(time.time() * 1000)
+    http = await http_session.get_http()
+    resp = await http.get(f"{_INV_URL}/GetInvestmentData?_={ts}", timeout=30)
+    if resp.status_code != 200 or "json" not in resp.headers.get("content-type", ""):
+        return {"error": f"GetInvestmentData returned {resp.status_code}. Session may have expired."}
+
+    data = resp.json()
+    aa = data.get("AssetAllocation") or {}
+    asset_types = aa.get("AssetTypes") or []
+    if not asset_types:
+        return {"error": "No asset-allocation data available to classify."}
+
+    total = 0.0
+    by_type: dict[str, float] = {}
+    classes: list[dict] = []
+    equity_us = equity_intl = equity_em = 0.0
+
+    for at in asset_types:
+        type_id = at.get("AssetTypeID") or "unknown"
+        is_equity = type_id == "equities"
+        for c in at.get("AssetClasses", []):
+            val = c.get("Value") or 0.0
+            if val <= 0:
+                continue
+            short = (c.get("ShortName") or c.get("LongName") or "Unknown")
+            total += val
+            by_type[type_id] = round(by_type.get(type_id, 0.0) + val, 2)
+            classes.append({"asset_class": short, "asset_type": type_id, "value": round(val, 2)})
+            if is_equity:
+                low = short.lower()
+                if low in _INTERNATIONAL_CLASSES:
+                    equity_intl += val
+                elif low in _EMERGING_CLASSES:
+                    equity_em += val
+                else:
+                    equity_us += val
+
+    if total <= 0:
+        return {"error": "Asset-allocation values are all zero."}
+
+    for c in classes:
+        c["percent"] = round(c["value"] / total * 100, 1)
+    classes.sort(key=lambda x: x["value"], reverse=True)
+
+    by_asset_type = [
+        {"asset_type": k, "value": v, "percent": round(v / total * 100, 1)}
+        for k, v in sorted(by_type.items(), key=lambda kv: kv[1], reverse=True)
+    ]
+
+    equity_total = equity_us + equity_intl + equity_em
+    equity_geographic = None
+    if equity_total > 0:
+        equity_geographic = {
+            "us":            {"value": round(equity_us, 2),   "pct_of_equity": round(equity_us / equity_total * 100, 1)},
+            "international": {"value": round(equity_intl, 2), "pct_of_equity": round(equity_intl / equity_total * 100, 1)},
+            "emerging_markets": {"value": round(equity_em, 2), "pct_of_equity": round(equity_em / equity_total * 100, 1)},
+        }
+
+    concentration_flags = [
+        f"{c['asset_class']} is {c['percent']}% of the portfolio"
+        for c in classes if c["percent"] >= 25
+    ]
+
+    return {
+        "total_portfolio_value":  round(total, 2),
+        "by_asset_type":          by_asset_type,
+        "equity_geographic":      equity_geographic,
+        "by_asset_class":         classes,
+        "concentration_flags":    concentration_flags,
+        "note": (
+            "eMoney classifies equities by STYLE BOX (Large/Mid/Small x Value/Blend/Growth) plus "
+            "International and Emerging Markets — not by GICS sector (technology, financials, ...), "
+            "so a true sector look-through is not available. equity_geographic splits the equity "
+            "sleeve into US / International / Emerging Markets; by_asset_class is the full style/class "
+            "detail. Percentages are of total classified assets."
+        ),
+    }

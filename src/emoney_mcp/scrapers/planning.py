@@ -26,9 +26,10 @@ import logging
 import re
 from datetime import datetime
 
-from .accounts import get_accounts, _calc_investable_assets
+from .accounts import get_accounts, get_retirement_accounts, _calc_investable_assets
 from .spending import _fetch_snb_data, _sum_income_spending
 from ._helpers import _get_card
+from .tax import _CONTRIBUTION_LIMITS, _IRS_CAVEAT
 
 _log = logging.getLogger("emoney_mcp.scrapers.planning")
 
@@ -734,4 +735,232 @@ async def get_mortgage_payoff_vs_invest(
             "Ignores the mortgage-interest deduction and state tax. A guaranteed rate near "
             "the expected after-tax market return favors paying down for the certainty."
         ),
+    }
+
+
+# ---------------------------------------------------------------------------
+# get_healthcare_cost_projection  (#102)
+# ---------------------------------------------------------------------------
+
+# National-average annual healthcare cost estimates, PER PERSON, in today's
+# dollars. These are deliberately conservative planning placeholders, not quotes.
+#   pre-65 ACA: unsubsidized benchmark premium (~$600/mo) + out-of-pocket.
+#   post-65 Medicare: Part B (~$2,220) + Part D (~$600) + Medigap (~$2,000) +
+#     dental/vision/hearing + OOP (~$2,200).
+_ACA_ANNUAL_PER_PERSON      = 9_600     # ~$700/mo premium + ~$1,200 OOP
+_MEDICARE_ANNUAL_PER_PERSON = 7_000     # Part B + D + Medigap + OOP, base
+_MEDICARE_START_AGE         = 65
+
+
+async def get_healthcare_cost_projection(
+    http_session,
+    current_age: int,
+    retirement_age: int = 65,
+    coverage: str = "individual",
+    life_expectancy: int = 90,
+    health_inflation: float = 0.05,
+) -> dict:
+    """
+    Project lifetime retirement healthcare costs as a plan line item, split into
+    the pre-65 (ACA marketplace) and post-65 (Medicare + premiums + out-of-pocket)
+    phases, inflated at a medical-specific rate.
+
+    Healthcare is the expense retirees most underestimate. This models it from
+    retirement (or now, if already retired) to ``life_expectancy``: ACA-style
+    unsubsidized premiums + OOP before Medicare eligibility at 65, then Medicare
+    Part B/D + Medigap + OOP after — both inflated each year and scaled for one
+    person or a couple.
+
+    Parameters
+    ----------
+    current_age      : your age today
+    retirement_age   : age you leave employer coverage (default 65)
+    coverage         : 'individual' (one person) or 'couple' (two)
+    life_expectancy  : age through which to project (default 90)
+    health_inflation : annual medical inflation assumption (default 0.05 = 5%)
+    """
+    if current_age is None or current_age <= 0:
+        return {"error": "current_age must be a positive integer."}
+    people = 2 if str(coverage).lower() in ("couple", "joint", "family", "mfj") else 1
+    start_age = max(current_age, min(retirement_age, life_expectancy))
+    if life_expectancy <= start_age:
+        return {"error": "life_expectancy must be greater than the retirement/start age."}
+
+    schedule: list[dict] = []
+    total_pre65 = 0.0
+    total_post65 = 0.0
+    for age in range(start_age, life_expectancy + 1):
+        years_from_now = age - current_age
+        inflator = (1 + health_inflation) ** max(0, years_from_now)
+        if age < _MEDICARE_START_AGE:
+            base = _ACA_ANNUAL_PER_PERSON
+            phase = "pre-65 (ACA marketplace)"
+        else:
+            base = _MEDICARE_ANNUAL_PER_PERSON
+            phase = "post-65 (Medicare)"
+        annual = round(base * people * inflator, 2)
+        if age < _MEDICARE_START_AGE:
+            total_pre65 += annual
+        else:
+            total_post65 += annual
+        schedule.append({
+            "age":          age,
+            "year":         datetime.now().year + years_from_now,
+            "phase":        phase,
+            "annual_cost":  annual,
+        })
+
+    total = round(total_pre65 + total_post65, 2)
+    return {
+        "as_of":              datetime.now().strftime("%Y-%m-%d"),
+        "current_age":        current_age,
+        "retirement_age":     retirement_age,
+        "coverage":           "couple" if people == 2 else "individual",
+        "people":             people,
+        "life_expectancy":    life_expectancy,
+        "health_inflation_pct": round(health_inflation * 100, 1),
+        "phase_totals": {
+            "pre_65_aca_total":      round(total_pre65, 2),
+            "post_65_medicare_total": round(total_post65, 2),
+        },
+        "total_projected_healthcare_cost": total,
+        "todays_dollars_annual_per_person": {
+            "pre_65_aca":      _ACA_ANNUAL_PER_PERSON,
+            "post_65_medicare": _MEDICARE_ANNUAL_PER_PERSON,
+        },
+        "annual_schedule":    schedule,
+        "note": (
+            "Costs use conservative national-average per-person placeholders "
+            f"(${_ACA_ANNUAL_PER_PERSON:,.0f}/yr pre-65 ACA, ${_MEDICARE_ANNUAL_PER_PERSON:,.0f}/yr "
+            "Medicare incl. Part B/D, Medigap, and out-of-pocket) inflated at the medical rate. "
+            "Long-term care is NOT included — model it separately. High-income retirees also owe "
+            "IRMAA surcharges on Medicare premiums (see get_irmaa_analysis). Replace the placeholders "
+            "with quotes for your region and plan for a precise figure."
+        ),
+        "caveat": (
+            "Planning estimate only; actual costs vary widely by health, region, and plan choice."
+        ),
+    }
+
+
+# ---------------------------------------------------------------------------
+# get_hsa_optimization  (#102)
+# ---------------------------------------------------------------------------
+
+async def get_hsa_optimization(
+    http_session,
+    current_age: int | None = None,
+    current_hsa_balance: float | None = None,
+    annual_contribution: float | None = None,
+    coverage: str = "family",
+    marginal_rate: float = 0.24,
+    growth_rate: float = 0.06,
+    target_age: int = 65,
+) -> dict:
+    """
+    Frame the HSA as the most tax-advantaged retirement account available (triple
+    tax benefit), compare investing the balance vs. spending it on current medical
+    bills, and project its balance trajectory to ``target_age``.
+
+    An HSA is triple-tax-advantaged: contributions are deductible (and avoid FICA
+    if made via payroll), growth is tax-free, and qualified medical withdrawals
+    are tax-free. Paying current medical costs out of pocket and letting the HSA
+    invest turns it into a stealth IRA that also covers tax-free medical expenses
+    in retirement (including Medicare premiums).
+
+    Parameters
+    ----------
+    current_age         : your age (enables the 55+ catch-up; default: skip catch-up)
+    current_hsa_balance : current HSA balance (pulled from Emoney if omitted)
+    annual_contribution : planned annual contribution (defaults to the IRS limit)
+    coverage            : 'family' or 'individual' HDHP coverage (sets the limit)
+    marginal_rate       : your marginal tax rate for the deduction value (default 0.24)
+    growth_rate         : assumed annual investment return (default 0.06)
+    target_age          : age to project the balance to (default 65)
+    """
+    lim = _CONTRIBUTION_LIMITS
+    is_family = str(coverage).lower() in ("family", "couple", "joint")
+    base_limit = lim["hsa_family"] if is_family else lim["hsa_individual"]
+    catchup_eligible = current_age is not None and current_age >= 55
+    contribution_limit = base_limit + (lim["hsa_catchup"] if catchup_eligible else 0)
+
+    if current_hsa_balance is None:
+        retirement = await get_retirement_accounts(http_session)
+        if "error" in retirement:
+            return retirement
+        current_hsa_balance = (retirement.get("retirement_breakdown", {}) or {}).get("hsa", 0) or 0
+        balance_source = "Emoney retirement accounts"
+    else:
+        balance_source = "provided"
+
+    contribution = annual_contribution if annual_contribution is not None else contribution_limit
+    contribution = min(contribution, contribution_limit)
+
+    # Balance trajectory: contribute each year and grow until target_age.
+    years = max(0, target_age - current_age) if current_age is not None else 0
+    trajectory: list[dict] = []
+    balance = float(current_hsa_balance)
+    for i in range(years + 1):
+        if i > 0:
+            balance = round(balance * (1 + growth_rate) + contribution, 2)
+        if current_age is not None:
+            trajectory.append({
+                "age":     current_age + i,
+                "year":    datetime.now().year + i,
+                "balance": round(balance, 2),
+            })
+    projected_balance = round(balance, 2)
+    total_contributed = round(float(current_hsa_balance) + contribution * years, 2)
+    growth_component = round(projected_balance - total_contributed, 2)
+
+    # Annual tax savings from a deductible contribution (income-tax shield; via
+    # payroll it also dodges 7.65% FICA — shown separately).
+    income_tax_saved = round(contribution * marginal_rate, 2)
+    fica_saved_if_payroll = round(contribution * 0.0765, 2)
+
+    return {
+        "as_of":                datetime.now().strftime("%Y-%m-%d"),
+        "current_age":          current_age,
+        "coverage":             "family" if is_family else "individual",
+        "current_hsa_balance":  round(float(current_hsa_balance), 2),
+        "balance_source":       balance_source,
+        "contribution_limit":   contribution_limit,
+        "catch_up_eligible_55plus": catchup_eligible,
+        "planned_annual_contribution": round(contribution, 2),
+        "triple_tax_advantage": [
+            "1. Contributions are tax-deductible (pre-tax via payroll, also avoiding 7.65% FICA).",
+            "2. Investment growth is entirely tax-free.",
+            "3. Withdrawals for qualified medical expenses are tax-free — at any age.",
+        ],
+        "annual_tax_savings": {
+            "income_tax_shield":     income_tax_saved,
+            "fica_savings_if_payroll": fica_saved_if_payroll,
+            "combined_if_payroll":   round(income_tax_saved + fica_saved_if_payroll, 2),
+        },
+        "invest_vs_spend": {
+            "recommendation": "invest",
+            "detail": (
+                "Pay current medical bills out of pocket (keep the receipts) and let the HSA stay "
+                "invested. The balance compounds tax-free and can be reimbursed for those past "
+                "expenses any time — or used tax-free for medical costs and Medicare premiums in "
+                "retirement. After age 65, non-medical withdrawals are taxed as ordinary income "
+                "with no penalty (like a traditional IRA), so the HSA is never wasted."
+            ),
+        },
+        "projection": {
+            "target_age":            target_age,
+            "years_projected":       years,
+            "assumed_return_pct":    round(growth_rate * 100, 1),
+            "projected_balance":     projected_balance,
+            "total_contributed":     total_contributed,
+            "tax_free_growth":       growth_component,
+            "trajectory":            trajectory,
+        },
+        "note": (
+            "Requires enrollment in a qualifying high-deductible health plan (HDHP) to contribute. "
+            "HSA contributions must stop once you enroll in Medicare (typically age 65). The 55+ "
+            "catch-up is $1,000. Limits shown are 2026 IRS figures. State treatment varies — a few "
+            "states (e.g. CA, NJ) tax HSA contributions and growth."
+        ),
+        "caveat": _IRS_CAVEAT,
     }

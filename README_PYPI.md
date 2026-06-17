@@ -191,7 +191,7 @@ Get me a link to the Liquidity Report.
 | `get_asset_allocation` | Allocation by asset class plus top 10 holdings |
 | `get_performance` | Portfolio return today, MTD, YTD |
 | `get_transactions` | Investment transactions (buys, sells, dividends) |
-| `get_capital_gains` | Realized gains by tax year |
+| `get_capital_gains` | Sell proceeds, dividends, interest by tax year (not realized gain/loss) |
 | `get_asset_location_efficiency` | A–F tax efficiency grade with swap suggestions |
 | `get_rebalancing_targets` | Exact buy/sell amounts to hit a target allocation |
 

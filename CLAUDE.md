@@ -2,7 +2,7 @@
 
 MCP server bridging Claude (and other MCP clients) to Emoney Advisor (`emaplan.com`). Emoney has no public API; this server uses reverse-engineered internal JSON endpoints + Chrome cookie extraction for auth.
 
-**Current version: 1.0.10 · 82 MCP tools.** Read-only data tools (cards + SNB + Profile), transaction/rules **write** tools, report links, and a large set of pure-Python planning/tax calculators (IRS 2026 figures).
+**Current version: 1.0.18 · 82 MCP tools.** Read-only data tools (cards + SNB + Profile), transaction/rules **write** tools, report links, and a large set of pure-Python planning/tax calculators (IRS 2026 figures).
 
 ---
 
@@ -69,8 +69,8 @@ call_tool(name, args)                  # top-level try/except → JSON error on 
 **Argument specs** — `_A(name, conv=str, default=_REQ, *, optional=False)`:
 - `default` given → `conv(args.get(name, default))`
 - `optional=True` → `conv(args[name])` if present & not None, else `None`
-- neither → `conv(args[name])` (required; `KeyError` → surfaced as an error)
-Special list/identity converters: `_ints` (list→[int]), `_identity` (pass through).
+- neither → `conv(args[name])` (required; a missing arg raises `ValueError("Missing required argument: '<name>'")`)
+Special converters: `_ints` (list→[int]), `_identity` (pass through), `_bool` (safe bool coercion — `bool("false")` would otherwise be `True`).
 
 **Adding a new tool now touches 4 locations** (one new file split adds the
 `scrapers/__init__.py` import + `__all__`):
@@ -123,7 +123,7 @@ All card fetches go through `_get_card(http, card_id)` in `_helpers.py` — 300 
 | 13 | Cash flow summary + 5 recent transactions | get_spending |
 | 20 | Aggregation status: BrokenConnections + Accounts freshness | get_aggregation_status |
 
-> **Card 8 ordering gotcha:** `History` is **oldest-first**; the newest element is the current month. Current net worth comes from the `NetWorth` field. Mislabeling this order silently reverses trends (fixed in v1.0.5 — `get_net_worth_velocity`).
+> **Card 8 ordering gotcha:** `History` is **oldest-first**; the newest element is the current month. Current net worth comes from the `NetWorth` field. Mislabeling this order silently reverses trends (fixed in v1.0.5 — `get_net_worth_velocity`). Both `get_net_worth_history` and `get_net_worth_velocity` now slice/label Card 8 through the shared `_parse_card8_history()` helper in `_helpers.py` (drift-free `_month_offset` labels), so the two can't diverge.
 
 ### SNB API (spending / transactions, read)
 `https://api.emoneyadvisor.com/snb-api` — separate host, requires `Authorization: Bearer <jwt>` + `apikey` header scraped from the Spending page HTML via `_get_snb_credentials()`. All SNB reads go through `spending._fetch_snb_data()` / `_fetch_snb_raw()` (300 s cache).
@@ -189,7 +189,7 @@ if not card:
 
 ## Testing
 
-**Framework**: `pytest` + `pytest-asyncio` (`asyncio_mode = "auto"`). **19 test files, 369 tests, no live network calls.** All tests use `make_mock_http_session()` from `tests/helpers.py`, or patch `_get_card` / `_fetch_snb_raw` / `_csrf_post` directly.
+**Framework**: `pytest` + `pytest-asyncio` (`asyncio_mode = "auto"`). **23 test files, 435 tests, no live network calls.** All tests use `make_mock_http_session()` from `tests/helpers.py`, or patch `_get_card` / `_fetch_snb_raw` / `_csrf_post` directly.
 
 ```python
 from helpers import make_mock_http_session, load_fixture

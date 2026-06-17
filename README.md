@@ -278,6 +278,7 @@ Then point Claude Desktop at your local clone:
 | `get_available_cards` | **Clean card inventory.** Returns a structured inventory of all responding card IDs (1–16 by default) with key names and data-type fingerprints. Optional: `card_ids` list |
 | `get_aggregation_status` | **Account-connection health.** Reports which linked institutions are broken/disconnected and each account's last-updated date — answers "Why is my Chase balance stale?" |
 | `get_vault_documents` | **eMoney Vault inventory.** Top-level document folders with file count, size, created date, and sharing status, plus total storage usage |
+| `get_all_goals_funding_status` | **Plan goals funding.** Every goal (retirement, leave-to-heirs, education/spending) with Monte Carlo probability of success, surplus/shortfall, On Track/Monitor/At Risk status, and retirement funding-vs-expense dollars |
 | `explore_emoney_site` | Dev/discovery crawler — GETs major Emoney pages and mines HTML/JS for API endpoints, form actions, and nav links |
 | `explore_snb_write_endpoints` | Dev/discovery probe of candidate SNB write endpoints |
 | `clear_cache` | **Selective cache invalidation.** Purge card or SNB transaction cache without a full session reset. Parameter: `module` (`'cards'`, `'spending'`, or `'all'`; default `'all'`) |
@@ -510,7 +511,7 @@ Tools with multiple independent data sources use `asyncio.gather()` for parallel
 Claude Desktop
      │  MCP stdio
      ▼
-emoney_mcp/server.py         ← tool registration + dispatch (105 tools)
+emoney_mcp/server.py         ← tool registration + dispatch (106 tools)
 emoney_mcp/scraper.py         ← re-export shim (backward-compatible)
 emoney_mcp/scrapers/          ← domain-split scraping package
   ├── _helpers.py             ←   shared URL constants + TTL-cached _get_card()

@@ -701,3 +701,253 @@ async def get_monthly_review(http_session) -> dict:
         },
         "action_items": action_items,
     }
+
+
+# ---------------------------------------------------------------------------
+# get_emergency_fund_analysis
+# ---------------------------------------------------------------------------
+
+def _liquid_cash(accts: dict) -> float:
+    """Sum of all cash/bank account-group totals (liquid reserves)."""
+    return sum(
+        g.get("total") or 0
+        for g in accts.get("account_groups", [])
+        if "cash" in g.get("group", "").lower() or "bank" in g.get("group", "").lower()
+    )
+
+
+async def get_emergency_fund_analysis(http_session, target_months: float = 6.0) -> dict:
+    """
+    Assess emergency-fund adequacy: months of expenses covered by liquid cash
+    versus a target, with the surplus or shortfall in dollars.
+
+    Parameters
+    ----------
+    target_months : target months of expenses to hold in cash (default 6)
+    """
+    target_months = max(1.0, min(target_months, 24.0))
+    accts = await get_accounts(http_session)
+    if "error" in accts:
+        return accts
+    liquid = round(_liquid_cash(accts), 2)
+
+    txns, ok = await _fetch_snb_data(http_session, days=90)
+    monthly_spending = 0.0
+    if ok:
+        monthly_spending = round(sum(
+            t["amount"] for t in txns
+            if not t["is_income"] and not t["is_excluded"]
+        ) / 3, 2)
+
+    if monthly_spending <= 0:
+        return {
+            "liquid_cash": liquid,
+            "error": "Could not determine monthly spending from transaction history.",
+        }
+
+    months_covered = round(liquid / monthly_spending, 1)
+    target_amount = round(monthly_spending * target_months, 2)
+    surplus = round(liquid - target_amount, 2)
+    if months_covered >= target_months:
+        status = "funded"
+    elif months_covered >= target_months / 2:
+        status = "partially_funded"
+    else:
+        status = "underfunded"
+
+    return {
+        "as_of":             datetime.now().strftime("%Y-%m-%d"),
+        "liquid_cash":       liquid,
+        "monthly_spending":  monthly_spending,
+        "months_covered":    months_covered,
+        "target_months":     target_months,
+        "target_amount":     target_amount,
+        "surplus_or_shortfall": surplus,
+        "status":            status,
+        "note": (
+            "Liquid cash = cash/bank account groups. Monthly spending = 90-day "
+            "average of non-income, non-excluded transactions. A 3–6 month reserve "
+            "is the common guideline; dual-income or stable-job households often "
+            "target the lower end."
+        ),
+    }
+
+
+# ---------------------------------------------------------------------------
+# get_idle_cash_optimization
+# ---------------------------------------------------------------------------
+
+async def get_idle_cash_optimization(
+    http_session,
+    hysa_apy: float = 0.045,
+    assumed_current_apy: float = 0.005,
+    keep_in_checking: float = 0.0,
+) -> dict:
+    """
+    Identify cash sitting in low-yield accounts and estimate the annual income
+    uplift from moving the deployable portion to a high-yield savings account,
+    money-market fund, or T-bills.
+
+    Parameters
+    ----------
+    hysa_apy            : yield available on cash today (default 0.045 = 4.5%)
+    assumed_current_apy : yield the cash currently earns (default 0.005)
+    keep_in_checking    : dollars to leave in low-yield checking for liquidity
+    """
+    accts = await get_accounts(http_session)
+    if "error" in accts:
+        return accts
+
+    cash_accounts = []
+    total_cash = 0.0
+    for grp in accts.get("account_groups", []):
+        gname = grp.get("group", "").lower()
+        if "cash" in gname or "bank" in gname:
+            for a in grp.get("accounts", []):
+                bal = a.get("balance") or 0
+                if bal > 0:
+                    cash_accounts.append({"name": a.get("name"), "balance": round(bal, 2)})
+                    total_cash += bal
+    total_cash = round(total_cash, 2)
+    if total_cash <= 0:
+        return {"total_cash": 0.0, "message": "No positive cash balances found."}
+
+    deployable = round(max(0.0, total_cash - max(0.0, keep_in_checking)), 2)
+    spread = hysa_apy - assumed_current_apy
+    annual_uplift = round(deployable * spread, 2)
+
+    return {
+        "as_of":              datetime.now().strftime("%Y-%m-%d"),
+        "total_cash":         total_cash,
+        "keep_in_checking":   round(keep_in_checking, 2),
+        "deployable_cash":    deployable,
+        "assumed_current_apy_pct": round(assumed_current_apy * 100, 2),
+        "target_apy_pct":     round(hysa_apy * 100, 2),
+        "estimated_annual_income_uplift": annual_uplift,
+        "cash_accounts":      sorted(cash_accounts, key=lambda x: x["balance"], reverse=True),
+        "note": (
+            "Uplift = deployable cash × (target APY − assumed current APY). "
+            "High-yield savings, money-market funds, and short T-bills are all "
+            "candidates; T-bills are state-tax-exempt. Keep enough in checking for "
+            "near-term bills (keep_in_checking)."
+        ),
+    }
+
+
+# ---------------------------------------------------------------------------
+# get_financial_alerts (#105)
+# ---------------------------------------------------------------------------
+
+async def get_financial_alerts(http_session, days_ahead: int = 14) -> dict:
+    """
+    Aggregate a single prioritized "what needs my attention" list by combining
+    signals from several existing tools: broken account aggregations, unusually
+    large transactions, overdue/upcoming bills, budget overruns, an underfunded
+    emergency fund, and portfolio concentration.
+
+    Each underlying tool is called defensively — any that errors is skipped and
+    marked in ``sources_checked`` rather than failing the whole call.
+
+    Parameters
+    ----------
+    days_ahead : window for upcoming-bill alerts (default 14)
+    """
+    from .accounts import get_aggregation_status
+    from .spending import get_unusual_transactions, get_upcoming_bills, get_budget_vs_actual
+    from .portfolio import get_portfolio_concentration
+
+    results: list = await asyncio.gather(
+        get_aggregation_status(http_session),
+        get_unusual_transactions(http_session),
+        get_upcoming_bills(http_session, days_ahead=days_ahead),
+        get_budget_vs_actual(http_session),
+        get_emergency_fund_analysis(http_session),
+        get_portfolio_concentration(http_session),
+        return_exceptions=True,
+    )
+    agg, unusual, bills, budget, emergency, concentration = results
+
+    def _ok(x) -> bool:
+        return isinstance(x, dict) and "error" not in x
+
+    alerts: list[dict] = []
+
+    if _ok(agg) and agg.get("broken_count", 0) > 0:
+        alerts.append({
+            "severity": "high", "category": "accounts",
+            "message": f"{agg['broken_count']} account connection(s) broken — data may be stale.",
+            "detail": agg.get("broken_connections", [])[:5],
+        })
+
+    if _ok(emergency) and emergency.get("status") == "underfunded":
+        shortfall = abs(emergency.get("surplus_or_shortfall") or 0)
+        alerts.append({
+            "severity": "high", "category": "cash",
+            "message": (f"Emergency fund underfunded — {emergency.get('months_covered')} months "
+                        f"covered (${shortfall:,.0f} short of target)."),
+        })
+
+    if _ok(unusual) and unusual.get("unusual_count", 0) > 0:
+        alerts.append({
+            "severity": "medium", "category": "spending",
+            "message": (f"{unusual['unusual_count']} unusually large transaction(s) flagged "
+                        f"(${unusual.get('total_flagged_amount', 0):,.0f})."),
+            "detail": unusual.get("unusual_transactions", [])[:5],
+        })
+
+    if _ok(bills):
+        overdue = bills.get("overdue_count", 0)
+        if overdue > 0:
+            alerts.append({
+                "severity": "medium", "category": "bills",
+                "message": f"{overdue} expected recurring charge(s) appear overdue.",
+            })
+        soon = [b for b in bills.get("upcoming", []) if not b.get("overdue")]
+        if soon:
+            alerts.append({
+                "severity": "low", "category": "bills",
+                "message": (f"{len(soon)} bill(s) due in the next {days_ahead} days "
+                            f"(~${bills.get('total_expected_amount', 0):,.0f})."),
+                "detail": soon[:5],
+            })
+
+    if _ok(concentration) and (concentration.get("concentrated_positions") or []):
+        conc = concentration["concentrated_positions"]
+        alerts.append({
+            "severity": "medium", "category": "portfolio",
+            "message": (f"{len(conc)} concentrated position(s); diversification grade "
+                        f"{concentration.get('diversification_grade')}."),
+            "detail": conc[:5],
+        })
+
+    if _ok(budget) and budget.get("over_budget_count", 0) > 0:
+        alerts.append({
+            "severity": "low", "category": "budget",
+            "message": f"{budget['over_budget_count']} category(ies) over the rolling average this month.",
+            "detail": budget.get("top_overspend"),
+        })
+
+    severity_order = {"high": 0, "medium": 1, "low": 2}
+    alerts.sort(key=lambda a: severity_order.get(a["severity"], 3))
+
+    sources_checked = {
+        "aggregation":          _ok(agg),
+        "unusual_transactions": _ok(unusual),
+        "upcoming_bills":       _ok(bills),
+        "budget":               _ok(budget),
+        "emergency_fund":       _ok(emergency),
+        "concentration":        _ok(concentration),
+    }
+    return {
+        "as_of":               datetime.now().strftime("%Y-%m-%d"),
+        "alert_count":         len(alerts),
+        "high_priority_count": sum(1 for a in alerts if a["severity"] == "high"),
+        "alerts":              alerts,
+        "sources_checked":     sources_checked,
+        "note": (
+            "Consolidates signals from aggregation status, unusual transactions, upcoming "
+            "bills, budget vs. actual, emergency-fund adequacy, and portfolio concentration. "
+            "Sources marked false in sources_checked errored and were skipped — no alert "
+            "doesn't always mean all-clear there."
+        ),
+    }

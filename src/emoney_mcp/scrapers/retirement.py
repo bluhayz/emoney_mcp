@@ -41,9 +41,10 @@ import random
 import statistics
 from datetime import datetime
 
-from .accounts import get_accounts, _calc_investable_assets
+from .accounts import get_accounts, _calc_investable_assets, get_net_worth_breakdown
 from .goals import get_goals
 from .spending import _fetch_snb_data, get_savings_rate, _sum_income_spending
+from .tax import _compute_tax, _STD_DEDUCTION
 
 
 async def get_retirement_runway(
@@ -966,5 +967,208 @@ async def get_financial_independence_roadmap(
             "Fidelity benchmarks: investable assets as a multiple of gross annual income. "
             "FI number = 25× annual spending (4% SWR). Coast FI assumes 7% annual return. "
             "Investable assets exclude real-estate equity."
+        ),
+    }
+
+
+# ---------------------------------------------------------------------------
+# get_withdrawal_sequencing_strategy
+# ---------------------------------------------------------------------------
+
+async def get_withdrawal_sequencing_strategy(
+    http_session,
+    annual_need: float,
+    filing_status: str = "mfj",
+    years: int = 30,
+    taxable_gain_fraction: float = 0.5,
+    growth_rate: float = 0.05,
+) -> dict:
+    """
+    Compare a tax-efficient withdrawal order (taxable → tax-deferred → Roth)
+    against a naive proportional drawdown, and estimate the lifetime tax saved.
+
+    Account balances by tax treatment come from get_net_worth_breakdown.
+
+    Parameters
+    ----------
+    annual_need           : annual portfolio withdrawal needed (after other income)
+    filing_status         : single | mfj | hoh (default mfj)
+    years                 : simulation horizon (default 30)
+    taxable_gain_fraction : fraction of a taxable-account withdrawal that is
+                            embedded gain (taxed at LTCG); the rest is basis
+                            (default 0.5)
+    growth_rate           : annual portfolio growth assumption (default 0.05)
+    """
+    years = max(1, min(years, 50))
+    fs = filing_status if filing_status in _STD_DEDUCTION else "mfj"
+    std = _STD_DEDUCTION[fs]
+    ltcg_rate = 0.15
+
+    breakdown = await get_net_worth_breakdown(http_session)
+    if "error" in breakdown:
+        return breakdown
+    buckets = {b["bucket"]: b["value"] for b in breakdown.get("by_tax_treatment", [])}
+    start = {
+        "taxable":  max(0.0, buckets.get("Taxable", 0.0)),
+        "deferred": max(0.0, buckets.get("Tax-Deferred", 0.0)),
+        "roth":     max(0.0, buckets.get("Tax-Free", 0.0)),
+    }
+    if sum(start.values()) <= 0:
+        return {"error": "No investable balances found to model withdrawals."}
+
+    def _year_tax(w_taxable: float, w_deferred: float) -> float:
+        # Taxable: only the embedded gain is taxed (LTCG). Deferred: ordinary
+        # income (after the standard deduction). Roth: tax-free.
+        cg = w_taxable * taxable_gain_fraction * ltcg_rate
+        ordinary = _compute_tax(max(0.0, w_deferred - std), fs)
+        return round(cg + ordinary, 2)
+
+    def _simulate(proportional: bool) -> dict:
+        bal = dict(start)
+        total_tax = 0.0
+        lasted = 0
+        for _y in range(years):
+            for k in bal:
+                bal[k] = round(bal[k] * (1 + growth_rate), 2)
+            total = sum(bal.values())
+            if total <= 0:
+                break
+            need = min(annual_need, total)
+            draw = {"taxable": 0.0, "deferred": 0.0, "roth": 0.0}
+            if proportional:
+                for k in bal:
+                    draw[k] = round(need * bal[k] / total, 2)
+            else:
+                remaining = need
+                for k in ("taxable", "deferred", "roth"):   # tax-efficient order
+                    take = min(remaining, bal[k])
+                    draw[k] = round(take, 2)
+                    remaining -= take
+                    if remaining <= 0:
+                        break
+            for k in bal:
+                bal[k] = round(bal[k] - draw[k], 2)
+            total_tax += _year_tax(draw["taxable"], draw["deferred"])
+            lasted = _y + 1
+            if sum(bal.values()) <= 0:
+                break
+        return {"total_tax": round(total_tax, 2), "years_funded": lasted,
+                "ending_balance": round(sum(bal.values()), 2)}
+
+    efficient = _simulate(proportional=False)
+    proportional = _simulate(proportional=True)
+    tax_saved = round(proportional["total_tax"] - efficient["total_tax"], 2)
+
+    return {
+        "as_of":             datetime.now().strftime("%Y-%m-%d"),
+        "annual_need":       round(annual_need, 2),
+        "filing_status":     fs,
+        "horizon_years":     years,
+        "starting_balances": {k: round(v, 2) for k, v in start.items()},
+        "recommended_order": ["taxable", "tax_deferred", "roth"],
+        "tax_efficient_strategy": efficient,
+        "proportional_strategy":  proportional,
+        "estimated_lifetime_tax_saved": tax_saved,
+        "note": (
+            "Simplified model: taxable withdrawals taxed only on the embedded gain "
+            "(taxable_gain_fraction at 15% LTCG), tax-deferred at ordinary rates "
+            "(after the standard deduction), Roth tax-free. Ignores RMDs, IRMAA, "
+            "and the value of leaving Roth to compound — drawing tax-deferred down "
+            "in low-bracket years (see get_roth_conversion_ladder) can beat the "
+            "strict order. State tax not modeled."
+        ),
+    }
+
+
+# ---------------------------------------------------------------------------
+# get_retirement_income_plan
+# ---------------------------------------------------------------------------
+
+async def get_retirement_income_plan(
+    http_session,
+    retire_age: int,
+    birth_year: int,
+    annual_spending: float | None = None,
+    social_security_annual: float = 0.0,
+    ss_claim_age: int = 67,
+    pension_annual: float = 0.0,
+    pension_start_age: int = 65,
+    years: int = 30,
+    growth_rate: float = 0.05,
+) -> dict:
+    """
+    Year-by-year retirement income plan: guaranteed income (Social Security +
+    pension) netted against the spending need, with the required portfolio
+    withdrawal and resulting withdrawal rate for each year.
+
+    Parameters
+    ----------
+    retire_age             : age at which retirement (portfolio drawdown) begins
+    birth_year             : year of birth
+    annual_spending        : retirement spending need (default: 12-mo actual from SNB)
+    social_security_annual : annual SS benefit
+    ss_claim_age           : age SS begins (default 67)
+    pension_annual         : annual pension benefit (default 0)
+    pension_start_age      : age pension begins (default 65)
+    years                  : plan horizon (default 30)
+    growth_rate            : annual portfolio growth assumption (default 0.05)
+    """
+    years = max(1, min(years, 50))
+    accts = await get_accounts(http_session)
+    if "error" in accts:
+        return accts
+    portfolio = _calc_investable_assets(accts)
+
+    if annual_spending is None:
+        txns, ok = await _fetch_snb_data(http_session, days=365)
+        if ok:
+            _income, annual_spending = _sum_income_spending(txns)
+        else:
+            annual_spending = 0.0
+    if not annual_spending or annual_spending <= 0:
+        return {"error": "Could not determine annual spending. Pass annual_spending explicitly."}
+
+    rows = []
+    depletion_age = None
+    bal = portfolio
+    for i in range(years):
+        age = retire_age + i
+        ss = social_security_annual if age >= ss_claim_age else 0.0
+        pension = pension_annual if age >= pension_start_age else 0.0
+        guaranteed = round(ss + pension, 2)
+        gap = round(max(0.0, annual_spending - guaranteed), 2)
+        withdrawal = min(gap, max(0.0, bal))
+        wr = round(withdrawal / bal * 100, 2) if bal > 0 else None
+        bal = round((bal - withdrawal) * (1 + growth_rate), 2)
+        if bal <= 0 and depletion_age is None:
+            depletion_age = age
+        rows.append({
+            "age":               age,
+            "year":              datetime.now().year + i,
+            "guaranteed_income": guaranteed,
+            "social_security":   round(ss, 2),
+            "pension":           round(pension, 2),
+            "spending_need":     round(annual_spending, 2),
+            "portfolio_withdrawal": round(withdrawal, 2),
+            "withdrawal_rate_pct":  wr,
+            "end_portfolio":     max(0.0, bal),
+        })
+
+    first = rows[0]
+    return {
+        "as_of":            datetime.now().strftime("%Y-%m-%d"),
+        "retire_age":       retire_age,
+        "starting_portfolio": round(portfolio, 2),
+        "annual_spending":  round(annual_spending, 2),
+        "first_year_withdrawal_rate_pct": first["withdrawal_rate_pct"],
+        "depletion_age":    depletion_age,
+        "plan":             rows,
+        "note": (
+            "Guaranteed income (Social Security + pension) is subtracted from the "
+            "spending need; the remainder is the required portfolio withdrawal. "
+            "Portfolio = investable assets (excludes real-estate equity), growing at "
+            f"{round(growth_rate*100,1)}% after withdrawals. Inflation, taxes on "
+            "withdrawals, and RMDs are not modeled here — see get_retirement_runway "
+            "and get_withdrawal_sequencing_strategy."
         ),
     }

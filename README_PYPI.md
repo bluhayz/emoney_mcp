@@ -164,7 +164,7 @@ Get me a link to the Liquidity Report.
 
 ---
 
-## Available tools (82 total)
+## Available tools (93 total)
 
 ### Overview & Dashboard
 | Tool | What it answers |
@@ -297,6 +297,21 @@ Get me a link to the Liquidity Report.
 | `get_version` | Installed version, cookie file path, and session status |
 | `get_features` | List all tools with descriptions and example questions |
 | `explore_emoney_cards` · `explore_emoney_site` · `explore_snb_write_endpoints` | Developer/discovery probes for finding new Emoney data sources and endpoints |
+
+### Advanced Planning Calculators (v1.0.19 — 11 new tools)
+| Tool | What it answers |
+|------|----------------|
+| `get_multi_year_tax_projection` | Taxable income, bracket, and tax over N years; flags low-bracket "conversion window" years |
+| `get_roth_conversion_ladder` | Multi-year Roth conversion plan filling each year's bracket up to a target rate |
+| `get_irmaa_analysis` | Medicare IRMAA surcharge tier, distance to the next cliff, and the cost of crossing it |
+| `get_withdrawal_sequencing_strategy` | Tax-efficient drawdown order vs. proportional, with estimated lifetime tax saved |
+| `get_retirement_income_plan` | Year-by-year guaranteed income vs. spending need, withdrawal rate, and depletion age |
+| `get_emergency_fund_analysis` | Months of expenses covered vs. a target, with surplus/shortfall |
+| `get_idle_cash_optimization` | Low-yield cash and the annual income uplift from HYSA/MMF/T-bills |
+| `get_mortgage_amortization_schedule` | Interest vs. principal over time, total interest, payoff date (+ extra payments) |
+| `get_mortgage_refinance_analysis` | Monthly savings, break-even month, and lifetime interest change for a refi |
+| `get_mortgage_payoff_vs_invest` | Paying down the mortgage vs. investing the difference, after tax |
+| `get_financial_alerts` | One prioritized "what needs attention" list across accounts, spending, bills, and portfolio |
 
 ---
 

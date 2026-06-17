@@ -391,6 +391,137 @@ class TestMultiYearTaxProjection:
 
 
 # ---------------------------------------------------------------------------
+# get_roth_conversion_ladder (#87)
+# ---------------------------------------------------------------------------
+
+class TestRothConversionLadder:
+
+    def _patch(self, accounts: list):
+        import unittest.mock
+        p = unittest.mock.patch(
+            "emoney_mcp.scrapers.tax.get_retirement_accounts",
+            return_value=_make_retirement_result(accounts),
+        )
+        p.start()
+        self._p = p
+        return AsyncMock()
+
+    def teardown_method(self):
+        if hasattr(self, "_p"):
+            self._p.stop()
+
+    @pytest.mark.asyncio
+    async def test_fills_up_to_target_bracket(self):
+        session = self._patch([{"name": "IRA", "type": "IRA", "balance": 600_000}])
+        from emoney_mcp.scrapers.tax import get_roth_conversion_ladder
+        from emoney_mcp.scrapers.tax import _target_bracket_ceiling
+        r = await get_roth_conversion_ladder(session, birth_year=1962,
+                                             current_taxable_income=40_000,
+                                             target_bracket=0.12, years=8, retirement_age=64)
+        ceiling = _target_bracket_ceiling(0.12, "mfj")
+        assert r["fill_to_taxable_income"] == ceiling
+        # In a year with a conversion, baseline + conversion should not exceed the ceiling.
+        for row in r["ladder"]:
+            if row["recommended_conversion"] > 0:
+                assert row["baseline_taxable_income"] + row["recommended_conversion"] <= ceiling + 1
+
+    @pytest.mark.asyncio
+    async def test_capped_by_pretax_balance(self):
+        session = self._patch([{"name": "IRA", "type": "IRA", "balance": 50_000}])
+        from emoney_mcp.scrapers.tax import get_roth_conversion_ladder
+        r = await get_roth_conversion_ladder(session, birth_year=1962,
+                                             current_taxable_income=0, years=10, retirement_age=60)
+        # Can't convert more than the starting balance (plus modest growth).
+        assert r["total_converted"] <= 50_000 * 1.06 ** 10
+        assert r["pretax_balance_after_ladder"] >= 0
+
+    @pytest.mark.asyncio
+    async def test_blended_rate_and_totals_consistent(self):
+        session = self._patch([{"name": "401k", "type": "401k", "balance": 400_000}])
+        from emoney_mcp.scrapers.tax import get_roth_conversion_ladder
+        r = await get_roth_conversion_ladder(session, birth_year=1962,
+                                             current_taxable_income=30_000, target_bracket=0.22,
+                                             years=8, retirement_age=63)
+        assert round(sum(x["recommended_conversion"] for x in r["ladder"]), 0) == round(r["total_converted"], 0)
+        assert round(sum(x["conversion_tax"] for x in r["ladder"]), 0) == round(r["total_conversion_tax"], 0)
+
+    @pytest.mark.asyncio
+    async def test_invalid_target_bracket(self):
+        session = self._patch([{"name": "IRA", "type": "IRA", "balance": 100_000}])
+        from emoney_mcp.scrapers.tax import get_roth_conversion_ladder
+        r = await get_roth_conversion_ladder(session, birth_year=1962,
+                                             current_taxable_income=50_000, target_bracket=0.99)
+        assert "error" in r
+
+    @pytest.mark.asyncio
+    async def test_error_propagates(self):
+        import unittest.mock
+        p = unittest.mock.patch("emoney_mcp.scrapers.tax.get_retirement_accounts",
+                                return_value={"error": "unavailable"})
+        p.start()
+        try:
+            from emoney_mcp.scrapers.tax import get_roth_conversion_ladder
+            r = await get_roth_conversion_ladder(AsyncMock(), birth_year=1962,
+                                                 current_taxable_income=50_000)
+            assert "error" in r
+        finally:
+            p.stop()
+
+
+# ---------------------------------------------------------------------------
+# get_irmaa_analysis (#88)
+# ---------------------------------------------------------------------------
+
+class TestIrmaaAnalysis:
+
+    @pytest.mark.asyncio
+    async def test_base_tier_no_surcharge(self):
+        from emoney_mcp.scrapers.tax import get_irmaa_analysis
+        r = await get_irmaa_analysis(AsyncMock(), magi=150_000, filing_status="mfj")
+        assert r["current_tier"] == 1
+        assert r["annual_surcharge_per_person"] == 0.0
+        assert r["distance_to_next_cliff"] > 0
+
+    @pytest.mark.asyncio
+    async def test_higher_tier_has_surcharge(self):
+        from emoney_mcp.scrapers.tax import get_irmaa_analysis
+        r = await get_irmaa_analysis(AsyncMock(), magi=300_000, filing_status="mfj")
+        assert r["current_tier"] >= 2
+        assert r["annual_surcharge_per_person"] > 0
+
+    @pytest.mark.asyncio
+    async def test_single_vs_mfj_thresholds(self):
+        from emoney_mcp.scrapers.tax import get_irmaa_analysis
+        # 200k MAGI: under the mfj first cliff (216k) but over the single first cliff (108k).
+        mfj = await get_irmaa_analysis(AsyncMock(), magi=200_000, filing_status="mfj")
+        single = await get_irmaa_analysis(AsyncMock(), magi=200_000, filing_status="single")
+        assert mfj["current_tier"] == 1
+        assert single["current_tier"] > 1
+
+    @pytest.mark.asyncio
+    async def test_proposed_income_cliff_cost(self):
+        from emoney_mcp.scrapers.tax import get_irmaa_analysis
+        # Just under the mfj first cliff; a conversion pushes over it.
+        r = await get_irmaa_analysis(AsyncMock(), magi=210_000, filing_status="mfj",
+                                     proposed_additional_income=20_000)
+        assert r["crosses_cliff"] is True
+        assert r["added_annual_surcharge_per_person"] > 0
+        assert r["proposed_tier"] > r["current_tier"]
+
+
+class TestIrmaaYearFreshness:
+    """IRMAA tiers are hardcoded per year and must be refreshed annually, like
+    the IRS tables. Fails once _IRMAA_YEAR falls more than one year behind."""
+
+    def test_irmaa_year_not_stale(self):
+        from datetime import datetime
+        from emoney_mcp.scrapers.tax import _IRMAA_YEAR
+        assert _IRMAA_YEAR >= datetime.now().year - 1, (
+            f"_IRMAA_YEAR={_IRMAA_YEAR} is stale — refresh the IRMAA tiers in tax.py."
+        )
+
+
+# ---------------------------------------------------------------------------
 # Tax-table staleness nag (#27)
 # ---------------------------------------------------------------------------
 

@@ -504,6 +504,59 @@ async def list_tools() -> list[Tool]:
             },
         ),
         Tool(
+            name="get_roth_conversion_ladder",
+            description=(
+                "Builds a multi-year Roth conversion ladder that fills each year's bracket up to "
+                "the top of a target bracket — converting more in low-income years before RMDs/SS "
+                "crowd the bracket, capped by the pre-tax balance. The strategic counterpart to "
+                "get_roth_conversion_analysis (single conversion). Returns per-year recommended "
+                "conversion, tax cost, blended rate, and estimated RMD reduction. "
+                "Required: birth_year, current_taxable_income. "
+                "Optional: target_bracket (default 0.24), years (10), filing_status, retirement_age, "
+                "social_security_annual, ss_start_age (67), income_growth (0.03). "
+                "Useful for 'Plan my Roth conversions over the next decade' or "
+                "'How much should I convert each year up to the 24% bracket?'"
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "birth_year":             {"type": "integer", "description": "Your year of birth (e.g. 1962)"},
+                    "current_taxable_income": {"type": "number",  "description": "This year's ordinary taxable income"},
+                    "target_bracket":         {"type": "number",  "description": "Marginal rate to fill up to: 0.10/0.12/0.22/0.24/0.32/0.35 (default 0.24)"},
+                    "years":                  {"type": "integer", "description": "Ladder horizon (default 10, max 40)"},
+                    "filing_status":          {"type": "string",  "description": "'single', 'mfj', or 'hoh' (default 'mfj')"},
+                    "retirement_age":         {"type": "integer", "description": "Age at which wages stop (default: never)"},
+                    "social_security_annual": {"type": "number",  "description": "Expected annual SS benefit (today's dollars)"},
+                    "ss_start_age":           {"type": "integer", "description": "Age Social Security begins (default 67)"},
+                    "income_growth":          {"type": "number",  "description": "Annual wage growth assumption (default 0.03)"},
+                },
+                "required": ["birth_year", "current_taxable_income"],
+            },
+        ),
+        Tool(
+            name="get_irmaa_analysis",
+            description=(
+                "Determines the Medicare IRMAA (Part B + Part D) surcharge tier for a given MAGI, "
+                "the distance to the next cliff, and — if proposed_additional_income is given — the "
+                "extra annual surcharge a Roth conversion or capital-gain realization would trigger. "
+                "IRMAA is a cliff: $1 over a threshold bumps you to the next tier's full surcharge, "
+                "based on MAGI from two years prior. Surcharges are per beneficiary. "
+                "Required: magi. Optional: filing_status ('mfj'/'single', default 'mfj'), "
+                "proposed_additional_income. "
+                "Useful for 'Will this Roth conversion raise my Medicare premiums?' or "
+                "'How close am I to the next IRMAA bracket?'"
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "magi":                       {"type": "number",  "description": "Modified AGI to test (two-years-prior income)"},
+                    "filing_status":              {"type": "string",  "description": "'mfj' or 'single' (hoh uses single; default 'mfj')"},
+                    "proposed_additional_income": {"type": "number",  "description": "Extra income to model on top of MAGI (e.g. a planned Roth conversion)"},
+                },
+                "required": ["magi"],
+            },
+        ),
+        Tool(
             name="get_tax_bracket_headroom",
             description=(
                 "Shows how much additional income can be earned before crossing into the next "
@@ -1612,6 +1665,20 @@ _DISPATCH = {
                                                _A("social_security_annual", float, 0.0),
                                                _A("ss_start_age", int, 67),
                                                _A("income_growth", float, 0.03)),
+    "get_roth_conversion_ladder":    _passthru("get_roth_conversion_ladder",
+                                               _A("birth_year", int),
+                                               _A("current_taxable_income", float),
+                                               _A("target_bracket", float, 0.24),
+                                               _A("years", int, 10),
+                                               _A("filing_status", str, "mfj"),
+                                               _A("retirement_age", int, optional=True),
+                                               _A("social_security_annual", float, 0.0),
+                                               _A("ss_start_age", int, 67),
+                                               _A("income_growth", float, 0.03)),
+    "get_irmaa_analysis":            _passthru("get_irmaa_analysis",
+                                               _A("magi", float),
+                                               _A("filing_status", str, "mfj"),
+                                               _A("proposed_additional_income", float, 0.0)),
     "get_tax_bracket_headroom":      _passthru("get_tax_bracket_headroom",
                                                _A("current_income", float, optional=True),
                                                _A("filing_status", str, "mfj")),

@@ -116,6 +116,8 @@ from .tax import (
     get_capital_gains_exposure,
     get_rmd_estimate,
     get_multi_year_tax_projection,
+    get_roth_conversion_ladder,
+    get_irmaa_analysis,
     get_tax_bracket_headroom,
     get_social_security_optimizer,
     get_quarterly_estimated_taxes,
@@ -247,7 +249,8 @@ __all__ = [
     # tax
     "get_tax_loss_harvesting", "get_contribution_room",
     "get_roth_conversion_analysis", "get_capital_gains_exposure",
-    "get_rmd_estimate", "get_multi_year_tax_projection", "get_tax_bracket_headroom",
+    "get_rmd_estimate", "get_multi_year_tax_projection", "get_roth_conversion_ladder",
+    "get_irmaa_analysis", "get_tax_bracket_headroom",
     "get_social_security_optimizer", "get_quarterly_estimated_taxes",
     "get_year_end_checklist", "get_annual_tax_advantaged_summary",
     "_compute_tax", "_marginal_rate", "_ltcg_rate",

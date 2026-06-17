@@ -313,11 +313,20 @@ Get me a link to the Liquidity Report.
 | `get_mortgage_payoff_vs_invest` | Paying down the mortgage vs. investing the difference, after tax |
 | `get_financial_alerts` | One prioritized "what needs attention" list across accounts, spending, bills, and portfolio |
 
+### Advanced Planning Calculators (v1.0.21 — 5 new tools)
+| Tool | What it answers |
+|------|----------------|
+| `get_charitable_giving_strategy` | Best giving vehicle — QCD, donor-advised-fund bunching, or in-kind appreciated stock — with estimated tax benefit and which lots to gift |
+| `get_tax_gain_harvesting` | Room in the 0% long-term capital-gains bracket and which lots to sell to reset basis tax-free |
+| `get_state_tax_estimate` | State income tax on a Roth conversion, capital gain, or withdrawal (50 states + DC; the first non-federal tax modeling) |
+| `get_healthcare_cost_projection` | Lifetime retirement healthcare costs, split pre-65 (ACA) and post-65 (Medicare), inflated |
+| `get_hsa_optimization` | HSA triple-tax framing, invest-vs-spend, and balance trajectory to a target age |
+
 ---
 
 ## Tax planning disclaimer
 
-Tax estimates use 2026 IRS figures (brackets, limits, LTCG thresholds) and cover federal tax only. Always consult a qualified tax professional before making tax decisions.
+Tax estimates use 2026 IRS figures (brackets, limits, LTCG thresholds). Federal tax is the default; `get_state_tax_estimate` adds an approximate state layer (top marginal rate, 2025 figures). Always consult a qualified tax professional before making tax decisions.
 
 ---
 

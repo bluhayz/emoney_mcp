@@ -2,7 +2,22 @@
 
 All notable changes to emoney-mcp are documented here.
 
-## [1.0.23] — 2026-06-17 (current)
+## [1.0.24] — 2026-06-17 (current)
+
+First **data-read** tool from the FP&A roadmap (epic #106) — the calculator track
+was pure math; this reads live eMoney data from a newly mapped endpoint. 104 → 105 tools.
+
+### Added
+
+- **`scrapers/vault.py`** (#104) — `get_vault_documents`: lists the eMoney Vault's top-level folders (file count, size, created date, sharing status) plus total storage usage. Discovered via live Chrome network capture (epic #106 discovery pass 2): the Vault page embeds `vaultApi.BaseUrl = /ema/api/v1/vault/<clientGuid>`, and the tree is served as same-origin cookie-authenticated JSON from `GET <base>/items?path=Vault`. Verified end-to-end against a live session.
+
+### Notes
+
+- Discovery pass 2 (live network capture) resolved the data-read blocker: `/ema/CS/*` planning sections are reachable on the authenticated session. Remaining data reads split into same-origin JSON (like Vault) and BFF-token APIs (`api.emoneyadvisor.com/reportsbff` + `/ema/api/auth/generatetoken`) — the latter (goals #96, etc.) is the next build.
+
+Adds 7 tests (534 total).
+
+## [1.0.23] — 2026-06-17
 
 Fourth wave of the FP&A roadmap (epic #106) — 2 new **pure-calculator** tools
 (no new Emoney endpoints), bringing the total to **104**. This completes the

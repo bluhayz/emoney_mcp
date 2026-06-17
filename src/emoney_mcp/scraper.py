@@ -98,4 +98,6 @@ from .scrapers import (   # make sure private helpers are also importable
     # calculator wave 4 — life-event scenario, estate liquidity
     model_life_event_scenario,
     get_estate_liquidity_analysis,
+    # data-read wave 5 — vault documents (first live data-read tool)
+    get_vault_documents,
 )

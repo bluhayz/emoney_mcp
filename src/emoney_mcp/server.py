@@ -476,6 +476,34 @@ async def list_tools() -> list[Tool]:
             },
         ),
         Tool(
+            name="get_multi_year_tax_projection",
+            description=(
+                "Projects federal taxable income, marginal/effective rate, and bracket headroom "
+                "for the next N years, modeling wages (until retirement_age), RMDs (from age 73 on "
+                "pre-tax balances pulled from Emoney), and 85% of Social Security. Flags low-bracket "
+                "'conversion window' years ideal for Roth conversions or 0% capital-gain harvesting. "
+                "Required: birth_year, current_taxable_income. "
+                "Optional: years (default 10), filing_status, retirement_age, social_security_annual, "
+                "ss_start_age (default 67), income_growth (default 0.03). "
+                "Useful for 'What will my tax bracket look like over the next decade?' or "
+                "'Which years are best for Roth conversions?'"
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "birth_year":             {"type": "integer", "description": "Your year of birth (e.g. 1962)"},
+                    "current_taxable_income": {"type": "number",  "description": "This year's ordinary taxable income (wages etc.)"},
+                    "years":                  {"type": "integer", "description": "Projection horizon (default 10, max 40)"},
+                    "filing_status":          {"type": "string",  "description": "'single', 'mfj', or 'hoh' (default 'mfj')"},
+                    "retirement_age":         {"type": "integer", "description": "Age at which wages stop (default: never)"},
+                    "social_security_annual": {"type": "number",  "description": "Expected annual SS benefit (today's dollars)"},
+                    "ss_start_age":           {"type": "integer", "description": "Age Social Security begins (default 67)"},
+                    "income_growth":          {"type": "number",  "description": "Annual wage growth assumption (default 0.03)"},
+                },
+                "required": ["birth_year", "current_taxable_income"],
+            },
+        ),
+        Tool(
             name="get_tax_bracket_headroom",
             description=(
                 "Shows how much additional income can be earned before crossing into the next "
@@ -1575,6 +1603,15 @@ _DISPATCH = {
                                                _A("filing_status", str, "mfj"),
                                                _A("annual_income", float, optional=True)),
     "get_rmd_estimate":              _passthru("get_rmd_estimate", _A("birth_year", int)),
+    "get_multi_year_tax_projection": _passthru("get_multi_year_tax_projection",
+                                               _A("birth_year", int),
+                                               _A("current_taxable_income", float),
+                                               _A("years", int, 10),
+                                               _A("filing_status", str, "mfj"),
+                                               _A("retirement_age", int, optional=True),
+                                               _A("social_security_annual", float, 0.0),
+                                               _A("ss_start_age", int, 67),
+                                               _A("income_growth", float, 0.03)),
     "get_tax_bracket_headroom":      _passthru("get_tax_bracket_headroom",
                                                _A("current_income", float, optional=True),
                                                _A("filing_status", str, "mfj")),

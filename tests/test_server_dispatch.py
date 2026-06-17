@@ -24,6 +24,7 @@ import emoney_mcp.server as server  # noqa: E402
 MINIMAL_ARGS = {
     "get_roth_conversion_analysis": {"conversion_amount": "100", "current_income": "200"},
     "get_rmd_estimate": {"birth_year": "1980"},
+    "get_multi_year_tax_projection": {"birth_year": "1962", "current_taxable_income": "120000"},
     "get_social_security_optimizer": {"birth_year": "1980"},
     "update_transaction": {"transaction_id": "t1", "category_id": "5"},
     "hide_transaction": {"transaction_id": "t1"},

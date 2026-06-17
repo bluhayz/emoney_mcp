@@ -299,6 +299,98 @@ class TestGetRmdEstimateRothExclusion:
 
 
 # ---------------------------------------------------------------------------
+# get_multi_year_tax_projection (#86)
+# ---------------------------------------------------------------------------
+
+class TestMultiYearTaxProjection:
+    """Verify the multi-year projection models wages, RMDs, SS, and flags
+    low-bracket conversion-window years."""
+
+    def _patch(self, accounts: list):
+        import unittest.mock
+        result = _make_retirement_result(accounts)
+        p = unittest.mock.patch(
+            "emoney_mcp.scrapers.tax.get_retirement_accounts", return_value=result
+        )
+        p.start()
+        self._p = p
+        return AsyncMock()
+
+    def teardown_method(self):
+        if hasattr(self, "_p"):
+            self._p.stop()
+
+    @pytest.mark.asyncio
+    async def test_structure_and_horizon(self):
+        session = self._patch([{"name": "401k", "type": "401k", "balance": 800_000}])
+        from emoney_mcp.scrapers.tax import get_multi_year_tax_projection
+        r = await get_multi_year_tax_projection(session, birth_year=1962,
+                                                current_taxable_income=120_000, years=12)
+        assert len(r["projection"]) == 12
+        row = r["projection"][0]
+        for k in ("year", "age", "wages", "rmd", "taxable_income", "federal_tax",
+                  "marginal_rate_pct", "effective_rate_pct", "conversion_window"):
+            assert k in row
+
+    @pytest.mark.asyncio
+    async def test_wages_stop_at_retirement_age(self):
+        session = self._patch([{"name": "401k", "type": "401k", "balance": 500_000}])
+        from emoney_mcp.scrapers.tax import get_multi_year_tax_projection
+        from datetime import datetime
+        r = await get_multi_year_tax_projection(session, birth_year=1962,
+                                                current_taxable_income=120_000,
+                                                years=15, retirement_age=65)
+        cur_age = datetime.now().year - 1962
+        for row in r["projection"]:
+            if row["age"] >= 65:
+                assert row["wages"] == 0.0
+            else:
+                assert row["wages"] > 0
+        assert cur_age  # sanity
+
+    @pytest.mark.asyncio
+    async def test_rmd_starts_at_73(self):
+        session = self._patch([{"name": "401k", "type": "401k", "balance": 1_000_000}])
+        from emoney_mcp.scrapers.tax import get_multi_year_tax_projection
+        r = await get_multi_year_tax_projection(session, birth_year=1962,
+                                                current_taxable_income=100_000, years=20)
+        for row in r["projection"]:
+            if row["age"] < 73:
+                assert row["rmd"] == 0.0
+            elif row["age"] >= 73:
+                assert row["rmd"] > 0
+
+    @pytest.mark.asyncio
+    async def test_conversion_window_flagged_in_low_income_years(self):
+        # Retire at 65 with low pre-tax balance -> near-zero income before SS/RMD
+        # = prime conversion-window years.
+        session = self._patch([{"name": "IRA", "type": "IRA", "balance": 200_000}])
+        from emoney_mcp.scrapers.tax import get_multi_year_tax_projection
+        r = await get_multi_year_tax_projection(session, birth_year=1962,
+                                                current_taxable_income=90_000,
+                                                years=12, retirement_age=65,
+                                                social_security_annual=30_000, ss_start_age=70)
+        assert r["conversion_window_years"]          # non-empty
+        windows = [row for row in r["projection"] if row["conversion_window"]]
+        assert all(row["rmd"] == 0.0 for row in windows)
+        assert all(row["marginal_rate_pct"] <= 12 for row in windows)
+
+    @pytest.mark.asyncio
+    async def test_error_propagates(self):
+        import unittest.mock
+        p = unittest.mock.patch("emoney_mcp.scrapers.tax.get_retirement_accounts",
+                                return_value={"error": "Card unavailable"})
+        p.start()
+        try:
+            from emoney_mcp.scrapers.tax import get_multi_year_tax_projection
+            r = await get_multi_year_tax_projection(AsyncMock(), birth_year=1962,
+                                                    current_taxable_income=100_000)
+            assert "error" in r
+        finally:
+            p.stop()
+
+
+# ---------------------------------------------------------------------------
 # Tax-table staleness nag (#27)
 # ---------------------------------------------------------------------------
 

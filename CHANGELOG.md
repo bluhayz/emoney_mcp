@@ -2,7 +2,31 @@
 
 All notable changes to emoney-mcp are documented here.
 
-## [1.0.18] — 2026-06-16 (current)
+## [1.0.19] — 2026-06-17 (current)
+
+First wave of the FP&A roadmap (epic #106) — 11 new **pure-calculator** tools
+(no new Emoney endpoints), bringing the total to **93**.
+
+### Added — advanced tax planning
+
+- **`scrapers/tax.py`** (#86) — `get_multi_year_tax_projection`: projects federal taxable income, marginal/effective rate, and bracket headroom over N years (wages → RMDs from 73 → 85% of Social Security), flagging low-bracket "conversion window" years. Extracted shared `_pretax_rmd_balance`, `_rmd_factor`, `_bracket_ceiling` helpers.
+- **`scrapers/tax.py`** (#87) — `get_roth_conversion_ladder`: multi-year ladder filling each year's bracket up to a target rate, capped by the pre-tax balance; reuses the projection engine.
+- **`scrapers/tax.py`** (#88) — `get_irmaa_analysis`: Medicare IRMAA (Part B + Part D) tier for a MAGI, distance to the next cliff, and the surcharge a proposed conversion/realization would trigger. 2026 IRMAA tiers added with an annual-freshness test.
+
+### Added — decumulation
+
+- **`scrapers/retirement.py`** (#84) — `get_withdrawal_sequencing_strategy`: tax-efficient drawdown order (taxable → tax-deferred → Roth) vs. proportional, with estimated lifetime tax saved.
+- **`scrapers/retirement.py`** (#83) — `get_retirement_income_plan`: year-by-year guaranteed income (SS + pension) vs. spending need, required withdrawal, withdrawal rate, and depletion age.
+
+### Added — cash, housing, monitoring
+
+- **`scrapers/goals.py`** (#101) — `get_emergency_fund_analysis` (months of coverage vs. target) and `get_idle_cash_optimization` (low-yield cash and the annual uplift from HYSA/MMF/T-bills).
+- **`scrapers/planning.py`** (#99) — `get_mortgage_amortization_schedule`, `get_mortgage_refinance_analysis` (break-even), and `get_mortgage_payoff_vs_invest`.
+- **`scrapers/goals.py`** (#105) — `get_financial_alerts`: one prioritized "what needs attention" list aggregating aggregation/unusual-transaction/bills/budget/emergency-fund/concentration signals, each source checked defensively.
+
+Adds 31 tests (473 total). The data-backed tools were verified live against a real session.
+
+## [1.0.18] — 2026-06-16
 
 ### Fixed
 

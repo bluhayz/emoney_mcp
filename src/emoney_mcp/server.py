@@ -476,6 +476,87 @@ async def list_tools() -> list[Tool]:
             },
         ),
         Tool(
+            name="get_multi_year_tax_projection",
+            description=(
+                "Projects federal taxable income, marginal/effective rate, and bracket headroom "
+                "for the next N years, modeling wages (until retirement_age), RMDs (from age 73 on "
+                "pre-tax balances pulled from Emoney), and 85% of Social Security. Flags low-bracket "
+                "'conversion window' years ideal for Roth conversions or 0% capital-gain harvesting. "
+                "Required: birth_year, current_taxable_income. "
+                "Optional: years (default 10), filing_status, retirement_age, social_security_annual, "
+                "ss_start_age (default 67), income_growth (default 0.03). "
+                "Useful for 'What will my tax bracket look like over the next decade?' or "
+                "'Which years are best for Roth conversions?'"
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "birth_year":             {"type": "integer", "description": "Your year of birth (e.g. 1962)"},
+                    "current_taxable_income": {"type": "number",  "description": "This year's ordinary taxable income (wages etc.)"},
+                    "years":                  {"type": "integer", "description": "Projection horizon (default 10, max 40)"},
+                    "filing_status":          {"type": "string",  "description": "'single', 'mfj', or 'hoh' (default 'mfj')"},
+                    "retirement_age":         {"type": "integer", "description": "Age at which wages stop (default: never)"},
+                    "social_security_annual": {"type": "number",  "description": "Expected annual SS benefit (today's dollars)"},
+                    "ss_start_age":           {"type": "integer", "description": "Age Social Security begins (default 67)"},
+                    "income_growth":          {"type": "number",  "description": "Annual wage growth assumption (default 0.03)"},
+                },
+                "required": ["birth_year", "current_taxable_income"],
+            },
+        ),
+        Tool(
+            name="get_roth_conversion_ladder",
+            description=(
+                "Builds a multi-year Roth conversion ladder that fills each year's bracket up to "
+                "the top of a target bracket — converting more in low-income years before RMDs/SS "
+                "crowd the bracket, capped by the pre-tax balance. The strategic counterpart to "
+                "get_roth_conversion_analysis (single conversion). Returns per-year recommended "
+                "conversion, tax cost, blended rate, and estimated RMD reduction. "
+                "Required: birth_year, current_taxable_income. "
+                "Optional: target_bracket (default 0.24), years (10), filing_status, retirement_age, "
+                "social_security_annual, ss_start_age (67), income_growth (0.03). "
+                "Useful for 'Plan my Roth conversions over the next decade' or "
+                "'How much should I convert each year up to the 24% bracket?'"
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "birth_year":             {"type": "integer", "description": "Your year of birth (e.g. 1962)"},
+                    "current_taxable_income": {"type": "number",  "description": "This year's ordinary taxable income"},
+                    "target_bracket":         {"type": "number",  "description": "Marginal rate to fill up to: 0.10/0.12/0.22/0.24/0.32/0.35 (default 0.24)"},
+                    "years":                  {"type": "integer", "description": "Ladder horizon (default 10, max 40)"},
+                    "filing_status":          {"type": "string",  "description": "'single', 'mfj', or 'hoh' (default 'mfj')"},
+                    "retirement_age":         {"type": "integer", "description": "Age at which wages stop (default: never)"},
+                    "social_security_annual": {"type": "number",  "description": "Expected annual SS benefit (today's dollars)"},
+                    "ss_start_age":           {"type": "integer", "description": "Age Social Security begins (default 67)"},
+                    "income_growth":          {"type": "number",  "description": "Annual wage growth assumption (default 0.03)"},
+                },
+                "required": ["birth_year", "current_taxable_income"],
+            },
+        ),
+        Tool(
+            name="get_irmaa_analysis",
+            description=(
+                "Determines the Medicare IRMAA (Part B + Part D) surcharge tier for a given MAGI, "
+                "the distance to the next cliff, and — if proposed_additional_income is given — the "
+                "extra annual surcharge a Roth conversion or capital-gain realization would trigger. "
+                "IRMAA is a cliff: $1 over a threshold bumps you to the next tier's full surcharge, "
+                "based on MAGI from two years prior. Surcharges are per beneficiary. "
+                "Required: magi. Optional: filing_status ('mfj'/'single', default 'mfj'), "
+                "proposed_additional_income. "
+                "Useful for 'Will this Roth conversion raise my Medicare premiums?' or "
+                "'How close am I to the next IRMAA bracket?'"
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "magi":                       {"type": "number",  "description": "Modified AGI to test (two-years-prior income)"},
+                    "filing_status":              {"type": "string",  "description": "'mfj' or 'single' (hoh uses single; default 'mfj')"},
+                    "proposed_additional_income": {"type": "number",  "description": "Extra income to model on top of MAGI (e.g. a planned Roth conversion)"},
+                },
+                "required": ["magi"],
+            },
+        ),
+        Tool(
             name="get_tax_bracket_headroom",
             description=(
                 "Shows how much additional income can be earned before crossing into the next "
@@ -524,6 +605,57 @@ async def list_tools() -> list[Tool]:
                 "Useful for 'How much can I spend in retirement?' or 'What does a 4% withdrawal rate give me?'"
             ),
             inputSchema={"type": "object", "properties": {}, "required": []},
+        ),
+        Tool(
+            name="get_withdrawal_sequencing_strategy",
+            description=(
+                "Compares a tax-efficient retirement withdrawal order (taxable → tax-deferred → Roth) "
+                "against a naive proportional drawdown and estimates the lifetime tax saved. Pulls "
+                "account balances by tax treatment from Emoney. "
+                "Required: annual_need (annual portfolio withdrawal after other income). "
+                "Optional: filing_status (default 'mfj'), years (default 30), taxable_gain_fraction "
+                "(default 0.5), growth_rate (default 0.05). "
+                "Useful for 'Which accounts should I draw from first in retirement?'"
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "annual_need":           {"type": "number",  "description": "Annual portfolio withdrawal needed (after other income)"},
+                    "filing_status":         {"type": "string",  "description": "'single', 'mfj', or 'hoh' (default 'mfj')"},
+                    "years":                 {"type": "integer", "description": "Simulation horizon (default 30, max 50)"},
+                    "taxable_gain_fraction": {"type": "number",  "description": "Fraction of a taxable withdrawal that is embedded gain (default 0.5)"},
+                    "growth_rate":           {"type": "number",  "description": "Annual portfolio growth assumption (default 0.05)"},
+                },
+                "required": ["annual_need"],
+            },
+        ),
+        Tool(
+            name="get_retirement_income_plan",
+            description=(
+                "Year-by-year retirement income plan: guaranteed income (Social Security + pension) "
+                "netted against the spending need, with the required portfolio withdrawal and "
+                "withdrawal rate each year, plus the depletion age (if any). Portfolio and spending "
+                "pulled from Emoney. "
+                "Required: retire_age, birth_year. "
+                "Optional: annual_spending (default: 12-mo actual), social_security_annual, "
+                "ss_claim_age (67), pension_annual, pension_start_age (65), years (30), growth_rate (0.05). "
+                "Useful for 'Where does my retirement paycheck come from?' or 'What's my withdrawal rate each year?'"
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "retire_age":             {"type": "integer", "description": "Age portfolio drawdown begins"},
+                    "birth_year":             {"type": "integer", "description": "Your year of birth"},
+                    "annual_spending":        {"type": "number",  "description": "Retirement spending need (inferred from SNB if omitted)"},
+                    "social_security_annual": {"type": "number",  "description": "Annual Social Security benefit"},
+                    "ss_claim_age":           {"type": "integer", "description": "Age SS begins (default 67)"},
+                    "pension_annual":         {"type": "number",  "description": "Annual pension benefit (default 0)"},
+                    "pension_start_age":      {"type": "integer", "description": "Age pension begins (default 65)"},
+                    "years":                  {"type": "integer", "description": "Plan horizon (default 30, max 50)"},
+                    "growth_rate":            {"type": "number",  "description": "Annual portfolio growth (default 0.05)"},
+                },
+                "required": ["retire_age", "birth_year"],
+            },
         ),
         Tool(
             name="get_net_worth_projection",
@@ -576,6 +708,60 @@ async def list_tools() -> list[Tool]:
                 "properties": {
                     "annual_return":           {"type": "number", "description": "Expected 529 portfolio return (default 0.06)"},
                     "annual_college_inflation":{"type": "number", "description": "College cost inflation rate (default 0.05)"},
+                },
+                "required": [],
+            },
+        ),
+        Tool(
+            name="get_financial_alerts",
+            description=(
+                "One prioritized 'what needs my attention' list, aggregating signals from several "
+                "tools: broken account aggregations, unusually large transactions, overdue/upcoming "
+                "bills, budget overruns, an underfunded emergency fund, and portfolio concentration. "
+                "Each source is checked defensively; any that errors is skipped and noted. "
+                "Optional: days_ahead (upcoming-bill window, default 14). "
+                "Useful for 'What should I be paying attention to financially?' or a daily check-in."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "days_ahead": {"type": "integer", "description": "Window for upcoming-bill alerts (default 14)"},
+                },
+                "required": [],
+            },
+        ),
+        Tool(
+            name="get_emergency_fund_analysis",
+            description=(
+                "Assesses emergency-fund adequacy: months of expenses covered by liquid cash versus a "
+                "target, with the surplus or shortfall in dollars. Liquid cash and 90-day average "
+                "spending pulled from Emoney. "
+                "Optional: target_months (default 6). "
+                "Useful for 'Do we have enough in our emergency fund?' or 'How many months of expenses do we have saved?'"
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "target_months": {"type": "number", "description": "Target months of expenses to hold (default 6)"},
+                },
+                "required": [],
+            },
+        ),
+        Tool(
+            name="get_idle_cash_optimization",
+            description=(
+                "Identifies cash sitting in low-yield accounts and estimates the annual income uplift "
+                "from moving the deployable portion to a high-yield savings account, money-market fund, "
+                "or T-bills. Cash balances pulled from Emoney. "
+                "Optional: hysa_apy (default 0.045), assumed_current_apy (default 0.005), keep_in_checking. "
+                "Useful for 'Am I leaving money on the table in checking?' or 'How much more could my cash earn?'"
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "hysa_apy":            {"type": "number", "description": "Yield available on cash today (default 0.045 = 4.5%)"},
+                    "assumed_current_apy": {"type": "number", "description": "Yield the cash currently earns (default 0.005)"},
+                    "keep_in_checking":    {"type": "number", "description": "Dollars to leave in low-yield checking for liquidity"},
                 },
                 "required": [],
             },
@@ -1124,6 +1310,70 @@ async def list_tools() -> list[Tool]:
             inputSchema={"type": "object", "properties": {}, "required": []},
         ),
         Tool(
+            name="get_mortgage_amortization_schedule",
+            description=(
+                "Amortization schedule for a mortgage: per-year interest vs. principal, total interest, "
+                "and payoff date — with an optional extra monthly principal payment (shows interest saved). "
+                "Required: balance, annual_rate (e.g. 0.065), years_remaining. Optional: extra_monthly. "
+                "Useful for 'How much interest will I pay on my mortgage?' or 'What if I pay $500 extra a month?'"
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "balance":         {"type": "number", "description": "Current mortgage balance"},
+                    "annual_rate":     {"type": "number", "description": "Annual interest rate (e.g. 0.065 for 6.5%)"},
+                    "years_remaining": {"type": "number", "description": "Years left on the loan"},
+                    "extra_monthly":   {"type": "number", "description": "Extra principal paid each month (default 0)"},
+                },
+                "required": ["balance", "annual_rate", "years_remaining"],
+            },
+        ),
+        Tool(
+            name="get_mortgage_refinance_analysis",
+            description=(
+                "Compares the current mortgage to a refinance: monthly payment change, break-even month "
+                "on closing costs, and lifetime interest difference. "
+                "Required: balance, current_rate, current_years_remaining, new_rate, new_term_years. "
+                "Optional: closing_costs. "
+                "Useful for 'Should I refinance at 5.5%?' or 'What's the break-even on refinancing?'"
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "balance":                 {"type": "number", "description": "Current mortgage balance"},
+                    "current_rate":            {"type": "number", "description": "Current annual rate (e.g. 0.07)"},
+                    "current_years_remaining": {"type": "number", "description": "Years left on the current loan"},
+                    "new_rate":                {"type": "number", "description": "New annual rate (e.g. 0.055)"},
+                    "new_term_years":          {"type": "number", "description": "New loan term in years"},
+                    "closing_costs":           {"type": "number", "description": "Refinance closing costs (default 0)"},
+                },
+                "required": ["balance", "current_rate", "current_years_remaining", "new_rate", "new_term_years"],
+            },
+        ),
+        Tool(
+            name="get_mortgage_payoff_vs_invest",
+            description=(
+                "Compares putting an extra monthly amount toward the mortgage versus investing it, over "
+                "the loan's remaining life, after tax on investment gains. Returns interest saved, the "
+                "invested after-tax value, and which wins. "
+                "Required: balance, annual_rate, years_remaining, extra_monthly. "
+                "Optional: investment_return (default 0.07), tax_rate_on_gains (default 0.15). "
+                "Useful for 'Should I pay down my mortgage or invest the extra?'"
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "balance":           {"type": "number", "description": "Current mortgage balance"},
+                    "annual_rate":       {"type": "number", "description": "Mortgage annual rate (e.g. 0.065)"},
+                    "years_remaining":   {"type": "number", "description": "Years left on the loan"},
+                    "extra_monthly":     {"type": "number", "description": "Extra monthly amount to compare"},
+                    "investment_return": {"type": "number", "description": "Assumed annual investment return (default 0.07)"},
+                    "tax_rate_on_gains": {"type": "number", "description": "Tax rate on investment gains (default 0.15)"},
+                },
+                "required": ["balance", "annual_rate", "years_remaining", "extra_monthly"],
+            },
+        ),
+        Tool(
             name="get_fire_number",
             description=(
                 "Computes the Financial Independence (FI) number — the portfolio size needed to retire on investment returns alone. "
@@ -1476,6 +1726,14 @@ _DISPATCH = {
     "get_financial_health_score":    _passthru("get_financial_health_score"),
     "get_quick_status":              _passthru("get_quick_status"),
     "get_monthly_review":            _passthru("get_monthly_review"),
+    "get_financial_alerts":          _passthru("get_financial_alerts",
+                                               _A("days_ahead", int, 14)),
+    "get_emergency_fund_analysis":   _passthru("get_emergency_fund_analysis",
+                                               _A("target_months", float, 6.0)),
+    "get_idle_cash_optimization":    _passthru("get_idle_cash_optimization",
+                                               _A("hysa_apy", float, 0.045),
+                                               _A("assumed_current_apy", float, 0.005),
+                                               _A("keep_in_checking", float, 0.0)),
     # ── Balance sheet ─────────────────────────────────────────────────────
     "get_accounts":                  _passthru("get_accounts"),
     "get_net_worth":                 lambda a: _get_net_worth(),
@@ -1485,6 +1743,25 @@ _DISPATCH = {
     "get_client_profile":            _passthru("get_client_profile"),
     "get_aggregation_status":        _passthru("get_aggregation_status"),
     "get_home_equity":               _passthru("get_home_equity"),
+    "get_mortgage_amortization_schedule": _passthru("get_mortgage_amortization_schedule",
+                                               _A("balance", float),
+                                               _A("annual_rate", float),
+                                               _A("years_remaining", float),
+                                               _A("extra_monthly", float, 0.0)),
+    "get_mortgage_refinance_analysis": _passthru("get_mortgage_refinance_analysis",
+                                               _A("balance", float),
+                                               _A("current_rate", float),
+                                               _A("current_years_remaining", float),
+                                               _A("new_rate", float),
+                                               _A("new_term_years", float),
+                                               _A("closing_costs", float, 0.0)),
+    "get_mortgage_payoff_vs_invest": _passthru("get_mortgage_payoff_vs_invest",
+                                               _A("balance", float),
+                                               _A("annual_rate", float),
+                                               _A("years_remaining", float),
+                                               _A("extra_monthly", float),
+                                               _A("investment_return", float, 0.07),
+                                               _A("tax_rate_on_gains", float, 0.15)),
     # ── Investments ───────────────────────────────────────────────────────
     "get_holdings":                  _passthru("get_holdings"),
     "get_asset_allocation":          _passthru("get_asset_allocation"),
@@ -1575,6 +1852,29 @@ _DISPATCH = {
                                                _A("filing_status", str, "mfj"),
                                                _A("annual_income", float, optional=True)),
     "get_rmd_estimate":              _passthru("get_rmd_estimate", _A("birth_year", int)),
+    "get_multi_year_tax_projection": _passthru("get_multi_year_tax_projection",
+                                               _A("birth_year", int),
+                                               _A("current_taxable_income", float),
+                                               _A("years", int, 10),
+                                               _A("filing_status", str, "mfj"),
+                                               _A("retirement_age", int, optional=True),
+                                               _A("social_security_annual", float, 0.0),
+                                               _A("ss_start_age", int, 67),
+                                               _A("income_growth", float, 0.03)),
+    "get_roth_conversion_ladder":    _passthru("get_roth_conversion_ladder",
+                                               _A("birth_year", int),
+                                               _A("current_taxable_income", float),
+                                               _A("target_bracket", float, 0.24),
+                                               _A("years", int, 10),
+                                               _A("filing_status", str, "mfj"),
+                                               _A("retirement_age", int, optional=True),
+                                               _A("social_security_annual", float, 0.0),
+                                               _A("ss_start_age", int, 67),
+                                               _A("income_growth", float, 0.03)),
+    "get_irmaa_analysis":            _passthru("get_irmaa_analysis",
+                                               _A("magi", float),
+                                               _A("filing_status", str, "mfj"),
+                                               _A("proposed_additional_income", float, 0.0)),
     "get_tax_bracket_headroom":      _passthru("get_tax_bracket_headroom",
                                                _A("current_income", float, optional=True),
                                                _A("filing_status", str, "mfj")),
@@ -1600,6 +1900,22 @@ _DISPATCH = {
                                                _A("annual_spending", float, optional=True),
                                                _A("return_rate", float, 0.06)),
     "get_withdrawal_rate_analysis":  _passthru("get_withdrawal_rate_analysis"),
+    "get_withdrawal_sequencing_strategy": _passthru("get_withdrawal_sequencing_strategy",
+                                               _A("annual_need", float),
+                                               _A("filing_status", str, "mfj"),
+                                               _A("years", int, 30),
+                                               _A("taxable_gain_fraction", float, 0.5),
+                                               _A("growth_rate", float, 0.05)),
+    "get_retirement_income_plan":    _passthru("get_retirement_income_plan",
+                                               _A("retire_age", int),
+                                               _A("birth_year", int),
+                                               _A("annual_spending", float, optional=True),
+                                               _A("social_security_annual", float, 0.0),
+                                               _A("ss_claim_age", int, 67),
+                                               _A("pension_annual", float, 0.0),
+                                               _A("pension_start_age", int, 65),
+                                               _A("years", int, 30),
+                                               _A("growth_rate", float, 0.05)),
     "get_net_worth_projection":      _passthru("get_net_worth_projection",
                                                _A("target_net_worth", float, optional=True),
                                                _A("annual_return", float, 0.07),

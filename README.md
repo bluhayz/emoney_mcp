@@ -97,7 +97,7 @@ Then point Claude Desktop at your local clone:
 
 ---
 
-## Available tools (82 total)
+## Available tools (93 total)
 
 ### 🏠 Overview & Dashboard
 
@@ -280,6 +280,22 @@ Then point Claude Desktop at your local clone:
 | `explore_emoney_site` | Dev/discovery crawler — GETs major Emoney pages and mines HTML/JS for API endpoints, form actions, and nav links |
 | `explore_snb_write_endpoints` | Dev/discovery probe of candidate SNB write endpoints |
 | `clear_cache` | **Selective cache invalidation.** Purge card or SNB transaction cache without a full session reset. Parameter: `module` (`'cards'`, `'spending'`, or `'all'`; default `'all'`) |
+
+### 🧮 Advanced Planning Calculators (v1.0.19)
+
+| Tool | Description |
+|------|-------------|
+| `get_multi_year_tax_projection` | Projects taxable income, marginal/effective rate, and bracket headroom over N years (wages → RMDs → Social Security); flags low-bracket "conversion window" years. Required: `birth_year`, `current_taxable_income` |
+| `get_roth_conversion_ladder` | Multi-year Roth conversion ladder filling each year's bracket up to a target rate, capped by the pre-tax balance. Required: `birth_year`, `current_taxable_income`. Optional: `target_bracket` |
+| `get_irmaa_analysis` | Medicare IRMAA (Part B + Part D) tier for a MAGI, distance to the next cliff, and the surcharge a proposed Roth conversion would trigger. Required: `magi` |
+| `get_withdrawal_sequencing_strategy` | Tax-efficient withdrawal order (taxable → tax-deferred → Roth) vs. proportional, with estimated lifetime tax saved. Required: `annual_need` |
+| `get_retirement_income_plan` | Year-by-year guaranteed income (SS + pension) vs. spending need, required withdrawal, and depletion age. Required: `retire_age`, `birth_year` |
+| `get_emergency_fund_analysis` | Months of expenses covered by liquid cash vs. a target, with surplus/shortfall. Optional: `target_months` |
+| `get_idle_cash_optimization` | Low-yield cash and the annual income uplift from HYSA/MMF/T-bills. Optional: `hysa_apy`, `keep_in_checking` |
+| `get_mortgage_amortization_schedule` | Per-year interest vs. principal, total interest, and payoff date — with an optional extra monthly payment. Required: `balance`, `annual_rate`, `years_remaining` |
+| `get_mortgage_refinance_analysis` | Monthly payment change, break-even month, and lifetime interest difference for a refinance. Required: `balance`, `current_rate`, `current_years_remaining`, `new_rate`, `new_term_years` |
+| `get_mortgage_payoff_vs_invest` | Extra mortgage payments vs. investing the difference, after tax. Required: `balance`, `annual_rate`, `years_remaining`, `extra_monthly` |
+| `get_financial_alerts` | One prioritized "what needs attention" list aggregating broken aggregations, unusual transactions, bills, budget overruns, emergency-fund, and concentration signals. Optional: `days_ahead` |
 
 ---
 

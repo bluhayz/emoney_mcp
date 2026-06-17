@@ -1674,6 +1674,99 @@ async def list_tools() -> list[Tool]:
                 "required": [],
             },
         ),
+        # ── Calculator wave 3 (#85, #94, #98) ─────────────────────────────
+        Tool(
+            name="get_income_sources_timeline",
+            description=(
+                "Builds a chronological timeline of when each retirement income stream switches on "
+                "(Social Security, pension, annuity, RMDs at 73) and when the mortgage is paid off "
+                "(freeing cash flow). Flags 'bridge' gap years between retiring and the first "
+                "guaranteed income — the prime Roth-conversion window. RMDs are estimated from the "
+                "pre-tax IRA/401k balance pulled from Emoney. "
+                "Required: birth_year. Optional: retirement_age, social_security_annual, ss_start_age "
+                "(67), pension_annual, pension_start_age, annuity_annual, annuity_start_age, "
+                "mortgage_payment_monthly, mortgage_payoff_age. "
+                "Useful for 'When does each of my income sources kick in?' or 'Show my retirement income timeline.'"
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "birth_year":              {"type": "integer", "description": "Your year of birth (e.g. 1962)"},
+                    "retirement_age":          {"type": "integer", "description": "Age wages stop"},
+                    "social_security_annual":  {"type": "number",  "description": "Annual SS benefit (today's dollars)"},
+                    "ss_start_age":            {"type": "integer", "description": "Age SS begins (default 67)"},
+                    "pension_annual":          {"type": "number",  "description": "Annual pension income (0 = none)"},
+                    "pension_start_age":       {"type": "integer", "description": "Age pension begins (defaults to retirement_age)"},
+                    "annuity_annual":          {"type": "number",  "description": "Annual annuity payout (0 = none)"},
+                    "annuity_start_age":       {"type": "integer", "description": "Age annuity begins"},
+                    "mortgage_payment_monthly": {"type": "number", "description": "Current monthly mortgage P&I payment"},
+                    "mortgage_payoff_age":     {"type": "integer", "description": "Age the mortgage is paid off"},
+                },
+                "required": ["birth_year"],
+            },
+        ),
+        Tool(
+            name="get_portfolio_risk_metrics",
+            description=(
+                "Computes portfolio risk/return metrics — annualized return and volatility, max "
+                "drawdown, Sharpe ratio, and an estimated beta — from the monthly portfolio value "
+                "history (Card 3). NOTE: Card 3 reports value (incl. contributions/withdrawals), so "
+                "returns are a money-weighted proxy, not true time-weighted returns; beta is estimated "
+                "from equity weight, not regressed. Optional: risk_free_rate (default 0.04). "
+                "Useful for 'How volatile is my portfolio?' or 'What's my Sharpe ratio?'"
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "risk_free_rate": {"type": "number", "description": "Annual risk-free rate for the Sharpe ratio (default 0.04)"},
+                },
+                "required": [],
+            },
+        ),
+        Tool(
+            name="get_benchmark_comparison",
+            description=(
+                "Compares the portfolio's annualized return (from Card 3 value history) against a "
+                "blended stock/bond benchmark. Benchmark figures are LONG-RUN EXPECTED returns "
+                "(equity ~10%, bonds ~4%), not same-period returns, so it's a reference yardstick. "
+                "Optional: benchmark — one of '100/0','80/20','70/30','60/40','50/50','40/60','20/80','0/100' "
+                "(default '60/40'). "
+                "Useful for 'Am I beating a 60/40 portfolio?' or 'How does my return compare to a benchmark?'"
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "benchmark": {"type": "string", "description": "Stock/bond split, e.g. '60/40' (default '60/40')"},
+                },
+                "required": [],
+            },
+        ),
+        Tool(
+            name="get_sequence_of_returns_stress_test",
+            description=(
+                "Reveals sequence-of-returns risk that an averages-based Monte Carlo hides: runs the "
+                "SAME withdrawal plan over fixed return paths with similar averages but different ORDER "
+                "— a flat average, the 2000 dot-com bust front-loaded, the 2008 crash front-loaded, and "
+                "the 2000 sequence reversed (good decade first). The adverse-vs-reversed pair (identical "
+                "returns, opposite order) shows why a bad first decade sinks a plan. "
+                "Optional: years (30), annual_spending, equity_pct (0.6), bond_return (0.03), mean_return "
+                "(0.07), social_security_annual, withdrawal_rate. "
+                "Useful for 'What if the market crashes right when I retire?' Complements run_monte_carlo_retirement."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "years":                  {"type": "integer", "description": "Retirement horizon (default 30)"},
+                    "annual_spending":        {"type": "number",  "description": "Annual withdrawal in dollars (default: actual 12-month spend)"},
+                    "equity_pct":             {"type": "number",  "description": "Equity weight to blend S&P history with bonds (default 0.6)"},
+                    "bond_return":            {"type": "number",  "description": "Flat annual bond return for the non-equity sleeve (default 0.03)"},
+                    "mean_return":            {"type": "number",  "description": "Flat return for the 'average' baseline + history padding (default 0.07)"},
+                    "social_security_annual": {"type": "number",  "description": "Annual SS/pension offset to the withdrawal (default 0)"},
+                    "withdrawal_rate":        {"type": "number",  "description": "If set, overrides annual_spending (e.g. 0.04 = 4% of portfolio)"},
+                },
+                "required": [],
+            },
+        ),
         # ── v1.0.2 Live endpoint discoveries ──────────────────────────────
         Tool(
             name="get_client_profile",
@@ -2034,6 +2127,29 @@ _DISPATCH = {
                                                _A("marginal_rate", float, 0.24),
                                                _A("growth_rate", float, 0.06),
                                                _A("target_age", int, 65)),
+    "get_income_sources_timeline":   _passthru("get_income_sources_timeline",
+                                               _A("birth_year", int),
+                                               _A("retirement_age", int, optional=True),
+                                               _A("social_security_annual", float, 0.0),
+                                               _A("ss_start_age", int, 67),
+                                               _A("pension_annual", float, 0.0),
+                                               _A("pension_start_age", int, optional=True),
+                                               _A("annuity_annual", float, 0.0),
+                                               _A("annuity_start_age", int, optional=True),
+                                               _A("mortgage_payment_monthly", float, 0.0),
+                                               _A("mortgage_payoff_age", int, optional=True)),
+    "get_portfolio_risk_metrics":    _passthru("get_portfolio_risk_metrics",
+                                               _A("risk_free_rate", float, 0.04)),
+    "get_benchmark_comparison":      _passthru("get_benchmark_comparison",
+                                               _A("benchmark", str, "60/40")),
+    "get_sequence_of_returns_stress_test": _passthru("get_sequence_of_returns_stress_test",
+                                               _A("years", int, 30),
+                                               _A("annual_spending", float, optional=True),
+                                               _A("equity_pct", float, 0.6),
+                                               _A("bond_return", float, 0.03),
+                                               _A("mean_return", float, 0.07),
+                                               _A("social_security_annual", float, 0.0),
+                                               _A("withdrawal_rate", float, optional=True)),
     # ── Retirement & long-range ───────────────────────────────────────────
     "get_retirement_runway":         _passthru("get_retirement_runway",
                                                _A("annual_spending", float, optional=True),

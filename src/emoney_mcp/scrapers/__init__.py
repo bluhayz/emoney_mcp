@@ -144,6 +144,8 @@ from .retirement import (
     get_financial_independence_roadmap,
     get_withdrawal_sequencing_strategy,
     get_retirement_income_plan,
+    get_income_sources_timeline,
+    get_sequence_of_returns_stress_test,
 )
 
 from .portfolio import (
@@ -154,6 +156,8 @@ from .portfolio import (
     get_portfolio_concentration,
     get_net_worth_velocity,
     get_tax_drag_analysis,
+    get_portfolio_risk_metrics,
+    get_benchmark_comparison,
     _classify_asset,
     _ASSET_EFFICIENCY,
 )
@@ -272,6 +276,7 @@ __all__ = [
     # retirement
     "get_retirement_runway", "get_withdrawal_rate_analysis",
     "get_withdrawal_sequencing_strategy", "get_retirement_income_plan",
+    "get_income_sources_timeline", "get_sequence_of_returns_stress_test",
     "get_net_worth_projection", "run_monte_carlo_retirement",
     "get_dynamic_withdrawal_guardrails", "run_scenario",
     "get_financial_independence_roadmap",
@@ -279,6 +284,7 @@ __all__ = [
     "get_asset_location_efficiency", "get_rebalancing_targets",
     "explore_emoney_cards", "get_available_cards",
     "get_portfolio_concentration", "get_net_worth_velocity", "get_tax_drag_analysis",
+    "get_portfolio_risk_metrics", "get_benchmark_comparison",
     "_classify_asset", "_ASSET_EFFICIENCY",
     # planning
     "get_insurance_gap_analysis",

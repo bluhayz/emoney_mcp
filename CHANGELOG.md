@@ -2,7 +2,24 @@
 
 All notable changes to emoney-mcp are documented here.
 
-## [1.0.21] — 2026-06-17 (current)
+## [1.0.22] — 2026-06-17 (current)
+
+Third wave of the FP&A roadmap (epic #106) — 4 new **pure-calculator** tools
+(no new Emoney endpoints), bringing the total to **102**.
+
+### Added — retirement transition
+
+- **`scrapers/retirement.py`** (#85) — `get_income_sources_timeline`: chronological timeline of when each income stream switches on (Social Security, pension, annuity, RMDs at 73) and when the mortgage is paid off (freeing cash flow); flags the "bridge" gap years between retiring and the first guaranteed income (the prime Roth-conversion window). RMDs estimated from the pre-tax balance.
+- **`scrapers/retirement.py`** (#98) — `get_sequence_of_returns_stress_test`: runs the same withdrawal plan over fixed return paths with similar averages but different order (flat average, 2000 bust front-loaded, 2008 crash front-loaded, and the 2000 sequence reversed) to expose sequence-of-returns risk that an averages-based Monte Carlo hides. Adds a fixed `_SP500_ANNUAL` history table.
+
+### Added — investment analysis
+
+- **`scrapers/portfolio.py`** (#94) — `get_portfolio_risk_metrics`: annualized return/volatility, max drawdown, Sharpe, and an equity-weight-based beta estimate from Card 3 monthly value history (money-weighted proxy, clearly caveated).
+- **`scrapers/portfolio.py`** (#94) — `get_benchmark_comparison`: portfolio annualized return vs. a blended stock/bond benchmark's long-run expected return (reference yardstick, not period-matched).
+
+Adds 17 tests (515 total).
+
+## [1.0.21] — 2026-06-17
 
 Second wave of the FP&A roadmap (epic #106) — 5 new **pure-calculator** tools
 (no new Emoney endpoints), bringing the total to **98**.

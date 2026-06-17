@@ -33,11 +33,49 @@ _ASSET_EFFICIENCY
     accounts) to 9 (most tax-efficient — fine in taxable).
 """
 
+import math
+import statistics
 import time
 from datetime import datetime
 
 from ._helpers import _get_card, _INV_URL, _month_offset, _parse_card8_history
 from .accounts import _build_account_type_map, _match_tax_bucket
+from .investments import get_asset_allocation
+
+# Long-run (expected) nominal annual total returns for blended stock/bond
+# benchmarks — reference figures, NOT period-matched to the portfolio window.
+# Equity ~10%, bonds ~4% long-run; blends are linear.
+_BENCHMARKS: dict[str, float] = {
+    "100/0": 0.100,
+    "80/20": 0.088,
+    "70/30": 0.082,
+    "60/40": 0.076,
+    "50/50": 0.070,
+    "40/60": 0.064,
+    "20/80": 0.052,
+    "0/100": 0.040,
+}
+
+# Equity-class name keywords for the beta heuristic.
+_EQUITY_KEYWORDS = ("equity", "equities", "stock", "domestic", "international",
+                    "large", "mid", "small", "emerging", "developed", "growth", "value")
+
+
+def _equity_fraction(asset_classes: list[dict]) -> float | None:
+    """Estimate the equity weight (0–1) from get_asset_allocation buckets."""
+    eq = 0.0
+    total = 0.0
+    for c in asset_classes:
+        pct = c.get("percent")
+        if pct is None:
+            continue
+        total += pct
+        name = (c.get("name") or "").lower()
+        if any(k in name for k in _EQUITY_KEYWORDS):
+            eq += pct
+    if total <= 0:
+        return None
+    return round(eq / total, 4)
 
 # ---------------------------------------------------------------------------
 # Asset class tax-efficiency scores
@@ -838,5 +876,163 @@ async def get_tax_drag_analysis(
             "Tax drag is estimated using typical asset class yields and your marginal rates. "
             "Actual drag depends on your specific fund distributions, holding period, and tax situation. "
             "Swapping bond funds / REITs from taxable to tax-deferred accounts is generally the highest-impact action."
+        ),
+    }
+
+
+# ---------------------------------------------------------------------------
+# get_portfolio_risk_metrics  (#94)
+# ---------------------------------------------------------------------------
+
+async def get_portfolio_risk_metrics(
+    http_session,
+    risk_free_rate: float = 0.04,
+) -> dict:
+    """
+    Compute portfolio risk/return metrics — annualized volatility, max drawdown,
+    Sharpe ratio, and an estimated beta — from the available monthly portfolio
+    value history (CardSwitcher Card 3).
+
+    IMPORTANT: Card 3 reports portfolio *value*, which moves with both market
+    returns AND contributions/withdrawals, so the derived returns are a
+    money-weighted proxy, not a clean time-weighted return series. Treat the
+    numbers as directional. Beta is estimated from the equity weight (an
+    all-equity portfolio ≈ beta 1.0), not a regression against a market index.
+
+    Parameters
+    ----------
+    risk_free_rate : annual risk-free rate for the Sharpe ratio (default 0.04)
+    """
+    http = await http_session.get_http()
+    card3 = await _get_card(http, 3)
+    if not card3:
+        return {"error": "Card 3 (investment performance) unavailable. Session may have expired."}
+
+    series = [v for v in (card3.get("History") or []) if isinstance(v, (int, float)) and v > 0]
+    if len(series) < 4:
+        return {"error": ("Not enough portfolio value history for risk metrics "
+                          f"(need ≥4 monthly points, found {len(series)}).")}
+
+    # Month-over-month returns (money-weighted proxy).
+    monthly_returns = [series[i] / series[i - 1] - 1 for i in range(1, len(series))]
+    n = len(monthly_returns)
+
+    std_monthly = statistics.pstdev(monthly_returns) if n >= 2 else 0.0
+    annualized_return = round(((series[-1] / series[0]) ** (12 / n) - 1) * 100, 2)
+    annualized_vol = round(std_monthly * math.sqrt(12) * 100, 2)
+
+    # Max drawdown on the value series (peak-to-trough).
+    peak = series[0]
+    max_dd = 0.0
+    for v in series:
+        if v > peak:
+            peak = v
+        dd = (peak - v) / peak if peak else 0.0
+        if dd > max_dd:
+            max_dd = dd
+    max_drawdown = round(max_dd * 100, 2)
+
+    # Sharpe = (annualized return − risk-free) / annualized volatility.
+    ann_ret_frac = (series[-1] / series[0]) ** (12 / n) - 1
+    sharpe = round((ann_ret_frac - risk_free_rate) / (std_monthly * math.sqrt(12)), 2) if std_monthly > 0 else None
+
+    # Beta heuristic from equity weight.
+    aa = await get_asset_allocation(http_session)
+    eq_frac = _equity_fraction(aa.get("asset_classes", [])) if "error" not in aa else None
+    beta_est = round(eq_frac, 2) if eq_frac is not None else None
+
+    return {
+        "as_of":                 datetime.now().strftime("%Y-%m-%d"),
+        "months_of_history":     len(series),
+        "current_value":         round(series[-1], 2),
+        "annualized_return_pct": annualized_return,
+        "annualized_volatility_pct": annualized_vol,
+        "max_drawdown_pct":      max_drawdown,
+        "sharpe_ratio":          sharpe,
+        "estimated_beta":        beta_est,
+        "equity_weight_pct":     round(eq_frac * 100, 1) if eq_frac is not None else None,
+        "risk_free_rate_pct":    round(risk_free_rate * 100, 2),
+        "interpretation": (
+            f"Over the last {len(series)} months the portfolio returned ~{annualized_return}% "
+            f"annualized with ~{annualized_vol}% volatility"
+            + (f" (Sharpe {sharpe})" if sharpe is not None else "")
+            + f"; the worst peak-to-trough drop was {max_drawdown}%."
+        ),
+        "note": (
+            "Derived from Card 3 portfolio VALUE history, which includes contributions and "
+            "withdrawals — these are money-weighted approximations, not true time-weighted "
+            "returns, and a short window (often ~6–13 months) makes annualization noisy. Beta "
+            "is estimated from the equity weight (all-equity ≈ 1.0), not regressed against an "
+            "index. Use as a directional read, not a performance-reporting figure."
+        ),
+    }
+
+
+# ---------------------------------------------------------------------------
+# get_benchmark_comparison  (#94)
+# ---------------------------------------------------------------------------
+
+async def get_benchmark_comparison(
+    http_session,
+    benchmark: str = "60/40",
+) -> dict:
+    """
+    Compare the portfolio's annualized return (from Card 3 value history) against
+    a blended stock/bond benchmark.
+
+    The benchmark figures are LONG-RUN EXPECTED returns (equity ~10%, bonds ~4%),
+    not returns of the same period as the portfolio window, so the comparison is a
+    reference yardstick rather than a same-period attribution. The portfolio
+    return is itself a money-weighted proxy (see get_portfolio_risk_metrics).
+
+    Parameters
+    ----------
+    benchmark : stock/bond split, one of 100/0, 80/20, 70/30, 60/40, 50/50,
+                40/60, 20/80, 0/100 (default '60/40')
+    """
+    key = (benchmark or "").strip().replace(" ", "")
+    if key not in _BENCHMARKS:
+        return {"error": (f"Unknown benchmark '{benchmark}'. Choose one of: "
+                          f"{', '.join(_BENCHMARKS)}.")}
+
+    http = await http_session.get_http()
+    card3 = await _get_card(http, 3)
+    if not card3:
+        return {"error": "Card 3 (investment performance) unavailable. Session may have expired."}
+
+    series = [v for v in (card3.get("History") or []) if isinstance(v, (int, float)) and v > 0]
+    if len(series) < 4:
+        return {"error": ("Not enough portfolio value history for a comparison "
+                          f"(need ≥4 monthly points, found {len(series)}).")}
+
+    n = len(series) - 1
+    port_ann = round(((series[-1] / series[0]) ** (12 / n) - 1) * 100, 2)
+    bench_ann = round(_BENCHMARKS[key] * 100, 2)
+    excess = round(port_ann - bench_ann, 2)
+
+    all_benchmarks = [
+        {"benchmark": k, "expected_annual_return_pct": round(v * 100, 2)}
+        for k, v in _BENCHMARKS.items()
+    ]
+
+    return {
+        "as_of":                  datetime.now().strftime("%Y-%m-%d"),
+        "benchmark":              key,
+        "months_of_history":      len(series),
+        "portfolio_annualized_return_pct": port_ann,
+        "benchmark_expected_return_pct":   bench_ann,
+        "excess_return_pct":      excess,
+        "outperforming":          excess > 0,
+        "all_benchmarks":         all_benchmarks,
+        "interpretation": (
+            f"The portfolio's ~{port_ann}% annualized return over {len(series)} months is "
+            f"{abs(excess)} pts {'above' if excess > 0 else 'below'} the {key} benchmark's "
+            f"~{bench_ann}% long-run expected return."
+        ),
+        "note": (
+            "Benchmark returns are LONG-RUN EXPECTED averages (equity ~10%, bonds ~4%), not the "
+            "actual return of the same window — a short, money-weighted portfolio window can swing "
+            "well above or below them for reasons unrelated to skill. For a like-for-like read, "
+            "compare over full market cycles. See get_portfolio_risk_metrics for risk-adjusted context."
         ),
     }

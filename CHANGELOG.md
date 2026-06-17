@@ -2,7 +2,22 @@
 
 All notable changes to emoney-mcp are documented here.
 
-## [1.0.24] — 2026-06-17 (current)
+## [1.0.25] — 2026-06-17 (current)
+
+Second data-read tool (epic #106) — reaches the My Plan **internal-api BFF**,
+unlocking the plan/goals/projection data family. 105 → 106 tools.
+
+### Added
+
+- **`scrapers/plan_api.py`** (#96) — `get_all_goals_funding_status`: unified funding status for every plan goal (retirement, leave-to-heirs, each education/spending goal) — Monte Carlo probability of success, mean surplus/shortfall, an On Track / Monitor / At Risk band, plus the retirement goal's funding-vs-expense dollars. Reads `api.emoneyadvisor.com/internal-api` (Bearer JWT + apikey, reusing `_get_snb_credentials`); `clientId`/`planId` scraped from the My Plan page. Verified end-to-end against a live session.
+
+### Notes
+
+- The internal-api BFF (documented in CLAUDE.md → Data Sources) uses the same Apigee auth as the SNB API and exposes the whole plan family: goals, lifetime cash flow (`projection/linear/cashflow/details` → #82, next), retirement/Monte Carlo projections, expenses, and investment depth. This is the enabling integration for the remaining roadmap data reads.
+
+Adds 8 tests (542 total).
+
+## [1.0.24] — 2026-06-17
 
 First **data-read** tool from the FP&A roadmap (epic #106) — the calculator track
 was pure math; this reads live eMoney data from a newly mapped endpoint. 104 → 105 tools.

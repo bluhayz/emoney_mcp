@@ -1823,6 +1823,19 @@ async def list_tools() -> list[Tool]:
             ),
             inputSchema={"type": "object", "properties": {}, "required": []},
         ),
+        # ── Data reads (#96 — plan goals via internal-api) ────────────────
+        Tool(
+            name="get_all_goals_funding_status",
+            description=(
+                "Unified funding status for every goal in the eMoney financial plan — the retirement "
+                "goal, leave-to-heirs goal, and each education/spending goal — with each goal's Monte "
+                "Carlo probability of success, mean surplus/shortfall, and an On Track / Monitor / At "
+                "Risk status, plus the retirement goal's total funding-vs-expense dollars. No parameters. "
+                "Reads the advisor's plan projection (not live market values). "
+                "Useful for 'Are my goals on track?' or 'What's my retirement plan's probability of success?'"
+            ),
+            inputSchema={"type": "object", "properties": {}, "required": []},
+        ),
         # ── v1.0.2 Live endpoint discoveries ──────────────────────────────
         Tool(
             name="get_client_profile",
@@ -2217,6 +2230,7 @@ _DISPATCH = {
                                                _A("final_expenses", float, 15_000.0),
                                                _A("liquidation_haircut", float, 0.15)),
     "get_vault_documents":           _passthru("get_vault_documents"),
+    "get_all_goals_funding_status":  _passthru("get_all_goals_funding_status"),
     # ── Retirement & long-range ───────────────────────────────────────────
     "get_retirement_runway":         _passthru("get_retirement_runway",
                                                _A("annual_spending", float, optional=True),

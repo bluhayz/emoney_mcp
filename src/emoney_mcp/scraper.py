@@ -100,4 +100,6 @@ from .scrapers import (   # make sure private helpers are also importable
     get_estate_liquidity_analysis,
     # data-read wave 5 — vault documents (first live data-read tool)
     get_vault_documents,
+    # data-read wave 6 — plan goals funding (internal-api BFF)
+    get_all_goals_funding_status,
 )

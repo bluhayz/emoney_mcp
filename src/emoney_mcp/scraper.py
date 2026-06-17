@@ -90,4 +90,9 @@ from .scrapers import (   # make sure private helpers are also importable
     get_state_tax_estimate,
     get_healthcare_cost_projection,
     get_hsa_optimization,
+    # calculator wave 3 — income timeline, risk metrics, sequence-of-returns
+    get_income_sources_timeline,
+    get_sequence_of_returns_stress_test,
+    get_portfolio_risk_metrics,
+    get_benchmark_comparison,
 )

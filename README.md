@@ -307,6 +307,15 @@ Then point Claude Desktop at your local clone:
 | `get_healthcare_cost_projection` | Lifetime retirement healthcare costs split pre-65 (ACA) and post-65 (Medicare + Medigap + OOP), inflated and scaled for one person or a couple. Required: `current_age`. Optional: `retirement_age`, `coverage`, `life_expectancy`, `health_inflation` |
 | `get_hsa_optimization` | HSA triple-tax framing, invest-vs-spend guidance, and balance trajectory to a target age (balance pulled from Emoney). Optional: `current_age`, `current_hsa_balance`, `annual_contribution`, `coverage`, `target_age` |
 
+### 🧮 Advanced Planning Calculators (v1.0.22)
+
+| Tool | Description |
+|------|-------------|
+| `get_income_sources_timeline` | Chronological timeline of when each income stream switches on (SS, pension, annuity, RMDs at 73) and when the mortgage is paid off (freeing cash flow); flags "bridge" gap years for Roth conversions. Required: `birth_year`. Optional: `retirement_age`, `social_security_annual`, `ss_start_age`, `pension_annual`, `pension_start_age`, `annuity_annual`, `annuity_start_age`, `mortgage_payment_monthly`, `mortgage_payoff_age` |
+| `get_portfolio_risk_metrics` | Annualized return/volatility, max drawdown, Sharpe ratio, and an equity-weight-based beta estimate from Card 3 value history (money-weighted proxy). Optional: `risk_free_rate` |
+| `get_benchmark_comparison` | Portfolio annualized return vs. a blended stock/bond benchmark's long-run expected return. Optional: `benchmark` (e.g. `60/40`) |
+| `get_sequence_of_returns_stress_test` | Same withdrawal plan over fixed return paths in different order (flat average, 2000/2008 crash front-loaded, and reversed) to expose sequence-of-returns risk. Optional: `years`, `annual_spending`, `equity_pct`, `bond_return`, `mean_return`, `social_security_annual`, `withdrawal_rate` |
+
 ---
 
 ## Example questions to ask Claude
@@ -493,7 +502,7 @@ Tools with multiple independent data sources use `asyncio.gather()` for parallel
 Claude Desktop
      │  MCP stdio
      ▼
-emoney_mcp/server.py         ← tool registration + dispatch (98 tools)
+emoney_mcp/server.py         ← tool registration + dispatch (102 tools)
 emoney_mcp/scraper.py         ← re-export shim (backward-compatible)
 emoney_mcp/scrapers/          ← domain-split scraping package
   ├── _helpers.py             ←   shared URL constants + TTL-cached _get_card()

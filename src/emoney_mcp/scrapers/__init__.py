@@ -146,6 +146,7 @@ from .retirement import (
     get_retirement_income_plan,
     get_income_sources_timeline,
     get_sequence_of_returns_stress_test,
+    model_life_event_scenario,
 )
 
 from .portfolio import (
@@ -172,6 +173,7 @@ from .planning import (
     get_mortgage_payoff_vs_invest,
     get_healthcare_cost_projection,
     get_hsa_optimization,
+    get_estate_liquidity_analysis,
 )
 
 from .explore import (
@@ -277,6 +279,7 @@ __all__ = [
     "get_retirement_runway", "get_withdrawal_rate_analysis",
     "get_withdrawal_sequencing_strategy", "get_retirement_income_plan",
     "get_income_sources_timeline", "get_sequence_of_returns_stress_test",
+    "model_life_event_scenario",
     "get_net_worth_projection", "run_monte_carlo_retirement",
     "get_dynamic_withdrawal_guardrails", "run_scenario",
     "get_financial_independence_roadmap",
@@ -292,6 +295,7 @@ __all__ = [
     "get_mortgage_amortization_schedule", "get_mortgage_refinance_analysis",
     "get_mortgage_payoff_vs_invest",
     "get_healthcare_cost_projection", "get_hsa_optimization",
+    "get_estate_liquidity_analysis",
     # explore
     "explore_emoney_site",
     # transactions (write)

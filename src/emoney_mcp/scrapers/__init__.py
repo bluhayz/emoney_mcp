@@ -182,6 +182,7 @@ from .vault import (
 
 from .plan_api import (
     get_all_goals_funding_status,
+    get_lifetime_cash_flow_projection,
 )
 
 from .explore import (
@@ -308,6 +309,7 @@ __all__ = [
     "get_vault_documents",
     # plan_api (internal-api BFF)
     "get_all_goals_funding_status",
+    "get_lifetime_cash_flow_projection",
     # explore
     "explore_emoney_site",
     # transactions (write)

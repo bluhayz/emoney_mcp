@@ -141,3 +141,76 @@ class TestStatusBand:
         assert plan_api._status_from_prob(0.75) == "Monitor"
         assert plan_api._status_from_prob(0.50) == "At Risk"
         assert plan_api._status_from_prob(None) == "unknown"
+
+
+def _year(yr, inflow, outflow, pv, nw, growth=0, wd_total=0):
+    return {
+        "year": yr, "totalCashInflow": inflow, "totalCashOutflow": outflow,
+        "netCashFlow": inflow - outflow,
+        "withdrawals": {"plannedWithdrawals": {"total": wd_total}, "supplementalWithdrawals": {"total": 0}},
+        "portfolioValue": {"totalPortfolioAssets": pv, "totalNetWorth": nw, "portfolioGrowth": growth},
+    }
+
+
+_CASHFLOW = {"years": [
+    _year(2026, 500000, 500000, 7_900_000, 8_400_000, 387000, 0),
+    _year(2027, 0, 167000, 8_100_000, 8_700_000, 409000, 167000),
+    _year(2028, 0, 178000, 8_380_000, 9_000_000, 431000, 178000),
+    _year(2029, 0, 190000, 0, 0, 0, 190000),  # depletion year
+]}
+
+
+def _cashflow_session(payload=_CASHFLOW, status=200):
+    async def mock_get(url, **kwargs):
+        return _json_resp(payload, status=status,
+                          ctype="application/json" if status == 200 else "text/html")
+    http = AsyncMock(); http.get = mock_get
+    session = AsyncMock(); session.get_http = AsyncMock(return_value=http)
+    return session
+
+
+class TestLifetimeCashFlow:
+
+    @pytest.mark.asyncio
+    async def test_rows_and_summary(self):
+        p1, p2 = _patches()
+        with p1, p2:
+            r = await plan_api.get_lifetime_cash_flow_projection(_cashflow_session())
+        assert r["horizon_years"] == 4
+        assert r["first_year"] == 2026 and r["last_year"] == 2029
+        s = r["summary"]
+        assert s["starting_portfolio_value"] == 7_900_000
+        assert s["peak_portfolio_year"] == 2028          # 8.38M is the peak before depletion
+        assert s["first_negative_cash_flow_year"] == 2027
+        assert s["portfolio_depletion_year"] == 2029
+
+    @pytest.mark.asyncio
+    async def test_withdrawals_summed(self):
+        p1, p2 = _patches()
+        with p1, p2:
+            r = await plan_api.get_lifetime_cash_flow_projection(_cashflow_session())
+        assert r["years"][1]["withdrawals"] == 167000
+        assert r["years"][1]["net_cash_flow"] == -167000
+
+    @pytest.mark.asyncio
+    async def test_year_range_filter(self):
+        p1, p2 = _patches()
+        with p1, p2:
+            r = await plan_api.get_lifetime_cash_flow_projection(
+                _cashflow_session(), start_year=2027, end_year=2028)
+        assert [y["year"] for y in r["years"]] == [2027, 2028]
+
+    @pytest.mark.asyncio
+    async def test_endpoint_failure_errors(self):
+        p1, p2 = _patches()
+        with p1, p2:
+            r = await plan_api.get_lifetime_cash_flow_projection(_cashflow_session(status=500))
+        assert "error" in r
+
+    @pytest.mark.asyncio
+    async def test_empty_range_errors(self):
+        p1, p2 = _patches()
+        with p1, p2:
+            r = await plan_api.get_lifetime_cash_flow_projection(
+                _cashflow_session(), start_year=2099)
+        assert "error" in r

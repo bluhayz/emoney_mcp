@@ -607,6 +607,57 @@ async def list_tools() -> list[Tool]:
             inputSchema={"type": "object", "properties": {}, "required": []},
         ),
         Tool(
+            name="get_withdrawal_sequencing_strategy",
+            description=(
+                "Compares a tax-efficient retirement withdrawal order (taxable → tax-deferred → Roth) "
+                "against a naive proportional drawdown and estimates the lifetime tax saved. Pulls "
+                "account balances by tax treatment from Emoney. "
+                "Required: annual_need (annual portfolio withdrawal after other income). "
+                "Optional: filing_status (default 'mfj'), years (default 30), taxable_gain_fraction "
+                "(default 0.5), growth_rate (default 0.05). "
+                "Useful for 'Which accounts should I draw from first in retirement?'"
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "annual_need":           {"type": "number",  "description": "Annual portfolio withdrawal needed (after other income)"},
+                    "filing_status":         {"type": "string",  "description": "'single', 'mfj', or 'hoh' (default 'mfj')"},
+                    "years":                 {"type": "integer", "description": "Simulation horizon (default 30, max 50)"},
+                    "taxable_gain_fraction": {"type": "number",  "description": "Fraction of a taxable withdrawal that is embedded gain (default 0.5)"},
+                    "growth_rate":           {"type": "number",  "description": "Annual portfolio growth assumption (default 0.05)"},
+                },
+                "required": ["annual_need"],
+            },
+        ),
+        Tool(
+            name="get_retirement_income_plan",
+            description=(
+                "Year-by-year retirement income plan: guaranteed income (Social Security + pension) "
+                "netted against the spending need, with the required portfolio withdrawal and "
+                "withdrawal rate each year, plus the depletion age (if any). Portfolio and spending "
+                "pulled from Emoney. "
+                "Required: retire_age, birth_year. "
+                "Optional: annual_spending (default: 12-mo actual), social_security_annual, "
+                "ss_claim_age (67), pension_annual, pension_start_age (65), years (30), growth_rate (0.05). "
+                "Useful for 'Where does my retirement paycheck come from?' or 'What's my withdrawal rate each year?'"
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "retire_age":             {"type": "integer", "description": "Age portfolio drawdown begins"},
+                    "birth_year":             {"type": "integer", "description": "Your year of birth"},
+                    "annual_spending":        {"type": "number",  "description": "Retirement spending need (inferred from SNB if omitted)"},
+                    "social_security_annual": {"type": "number",  "description": "Annual Social Security benefit"},
+                    "ss_claim_age":           {"type": "integer", "description": "Age SS begins (default 67)"},
+                    "pension_annual":         {"type": "number",  "description": "Annual pension benefit (default 0)"},
+                    "pension_start_age":      {"type": "integer", "description": "Age pension begins (default 65)"},
+                    "years":                  {"type": "integer", "description": "Plan horizon (default 30, max 50)"},
+                    "growth_rate":            {"type": "number",  "description": "Annual portfolio growth (default 0.05)"},
+                },
+                "required": ["retire_age", "birth_year"],
+            },
+        ),
+        Tool(
             name="get_net_worth_projection",
             description=(
                 "Projects net worth forward using the current balance plus actual average monthly savings, "
@@ -657,6 +708,60 @@ async def list_tools() -> list[Tool]:
                 "properties": {
                     "annual_return":           {"type": "number", "description": "Expected 529 portfolio return (default 0.06)"},
                     "annual_college_inflation":{"type": "number", "description": "College cost inflation rate (default 0.05)"},
+                },
+                "required": [],
+            },
+        ),
+        Tool(
+            name="get_financial_alerts",
+            description=(
+                "One prioritized 'what needs my attention' list, aggregating signals from several "
+                "tools: broken account aggregations, unusually large transactions, overdue/upcoming "
+                "bills, budget overruns, an underfunded emergency fund, and portfolio concentration. "
+                "Each source is checked defensively; any that errors is skipped and noted. "
+                "Optional: days_ahead (upcoming-bill window, default 14). "
+                "Useful for 'What should I be paying attention to financially?' or a daily check-in."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "days_ahead": {"type": "integer", "description": "Window for upcoming-bill alerts (default 14)"},
+                },
+                "required": [],
+            },
+        ),
+        Tool(
+            name="get_emergency_fund_analysis",
+            description=(
+                "Assesses emergency-fund adequacy: months of expenses covered by liquid cash versus a "
+                "target, with the surplus or shortfall in dollars. Liquid cash and 90-day average "
+                "spending pulled from Emoney. "
+                "Optional: target_months (default 6). "
+                "Useful for 'Do we have enough in our emergency fund?' or 'How many months of expenses do we have saved?'"
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "target_months": {"type": "number", "description": "Target months of expenses to hold (default 6)"},
+                },
+                "required": [],
+            },
+        ),
+        Tool(
+            name="get_idle_cash_optimization",
+            description=(
+                "Identifies cash sitting in low-yield accounts and estimates the annual income uplift "
+                "from moving the deployable portion to a high-yield savings account, money-market fund, "
+                "or T-bills. Cash balances pulled from Emoney. "
+                "Optional: hysa_apy (default 0.045), assumed_current_apy (default 0.005), keep_in_checking. "
+                "Useful for 'Am I leaving money on the table in checking?' or 'How much more could my cash earn?'"
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "hysa_apy":            {"type": "number", "description": "Yield available on cash today (default 0.045 = 4.5%)"},
+                    "assumed_current_apy": {"type": "number", "description": "Yield the cash currently earns (default 0.005)"},
+                    "keep_in_checking":    {"type": "number", "description": "Dollars to leave in low-yield checking for liquidity"},
                 },
                 "required": [],
             },
@@ -1205,6 +1310,70 @@ async def list_tools() -> list[Tool]:
             inputSchema={"type": "object", "properties": {}, "required": []},
         ),
         Tool(
+            name="get_mortgage_amortization_schedule",
+            description=(
+                "Amortization schedule for a mortgage: per-year interest vs. principal, total interest, "
+                "and payoff date — with an optional extra monthly principal payment (shows interest saved). "
+                "Required: balance, annual_rate (e.g. 0.065), years_remaining. Optional: extra_monthly. "
+                "Useful for 'How much interest will I pay on my mortgage?' or 'What if I pay $500 extra a month?'"
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "balance":         {"type": "number", "description": "Current mortgage balance"},
+                    "annual_rate":     {"type": "number", "description": "Annual interest rate (e.g. 0.065 for 6.5%)"},
+                    "years_remaining": {"type": "number", "description": "Years left on the loan"},
+                    "extra_monthly":   {"type": "number", "description": "Extra principal paid each month (default 0)"},
+                },
+                "required": ["balance", "annual_rate", "years_remaining"],
+            },
+        ),
+        Tool(
+            name="get_mortgage_refinance_analysis",
+            description=(
+                "Compares the current mortgage to a refinance: monthly payment change, break-even month "
+                "on closing costs, and lifetime interest difference. "
+                "Required: balance, current_rate, current_years_remaining, new_rate, new_term_years. "
+                "Optional: closing_costs. "
+                "Useful for 'Should I refinance at 5.5%?' or 'What's the break-even on refinancing?'"
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "balance":                 {"type": "number", "description": "Current mortgage balance"},
+                    "current_rate":            {"type": "number", "description": "Current annual rate (e.g. 0.07)"},
+                    "current_years_remaining": {"type": "number", "description": "Years left on the current loan"},
+                    "new_rate":                {"type": "number", "description": "New annual rate (e.g. 0.055)"},
+                    "new_term_years":          {"type": "number", "description": "New loan term in years"},
+                    "closing_costs":           {"type": "number", "description": "Refinance closing costs (default 0)"},
+                },
+                "required": ["balance", "current_rate", "current_years_remaining", "new_rate", "new_term_years"],
+            },
+        ),
+        Tool(
+            name="get_mortgage_payoff_vs_invest",
+            description=(
+                "Compares putting an extra monthly amount toward the mortgage versus investing it, over "
+                "the loan's remaining life, after tax on investment gains. Returns interest saved, the "
+                "invested after-tax value, and which wins. "
+                "Required: balance, annual_rate, years_remaining, extra_monthly. "
+                "Optional: investment_return (default 0.07), tax_rate_on_gains (default 0.15). "
+                "Useful for 'Should I pay down my mortgage or invest the extra?'"
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "balance":           {"type": "number", "description": "Current mortgage balance"},
+                    "annual_rate":       {"type": "number", "description": "Mortgage annual rate (e.g. 0.065)"},
+                    "years_remaining":   {"type": "number", "description": "Years left on the loan"},
+                    "extra_monthly":     {"type": "number", "description": "Extra monthly amount to compare"},
+                    "investment_return": {"type": "number", "description": "Assumed annual investment return (default 0.07)"},
+                    "tax_rate_on_gains": {"type": "number", "description": "Tax rate on investment gains (default 0.15)"},
+                },
+                "required": ["balance", "annual_rate", "years_remaining", "extra_monthly"],
+            },
+        ),
+        Tool(
             name="get_fire_number",
             description=(
                 "Computes the Financial Independence (FI) number — the portfolio size needed to retire on investment returns alone. "
@@ -1557,6 +1726,14 @@ _DISPATCH = {
     "get_financial_health_score":    _passthru("get_financial_health_score"),
     "get_quick_status":              _passthru("get_quick_status"),
     "get_monthly_review":            _passthru("get_monthly_review"),
+    "get_financial_alerts":          _passthru("get_financial_alerts",
+                                               _A("days_ahead", int, 14)),
+    "get_emergency_fund_analysis":   _passthru("get_emergency_fund_analysis",
+                                               _A("target_months", float, 6.0)),
+    "get_idle_cash_optimization":    _passthru("get_idle_cash_optimization",
+                                               _A("hysa_apy", float, 0.045),
+                                               _A("assumed_current_apy", float, 0.005),
+                                               _A("keep_in_checking", float, 0.0)),
     # ── Balance sheet ─────────────────────────────────────────────────────
     "get_accounts":                  _passthru("get_accounts"),
     "get_net_worth":                 lambda a: _get_net_worth(),
@@ -1566,6 +1743,25 @@ _DISPATCH = {
     "get_client_profile":            _passthru("get_client_profile"),
     "get_aggregation_status":        _passthru("get_aggregation_status"),
     "get_home_equity":               _passthru("get_home_equity"),
+    "get_mortgage_amortization_schedule": _passthru("get_mortgage_amortization_schedule",
+                                               _A("balance", float),
+                                               _A("annual_rate", float),
+                                               _A("years_remaining", float),
+                                               _A("extra_monthly", float, 0.0)),
+    "get_mortgage_refinance_analysis": _passthru("get_mortgage_refinance_analysis",
+                                               _A("balance", float),
+                                               _A("current_rate", float),
+                                               _A("current_years_remaining", float),
+                                               _A("new_rate", float),
+                                               _A("new_term_years", float),
+                                               _A("closing_costs", float, 0.0)),
+    "get_mortgage_payoff_vs_invest": _passthru("get_mortgage_payoff_vs_invest",
+                                               _A("balance", float),
+                                               _A("annual_rate", float),
+                                               _A("years_remaining", float),
+                                               _A("extra_monthly", float),
+                                               _A("investment_return", float, 0.07),
+                                               _A("tax_rate_on_gains", float, 0.15)),
     # ── Investments ───────────────────────────────────────────────────────
     "get_holdings":                  _passthru("get_holdings"),
     "get_asset_allocation":          _passthru("get_asset_allocation"),
@@ -1704,6 +1900,22 @@ _DISPATCH = {
                                                _A("annual_spending", float, optional=True),
                                                _A("return_rate", float, 0.06)),
     "get_withdrawal_rate_analysis":  _passthru("get_withdrawal_rate_analysis"),
+    "get_withdrawal_sequencing_strategy": _passthru("get_withdrawal_sequencing_strategy",
+                                               _A("annual_need", float),
+                                               _A("filing_status", str, "mfj"),
+                                               _A("years", int, 30),
+                                               _A("taxable_gain_fraction", float, 0.5),
+                                               _A("growth_rate", float, 0.05)),
+    "get_retirement_income_plan":    _passthru("get_retirement_income_plan",
+                                               _A("retire_age", int),
+                                               _A("birth_year", int),
+                                               _A("annual_spending", float, optional=True),
+                                               _A("social_security_annual", float, 0.0),
+                                               _A("ss_claim_age", int, 67),
+                                               _A("pension_annual", float, 0.0),
+                                               _A("pension_start_age", int, 65),
+                                               _A("years", int, 30),
+                                               _A("growth_rate", float, 0.05)),
     "get_net_worth_projection":      _passthru("get_net_worth_projection",
                                                _A("target_net_worth", float, optional=True),
                                                _A("annual_return", float, 0.07),

@@ -2,7 +2,7 @@
 
 MCP server bridging Claude (and other MCP clients) to Emoney Advisor (`emaplan.com`). Emoney has no public API; this server uses reverse-engineered internal JSON endpoints + Chrome cookie extraction for auth.
 
-**Current version: 1.0.24 · 105 MCP tools.** Read-only data tools (cards + SNB + Profile + Vault), transaction/rules **write** tools, report links, and a large set of pure-Python planning/tax calculators (IRS 2026 figures).
+**Current version: 1.0.25 · 106 MCP tools.** Read-only data tools (cards + SNB + Profile + Vault + plan goals), transaction/rules **write** tools, report links, and a large set of pure-Python planning/tax calculators (IRS 2026 figures).
 
 ---
 
@@ -52,6 +52,8 @@ src/emoney_mcp/
     ├── reports.py     # get_reports (parse Reports page), get_report_url (CS/Reports/GetReportUrl) (v0.9.0+)
     ├── vault.py       # get_vault_documents (#104) — scrapes vaultApi.BaseUrl from /ema/CS/Vault,
     │                  #   then GETs /ema/api/v1/vault/<guid>/items?path=Vault (same-origin JSON, cookie auth)
+    ├── plan_api.py    # get_all_goals_funding_status (#96) — internal-api BFF (api.emoneyadvisor.com),
+    │                  #   Bearer JWT + apikey (reuses _get_snb_credentials); clientId/planId from MyPlan HTML
     └── explore.py     # explore_emoney_site — dev/discovery crawler that mines pages for endpoints
 ```
 
@@ -162,6 +164,20 @@ All card fetches go through `_get_card(http, card_id)` in `_helpers.py` — 300 
 
 ### Investments endpoint
 `GET/POST {BASE_URL}/ema/CS/Investments/...` — `GetInvestmentData` (holdings/allocation) and `GetInvestmentTransactions` (POST, requires CSRF token via `http_session.get_csrf_token()`).
+
+### internal-api BFF (My Plan — goals, projections, cash flow)
+`https://api.emoneyadvisor.com/internal-api/api/clients/<clientId>/plans/<planId>/...` — the My Plan SPA's data API, **Apigee-gated with the SAME auth as the SNB API**: `Authorization: Bearer <jwt>` + `apikey` header, both from `_get_snb_credentials()` (scraped from the Spending page). `clientId`/`planId` are embedded in the My Plan page HTML (`clientId":"..."` / `planId":"..."`) — see `plan_api._get_plan_ids`. Discovered via live network capture (epic #106). Known sub-paths (mine more by capturing XHRs on `/ema/CS/MyPlan`):
+
+| Path (under `/plans/<plan>`) | Data | Tool / roadmap |
+|------|------|------|
+| `/projection/montecarlo/goals` | per-goal probability of success + surplus/shortfall | `get_all_goals_funding_status` (#96) |
+| `/projection/goalfunding/retirement` | retirement funding $ vs expense $ | #96 |
+| `/projection/linear/cashflow/details` | year-by-year lifetime cash flow | #82 (next) |
+| `/projection/montecarlo/probabilityofsuccess`, `/projection/retirement`, `/projection/montecarlo/assetspread` | plan success / retirement projection | future |
+| `/expenses`, `/expenses/education`, `/expenses/spending`, `/expenses/funding`, `/assumptions` | goal definitions + plan inputs | future |
+| (client-level) `/calculatednetworth`, `/investments/total`, `/plans/<plan>/assetallocation/details/...` | investment depth | #91/#92/#93/#95 |
+
+> The Apigee gateway returns `401 {"fault":...FailedToResolveAPIKey}` if the `apikey` header is missing — both Bearer JWT and `apikey` are required.
 
 ---
 

@@ -200,6 +200,7 @@ from .transactions import (
     add_transaction_rule,
     update_transaction_rule,
     apply_transaction_rule,
+    delete_transaction_rule,
 )
 
 from .reports import (
@@ -320,6 +321,7 @@ __all__ = [
     "get_transaction_splits", "update_transaction_splits",
     "get_transaction_rules", "add_transaction_rule",
     "update_transaction_rule", "apply_transaction_rule",
+    "delete_transaction_rule",
     # reports
     "get_reports", "get_report_url",
 ]

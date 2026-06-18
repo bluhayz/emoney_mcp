@@ -243,7 +243,10 @@ async def get_transaction_rules(http_session) -> dict:
         # A Nexus maintenance-window 500 (IsNexusAvailable:false / "unavailable due
         # to maintenance") must surface as a real error — not be mistaken for
         # "no rules configured" by the empty-body heuristic below.
-        if "isnexusavailable" in body_lower or "maintenance" in body_lower:
+        # NOTE: match IsNexusAvailable *false* specifically — the empty-rules 500
+        # response also carries `"IsNexusAvailable":true`, so a bare substring
+        # check on the field name wrongly flags the no-rules case as maintenance.
+        if '"isnexusavailable":false' in body_lower.replace(" ", "") or "maintenance" in body_lower:
             return result
         # Emoney genuinely returns HTTP 500 with an empty/generic body when no
         # rules exist — treat that (and only that) as an empty rule set.
@@ -410,4 +413,31 @@ async def apply_transaction_rule(
     return _maybe_raw({
         "success": True,
         "rule_id": rule_id,
+    }, result)
+
+
+async def delete_transaction_rule(
+    http_session,
+    rule_id: str,
+) -> dict:
+    """
+    Delete an auto-categorization rule.
+
+    JS signature: RemoveRule(ruleID) — POST /ema/CS/Spending/RemoveRule.
+
+    rule_id — the rule ID (from get_transaction_rules)
+
+    Existing transactions categorized by the rule keep their categories;
+    only future auto-categorization stops.
+    """
+    if rule_id is None or str(rule_id).strip() == "":
+        return {"error": "rule_id is required."}
+
+    result = await _csrf_post(http_session, "RemoveRule", {"ruleID": str(rule_id)})
+    if isinstance(result, dict) and "error" in result:
+        return result
+    return _maybe_raw({
+        "success": True,
+        "rule_id": rule_id,
+        "deleted": True,
     }, result)

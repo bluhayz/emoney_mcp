@@ -2,7 +2,23 @@
 
 All notable changes to emoney-mcp are documented here.
 
-## [1.0.27] — 2026-06-17 (current)
+## [1.0.31] — 2026-06-18 (current)
+
+Migrate rule **creation/editing** off the retired Nexus write path (#19).
+
+### Changed
+
+- **`scrapers/transactions.py`** — `add_transaction_rule` and `update_transaction_rule` now post to the **SNB API** (`CreateRule` / `UpdateRule`, body `{Rule:{...}, TransactionID}`) instead of the legacy `/ema/CS/Spending/AddRule|UpdateRule` path. The legacy Nexus write endpoint is *retired* (returns `IsNexusAvailable:false` permanently — it is not a transient maintenance window), which is why rule creation had been failing. The `Rule` object uses the same flat camelCase shape (`ruleID`, `categoryID`, `descriptionContains`, `userDescription`, `minAmount`, `maxAmount`, `startDay`, `endDay`) that `GetBankTransactionRules` already returns; `update_transaction_rule` sends the full merged object (modern endpoint replaces the whole rule). Mirrors the v1.0.30 migration of `update_transaction` / `get_transaction_rules`.
+
+### Still pending (#19)
+
+- `apply_transaction_rule`, `delete_transaction_rule`, `hide_transaction`, and transaction splits remain on the legacy `_csrf_post` path — their SNB endpoints have not yet been captured (the rule-delete endpoint 404s on probing). Creating a rule with `transaction_id` set already categorizes the triggering transaction and auto-matches future ones, so `apply` is not required for normal use.
+
+### Tests
+
+- Rewrote `TestAddTransactionRule` / `TestUpdateTransactionRule` and the add-rule raw-gating tests to assert the SNB `CreateRule`/`UpdateRule` contract (action name + camelCase `Rule` payload). Full suite: 564 passed.
+
+## [1.0.27] — 2026-06-17
 
 Investment-depth data reads (epic #106). 107 → 109 tools.
 

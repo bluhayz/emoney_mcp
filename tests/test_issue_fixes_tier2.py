@@ -49,24 +49,23 @@ class TestAvailableCardsEmptyList:
 # ---------------------------------------------------------------------------
 
 class TestGetRulesMaintenance:
+    """get_transaction_rules now reads the SNB GetBankTransactionRules endpoint
+    (migrated off the dead legacy /ema/CS/Spending/GetRules Nexus path)."""
 
     @pytest.mark.asyncio
-    async def test_maintenance_500_not_masked_as_empty(self):
+    async def test_snb_error_not_masked_as_empty(self):
         from emoney_mcp.scrapers.transactions import get_transaction_rules
-        err = {
-            "error": "GetRules returned HTTP 500",
-            "response_body": '{"IsNexusAvailable":false,"Message":"Your data is unavailable due to maintenance."}',
-        }
-        with patch("emoney_mcp.scrapers.transactions._csrf_post", new=AsyncMock(return_value=err)):
+        err = {"error": "GetBankTransactionRules returned HTTP 401"}
+        with patch("emoney_mcp.scrapers.transactions._snb_get", new=AsyncMock(return_value=err)):
             result = await get_transaction_rules(AsyncMock())
         assert "error" in result
         assert "rules" not in result   # must NOT be reported as 0 rules
 
     @pytest.mark.asyncio
-    async def test_empty_body_500_still_treated_as_no_rules(self):
+    async def test_empty_list_treated_as_no_rules(self):
         from emoney_mcp.scrapers.transactions import get_transaction_rules
-        err = {"error": "GetRules returned HTTP 500", "response_body": ""}
-        with patch("emoney_mcp.scrapers.transactions._csrf_post", new=AsyncMock(return_value=err)):
+        with patch("emoney_mcp.scrapers.transactions._snb_get",
+                   new=AsyncMock(return_value={"ok": True, "data": []})):
             result = await get_transaction_rules(AsyncMock())
         assert result["count"] == 0
         assert result["rules"] == []

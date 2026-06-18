@@ -99,6 +99,8 @@ from .scrapers import (   # make sure private helpers are also importable
     # calculator wave 4 — life-event scenario, estate liquidity
     model_life_event_scenario,
     get_estate_liquidity_analysis,
+    get_long_term_care_analysis,
+    get_real_estate_investment_analysis,
     # data-read wave 5 — vault documents (first live data-read tool)
     get_vault_documents,
     # data-read wave 6 — plan goals funding (internal-api BFF)
@@ -108,4 +110,6 @@ from .scrapers import (   # make sure private helpers are also importable
     # data-read wave 8 — investment depth (dividends, sector/geo)
     get_dividend_income_analysis,
     get_sector_geographic_allocation,
+    # ops — aggregation refresh control (aggapi)
+    refresh_account_aggregation,
 )

@@ -1826,6 +1826,71 @@ async def list_tools() -> list[Tool]:
                 "required": [],
             },
         ),
+        Tool(
+            name="get_long_term_care_analysis",
+            description=(
+                "Projects the cost of a long-term care (LTC) event — care starting at care_age for "
+                "care_years, inflated at an LTC-specific rate — nets out any in-force LTC/hybrid policy "
+                "benefit, and tests whether the portfolio (grown to care_age) can self-insure the "
+                "remaining need, returning a self_insurable / tight / insurance_recommended status. "
+                "Requires current_age. Optional: care_age (80), care_years (3), care_setting "
+                "('home_health_aide'/'assisted_living'/'nursing_home_semi'/'nursing_home_private'), "
+                "daily_cost, state (2-letter), cost_multiplier, ltc_inflation (0.045), coverage "
+                "('individual'/'couple'), investment_return (0.06), existing_annual_benefit, "
+                "policy_benefit_inflation. Useful for 'Can I self-insure long-term care or do I need a policy?'"
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "current_age":      {"type": "integer", "description": "Your age today (required — sets the inflation horizon)"},
+                    "care_age":         {"type": "integer", "description": "Age care begins (default 80)"},
+                    "care_years":       {"type": "number",  "description": "Expected duration of care in years (default 3)"},
+                    "care_setting":     {"type": "string",  "description": "'home_health_aide', 'assisted_living', 'nursing_home_semi', or 'nursing_home_private' (default 'assisted_living')"},
+                    "daily_cost":       {"type": "number",  "description": "Override per-day cost (else the setting's national median)"},
+                    "state":            {"type": "string",  "description": "2-letter state code for a rough regional cost index"},
+                    "cost_multiplier":  {"type": "number",  "description": "Explicit cost multiplier (overrides the state index)"},
+                    "ltc_inflation":    {"type": "number",  "description": "Annual LTC cost inflation (default 0.045)"},
+                    "coverage":         {"type": "string",  "description": "'individual' or 'couple' (couple scales cost ×2)"},
+                    "investment_return":{"type": "number",  "description": "Assumed annual portfolio return for the self-insure projection (default 0.06)"},
+                    "existing_annual_benefit":  {"type": "number", "description": "Annual benefit from an in-force LTC/hybrid policy in today's dollars (default 0)"},
+                    "policy_benefit_inflation": {"type": "number", "description": "Annual growth of that benefit if the policy has an inflation rider (default 0)"},
+                },
+                "required": ["current_age"],
+            },
+        ),
+        Tool(
+            name="get_real_estate_investment_analysis",
+            description=(
+                "Income-property metrics for a rental: cap rate, NOI, cash-on-cash return, DSCR, gross "
+                "rent multiplier, equity, and monthly/annual cash flow, plus rule-of-thumb screens "
+                "(1% rule, 50% rule, DSCR≥1.25) and an estimated total return on equity. Property value "
+                "and mortgage auto-fill from the eMoney balance sheet (pass property_name to pick one of "
+                "several); rent and operating expenses are your inputs (eMoney has no rental data). "
+                "Requires monthly_rent. Optional: property_value, property_name, monthly_operating_expenses "
+                "(else estimated via operating_expense_ratio, default 0.40), mortgage_balance, "
+                "monthly_mortgage_payment (else computed from mortgage_rate + mortgage_years_remaining), "
+                "purchase_price, cash_invested, annual_appreciation (0.03). "
+                "Useful for 'What's the cap rate / cash flow on my rental?'"
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "monthly_rent":               {"type": "number", "description": "Gross monthly rental income (required)"},
+                    "property_value":             {"type": "number", "description": "Current market value (else pulled from the balance sheet)"},
+                    "property_name":              {"type": "string", "description": "Account-name substring to select the property when several are held"},
+                    "monthly_operating_expenses": {"type": "number", "description": "Monthly operating costs EXCLUDING mortgage P&I (taxes, insurance, mgmt, maintenance, vacancy)"},
+                    "operating_expense_ratio":    {"type": "number", "description": "Fallback expense ratio when expenses omitted (default 0.40)"},
+                    "mortgage_balance":           {"type": "number", "description": "Loan balance (else pulled from the balance sheet)"},
+                    "monthly_mortgage_payment":   {"type": "number", "description": "P&I payment; else computed from balance/rate/term"},
+                    "mortgage_rate":              {"type": "number", "description": "Annual mortgage rate (e.g. 0.065) used to compute the payment"},
+                    "mortgage_years_remaining":   {"type": "number", "description": "Years left on the loan, used to compute the payment"},
+                    "purchase_price":             {"type": "number", "description": "Cost basis for cap rate (default: property_value)"},
+                    "cash_invested":              {"type": "number", "description": "Equity invested, for cash-on-cash (default: current equity)"},
+                    "annual_appreciation":        {"type": "number", "description": "Assumed annual value growth for total-return context (default 0.03)"},
+                },
+                "required": ["monthly_rent"],
+            },
+        ),
         # ── Data reads (#104) ─────────────────────────────────────────────
         Tool(
             name="get_vault_documents",
@@ -1837,6 +1902,29 @@ async def list_tools() -> list[Tool]:
                 "Useful for 'What's in my vault?' or 'How much have I uploaded?'"
             ),
             inputSchema={"type": "object", "properties": {}, "required": []},
+        ),
+        # ── Ops (#103 — aggregation refresh control) ──────────────────────
+        Tool(
+            name="refresh_account_aggregation",
+            description=(
+                "Triggers an account-aggregation refresh (re-pull) of connected institutions, so a "
+                "stale or broken feed updates without visiting eMoney. Refreshes ALL connections by "
+                "default, or narrow it with institution (case-insensitive name substring) or an exact "
+                "connection_id. Each refresh is asynchronous (returns an activity_id and updates in the "
+                "background) — re-run get_aggregation_status shortly after to confirm new last_updated "
+                "dates. Note: a refresh re-pulls data but does NOT fix a connection needing "
+                "re-authentication (credential/MFA failures must be fixed in the eMoney portal). "
+                "Pairs with get_aggregation_status. Useful for 'Refresh my accounts' or 'Update the "
+                "stale Truist feed'."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "institution":   {"type": "string", "description": "Only refresh connections whose name contains this text"},
+                    "connection_id": {"type": "string", "description": "Only refresh this exact connection id (overrides institution)"},
+                },
+                "required": [],
+            },
         ),
         # ── Data reads (#96 — plan goals via internal-api) ────────────────
         Tool(
@@ -2296,7 +2384,36 @@ _DISPATCH = {
                                                _A("filing_status", str, "mfj"),
                                                _A("final_expenses", float, 15_000.0),
                                                _A("liquidation_haircut", float, 0.15)),
+    "get_long_term_care_analysis":   _passthru("get_long_term_care_analysis",
+                                               _A("current_age", int),
+                                               _A("care_age", int, 80),
+                                               _A("care_years", float, 3.0),
+                                               _A("care_setting", str, "assisted_living"),
+                                               _A("daily_cost", float, optional=True),
+                                               _A("state", str, optional=True),
+                                               _A("cost_multiplier", float, optional=True),
+                                               _A("ltc_inflation", float, 0.045),
+                                               _A("coverage", str, "individual"),
+                                               _A("investment_return", float, 0.06),
+                                               _A("existing_annual_benefit", float, 0.0),
+                                               _A("policy_benefit_inflation", float, 0.0)),
+    "get_real_estate_investment_analysis": _passthru("get_real_estate_investment_analysis",
+                                               _A("monthly_rent", float),
+                                               _A("property_value", float, optional=True),
+                                               _A("property_name", str, optional=True),
+                                               _A("monthly_operating_expenses", float, optional=True),
+                                               _A("operating_expense_ratio", float, 0.40),
+                                               _A("mortgage_balance", float, optional=True),
+                                               _A("monthly_mortgage_payment", float, optional=True),
+                                               _A("mortgage_rate", float, optional=True),
+                                               _A("mortgage_years_remaining", float, optional=True),
+                                               _A("purchase_price", float, optional=True),
+                                               _A("cash_invested", float, optional=True),
+                                               _A("annual_appreciation", float, 0.03)),
     "get_vault_documents":           _passthru("get_vault_documents"),
+    "refresh_account_aggregation":   _passthru("refresh_account_aggregation",
+                                               _A("institution", str, optional=True),
+                                               _A("connection_id", str, optional=True)),
     "get_all_goals_funding_status":  _passthru("get_all_goals_funding_status"),
     "get_lifetime_cash_flow_projection": _passthru("get_lifetime_cash_flow_projection",
                                                _A("start_year", int, optional=True),

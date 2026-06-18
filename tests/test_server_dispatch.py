@@ -30,6 +30,8 @@ MINIMAL_ARGS = {
     "get_charitable_giving_strategy": {"annual_giving": "20000"},
     "get_state_tax_estimate": {"state": "CA", "amount": "100000"},
     "get_healthcare_cost_projection": {"current_age": "60"},
+    "get_long_term_care_analysis": {"current_age": "60"},
+    "get_real_estate_investment_analysis": {"monthly_rent": "2500"},
     "get_income_sources_timeline": {"birth_year": "1962"},
     "model_life_event_scenario": {"event": "market_crash"},
     "get_withdrawal_sequencing_strategy": {"annual_need": "80000"},

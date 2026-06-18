@@ -176,6 +176,8 @@ from .planning import (
     get_healthcare_cost_projection,
     get_hsa_optimization,
     get_estate_liquidity_analysis,
+    get_long_term_care_analysis,
+    get_real_estate_investment_analysis,
 )
 
 from .vault import (
@@ -185,6 +187,10 @@ from .vault import (
 from .plan_api import (
     get_all_goals_funding_status,
     get_lifetime_cash_flow_projection,
+)
+
+from .aggregation_api import (
+    refresh_account_aggregation,
 )
 
 from .explore import (
@@ -308,12 +314,15 @@ __all__ = [
     "get_mortgage_amortization_schedule", "get_mortgage_refinance_analysis",
     "get_mortgage_payoff_vs_invest",
     "get_healthcare_cost_projection", "get_hsa_optimization",
-    "get_estate_liquidity_analysis",
+    "get_estate_liquidity_analysis", "get_long_term_care_analysis",
+    "get_real_estate_investment_analysis",
     # vault
     "get_vault_documents",
     # plan_api (internal-api BFF)
     "get_all_goals_funding_status",
     "get_lifetime_cash_flow_projection",
+    # aggregation_api (aggapi — refresh control)
+    "refresh_account_aggregation",
     # explore
     "explore_emoney_site",
     # transactions (write)

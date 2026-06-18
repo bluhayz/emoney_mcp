@@ -15,6 +15,13 @@ Two backends are in play:
    (There is no standalone ApplyRule on SNB — application is folded into
    Create/UpdateRule via the TransactionID field.)
 
+   **ID wrapping (verified live 2026-06-18, #121):** ``ruleID`` and ``categoryID``
+   are NOT bare strings — they are WCF DataContract complex types serialized as
+   ``{"extensionData": {}, "value": "123"}``. The GET response wraps them, and
+   Create/UpdateRule *require* the same ``{"value": ...}`` shape on input: a flat
+   string yields ``HTTP 400 — could not be converted to DataBankTransactnRuleId``.
+   Use ``_unwrap_id`` when reading and ``_wrap_id`` when writing.
+
 2. **Legacy ``/ema/CS/Spending/*``** (ASP.NET anti-forgery POST via
    ``_csrf_post``) — the original reverse-engineered path. This backend is now
    served by the "Nexus" subsystem which returns ``IsNexusAvailable:false`` /
@@ -91,6 +98,28 @@ async def _snb_get(http_session, action: str) -> dict:
 # into the Emoney write request.
 _ALLOWED_SPLIT_KEYS = {"TransactionSplitID", "CategoryID", "SplitAmount", "UserDescription"}
 _ALLOWED_SPLIT_SUBKEYS = {"Value", "IsValid"}
+
+
+def _unwrap_id(v):
+    """Unwrap an SNB ID field.
+
+    ``GetBankTransactionRules`` serializes ``ruleID``/``categoryID`` as a WCF
+    DataContract complex type ``{"extensionData": {}, "value": "123"}`` — not a
+    bare string. Return the inner ``value`` (tolerating an already-flat value).
+    """
+    if isinstance(v, dict):
+        return v.get("value")
+    return v
+
+
+def _wrap_id(v):
+    """Wrap a scalar ID as the SNB ``DataBankTransactnRuleId`` shape.
+
+    ``CreateRule``/``UpdateRule`` reject a flat string for ``ruleID``/``categoryID``
+    (HTTP 400: "could not be converted to ...DataBankTransactnRuleId"); they
+    require ``{"value": "123"}``. Verified live 2026-06-18 (#121).
+    """
+    return {"value": str(v) if v is not None else None}
 
 
 def _maybe_raw(out: dict, raw) -> dict:
@@ -329,9 +358,9 @@ async def get_transaction_rules(http_session) -> dict:
         if not isinstance(rule, dict):
             continue
         rules.append({
-            "rule_id":              rule.get("ruleID"),
+            "rule_id":              _unwrap_id(rule.get("ruleID")),
             "description_contains": rule.get("descriptionContains"),
-            "category_id":          rule.get("categoryID"),
+            "category_id":          _unwrap_id(rule.get("categoryID")),
             "user_description":     rule.get("userDescription"),
             "min_amount":           rule.get("minAmount"),
             "max_amount":           rule.get("maxAmount"),
@@ -365,8 +394,8 @@ async def add_transaction_rule(
     Nexus endpoint is retired and returns ``IsNexusAvailable:false``.)
     """
     rule_obj: dict = {
-        "ruleID": None,
-        "categoryID": str(category_id),
+        "ruleID": _wrap_id(None),
+        "categoryID": _wrap_id(category_id),
         "descriptionContains": description_contains,
         "userDescription": user_description or description_contains,
         "minAmount": min_amount,
@@ -418,8 +447,8 @@ async def update_transaction_rule(
 
     # Merge requested changes over the existing rule and send the whole object.
     rule_obj = {
-        "ruleID": str(rule_id),
-        "categoryID": str(category_id) if category_id is not None else str(existing["category_id"] or ""),
+        "ruleID": _wrap_id(rule_id),
+        "categoryID": _wrap_id(category_id if category_id is not None else existing["category_id"]),
         "descriptionContains": description_contains if description_contains is not None else (existing["description_contains"] or ""),
         "userDescription": user_description if user_description is not None else (existing["user_description"] or ""),
         "minAmount": min_amount if min_amount is not None else existing.get("min_amount"),

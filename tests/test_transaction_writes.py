@@ -91,35 +91,62 @@ class TestCsrfPostErrorSurfacing:
 # ===========================================================================
 
 class TestUpdateTransaction:
+    """update_transaction POSTs JSON to the SNB UpdateTransaction endpoint,
+    merging the requested change over the transaction's CURRENT values so an
+    unspecified field is never wiped (mirrors the live web UI)."""
+
+    _TXNS = [{"id": "txn-123", "categoryId": "7", "userDescription": "Old desc", "notes": None}]
+
+    def _patch_raw(self):
+        return patch("emoney_mcp.scrapers.spending._fetch_snb_raw",
+                     new=AsyncMock(return_value=(True, self._TXNS, {})))
 
     @pytest.mark.asyncio
-    async def test_update_category_success(self):
+    async def test_update_category_preserves_description(self):
         session = make_mock_http_session()
-        with _make_csrf_mock({"Success": True}):
+        captured = {}
+
+        async def snb(http_session, action, payload):
+            captured["action"] = action
+            captured["payload"] = payload
+            return {"ok": True}
+
+        with patch("emoney_mcp.scrapers.transactions._snb_post", side_effect=snb), self._patch_raw():
             from emoney_mcp.scrapers.transactions import update_transaction
             result = await update_transaction(session, transaction_id="txn-123", category_id="42")
         assert result["success"] is True
         assert result["transaction_id"] == "txn-123"
         assert result["updated"]["category_id"] == "42"
+        # merge: category changed, description preserved (not nulled)
+        assert captured["action"] == "UpdateTransaction"
+        assert captured["payload"]["transactionId"] == "txn-123"
+        assert captured["payload"]["categoryId"] == "42"
+        assert captured["payload"]["userDescription"] == "Old desc"
 
     @pytest.mark.asyncio
-    async def test_update_description_success(self):
+    async def test_update_description_preserves_category(self):
         session = make_mock_http_session()
-        with _make_csrf_mock({"Success": True}):
+        captured = {}
+
+        async def snb(http_session, action, payload):
+            captured["payload"] = payload
+            return {"ok": True}
+
+        with patch("emoney_mcp.scrapers.transactions._snb_post", side_effect=snb), self._patch_raw():
             from emoney_mcp.scrapers.transactions import update_transaction
-            result = await update_transaction(session, transaction_id="txn-456", description="Coffee run")
-        assert result["success"] is True
+            result = await update_transaction(session, transaction_id="txn-123", description="Coffee run")
         assert result["updated"]["description"] == "Coffee run"
+        assert captured["payload"]["userDescription"] == "Coffee run"
+        assert captured["payload"]["categoryId"] == "7"  # preserved from current
 
     @pytest.mark.asyncio
     async def test_update_both_fields(self):
         session = make_mock_http_session()
-        with _make_csrf_mock({"Success": True}):
+        with patch("emoney_mcp.scrapers.transactions._snb_post",
+                   new=AsyncMock(return_value={"ok": True})), self._patch_raw():
             from emoney_mcp.scrapers.transactions import update_transaction
             result = await update_transaction(
-                session, transaction_id="txn-789",
-                category_id="10", description="Lunch"
-            )
+                session, transaction_id="txn-123", category_id="10", description="Lunch")
         assert result["success"] is True
         assert "category_id" in result["updated"]
         assert "description" in result["updated"]
@@ -132,9 +159,10 @@ class TestUpdateTransaction:
         assert "error" in result
 
     @pytest.mark.asyncio
-    async def test_csrf_error_propagates(self):
+    async def test_snb_error_propagates(self):
         session = make_mock_http_session()
-        with _make_csrf_mock({"error": "UpdateTransaction returned HTTP 403", "response_body": "Forbidden"}):
+        with patch("emoney_mcp.scrapers.transactions._snb_post",
+                   new=AsyncMock(return_value={"error": "UpdateTransaction returned HTTP 403"})), self._patch_raw():
             from emoney_mcp.scrapers.transactions import update_transaction
             result = await update_transaction(session, transaction_id="txn-123", category_id="5")
         assert "error" in result
@@ -257,160 +285,102 @@ class TestUpdateTransactionSplits:
 # get_transaction_rules  (Bug 2 fix)
 # ===========================================================================
 
-# Canonical wrapped-object rule shape (Emoney's normal format)
-_RULE_WRAPPED = {
-    "1": {
-        "RuleID":             {"Value": "1", "IsValid": True},
-        "DescriptionContains": "COSTCO",
-        "CategoryID":          {"Value": "12", "IsValid": True},
-        "UserDescription":     "Costco → Groceries",
-        "MinAmount":           None,
-        "MaxAmount":           None,
-        "StartDay":            None,
-        "EndDay":              None,
-    }
-}
-
-# List-shaped response (alternate format the API may return)
-_RULE_LIST = [
+# SNB GetBankTransactionRules shape — flat camelCase objects (the live format)
+_SNB_RULES = [
     {
-        "RuleID":             {"Value": "42", "IsValid": True},
-        "DescriptionContains": "AMAZON",
-        "CategoryID":          {"Value": "5", "IsValid": True},
-        "UserDescription":     "Amazon → Shopping",
-        "MinAmount":           10.0,
-        "MaxAmount":           None,
-        "StartDay":            None,
-        "EndDay":              None,
-    }
-]
-
-# Scalar (plain) rule shape — no wrapper objects
-_RULE_SCALAR = [
+        "ruleID":             "42",
+        "categoryID":         "5",
+        "descriptionContains": "AMAZON",
+        "userDescription":    "Amazon → Shopping",
+        "minAmount":          10.0,
+        "maxAmount":          None,
+        "startDay":           None,
+        "endDay":             None,
+        "extensionData":      None,
+    },
     {
-        "RuleID":             "99",
-        "DescriptionContains": "STARBUCKS",
-        "CategoryID":          "3",
-        "UserDescription":     "Starbucks → Coffee",
-        "MinAmount":           None,
-        "MaxAmount":           None,
-        "StartDay":            None,
-        "EndDay":              None,
-    }
+        "ruleID":             "99",
+        "categoryID":         "3",
+        "descriptionContains": "STARBUCKS",
+        "userDescription":    "Starbucks → Coffee",
+        "minAmount":          None,
+        "maxAmount":          None,
+        "startDay":           None,
+        "endDay":             None,
+        "extensionData":      None,
+    },
 ]
 
 
 class TestGetTransactionRules:
+    """get_transaction_rules reads the SNB GetBankTransactionRules endpoint
+    (the dead legacy /ema/CS/Spending/GetRules path is no longer used)."""
 
-    @pytest.mark.asyncio
-    async def test_dict_response_parsed(self):
-        """API returns a dict keyed by rule_id — should be normalised to a list."""
-        session = make_mock_http_session()
-        with _make_csrf_mock(_RULE_WRAPPED):
-            from emoney_mcp.scrapers.transactions import get_transaction_rules
-            result = await get_transaction_rules(session)
-        assert result["count"] == 1
-        rule = result["rules"][0]
-        assert rule["rule_id"] == "1"
-        assert rule["description_contains"] == "COSTCO"
-        assert rule["category_id"] == "12"
-        assert rule["user_description"] == "Costco → Groceries"
+    @staticmethod
+    def _snb_get_mock(data):
+        return patch("emoney_mcp.scrapers.transactions._snb_get",
+                     new=AsyncMock(return_value={"ok": True, "data": data}))
 
     @pytest.mark.asyncio
     async def test_list_response_parsed(self):
-        """API may return a list — should be handled without crashing."""
         session = make_mock_http_session()
-        with _make_csrf_mock(_RULE_LIST):
+        with self._snb_get_mock(_SNB_RULES):
             from emoney_mcp.scrapers.transactions import get_transaction_rules
             result = await get_transaction_rules(session)
-        assert result["count"] == 1
+        assert result["count"] == 2
         rule = result["rules"][0]
         assert rule["rule_id"] == "42"
         assert rule["description_contains"] == "AMAZON"
         assert rule["category_id"] == "5"
+        assert rule["user_description"] == "Amazon → Shopping"
+        assert rule["min_amount"] == 10.0
 
     @pytest.mark.asyncio
-    async def test_scalar_rule_id_and_category_id(self):
-        """Plain scalar RuleID/CategoryID (not wrapped objects) must be extracted correctly."""
+    async def test_wrapped_rules_key_tolerated(self):
+        """Tolerate a {Rules:[...]} wrapper as well as a bare list."""
         session = make_mock_http_session()
-        with _make_csrf_mock(_RULE_SCALAR):
+        with self._snb_get_mock({"Rules": _SNB_RULES}):
             from emoney_mcp.scrapers.transactions import get_transaction_rules
             result = await get_transaction_rules(session)
-        assert result["count"] == 1
-        rule = result["rules"][0]
-        assert rule["rule_id"] == "99"
-        assert rule["category_id"] == "3"
+        assert result["count"] == 2
 
     @pytest.mark.asyncio
-    async def test_returns_empty_list_on_no_rules(self):
+    async def test_empty_list(self):
         session = make_mock_http_session()
-        with _make_csrf_mock({}):
-            from emoney_mcp.scrapers.transactions import get_transaction_rules
-            result = await get_transaction_rules(session)
-        assert result["count"] == 0
-        assert result["rules"] == []
-
-    @pytest.mark.asyncio
-    async def test_csrf_error_propagates(self):
-        session = make_mock_http_session()
-        with _make_csrf_mock({"error": "GetRules returned HTTP 500", "response_body": "<html>Error</html>"}):
-            from emoney_mcp.scrapers.transactions import get_transaction_rules
-            result = await get_transaction_rules(session)
-        assert "error" in result
-
-    @pytest.mark.asyncio
-    async def test_empty_rules_500_with_nexus_available_returns_empty(self):
-        """No-rules 500 carries `"IsNexusAvailable":true` + generic message — it must
-        be treated as an empty rule set, not flagged as a maintenance error (#19)."""
-        body = ('{"IsNexusAvailable":true,"FaultDetail":null,"FaultDetailType":null,'
-                '"ErrorUrl":null,"RedirectUrl":null,"Success":false,'
-                '"Message":"An unexpected error has occured."}')
-        session = make_mock_http_session()
-        with _make_csrf_mock({"error": "GetRules returned HTTP 500", "response_body": body}):
+        with self._snb_get_mock([]):
             from emoney_mcp.scrapers.transactions import get_transaction_rules
             result = await get_transaction_rules(session)
         assert result["count"] == 0
         assert result["rules"] == []
 
     @pytest.mark.asyncio
-    async def test_nexus_unavailable_500_surfaces_as_error(self):
-        """A true maintenance 500 (`"IsNexusAvailable":false`) must still surface as an error."""
-        body = ('{"IsNexusAvailable":false,"Message":"Your data is unavailable due to maintenance"}')
+    async def test_error_propagates(self):
         session = make_mock_http_session()
-        with _make_csrf_mock({"error": "GetRules returned HTTP 500", "response_body": body}):
+        with patch("emoney_mcp.scrapers.transactions._snb_get",
+                   new=AsyncMock(return_value={"error": "GetBankTransactionRules returned HTTP 401"})):
             from emoney_mcp.scrapers.transactions import get_transaction_rules
             result = await get_transaction_rules(session)
         assert "error" in result
 
     @pytest.mark.asyncio
-    async def test_unexpected_type_returns_error(self):
-        """A non-list, non-dict response (e.g. raw string) should return an error dict."""
+    async def test_reads_snb_endpoint_not_legacy(self):
+        """Must hit the SNB GetBankTransactionRules action, not legacy GetRules."""
         session = make_mock_http_session()
-        with _make_csrf_mock("unexpected string"):
-            from emoney_mcp.scrapers.transactions import get_transaction_rules
-            result = await get_transaction_rules(session)
-        assert "error" in result
+        captured = {}
 
-    @pytest.mark.asyncio
-    async def test_empty_payload_sent(self):
-        """GetRules POST must send an empty data dict — JS uses data:{} and filter='' triggers 500."""
-        session = make_mock_http_session()
-        captured_data = {}
+        async def cap(http_session, action):
+            captured["action"] = action
+            return {"ok": True, "data": []}
 
-        async def capture_csrf_post(http_session, path, data):
-            captured_data.update(data)
-            return {}
-
-        with patch("emoney_mcp.scrapers.transactions._csrf_post", side_effect=capture_csrf_post):
+        with patch("emoney_mcp.scrapers.transactions._snb_get", side_effect=cap):
             from emoney_mcp.scrapers.transactions import get_transaction_rules
             await get_transaction_rules(session)
-
-        assert "filter" not in captured_data, "GetRules must NOT send filter — JS sends data:{} and filter='' causes 500"
+        assert captured["action"] == "GetBankTransactionRules"
 
     @pytest.mark.asyncio
     async def test_all_rule_fields_present(self):
         session = make_mock_http_session()
-        with _make_csrf_mock(_RULE_LIST):
+        with self._snb_get_mock(_SNB_RULES):
             from emoney_mcp.scrapers.transactions import get_transaction_rules
             result = await get_transaction_rules(session)
         rule = result["rules"][0]

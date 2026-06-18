@@ -1,35 +1,88 @@
 """
 Transaction write operations and rules engine.
 
-All write endpoints live on the main emaplan.com host under /ema/CS/Spending/
-and require the ASP.NET anti-forgery token sent as __RequestVerificationToken
-in the POST body (same pattern as the jQuery AJAX calls in the browser).
+Two backends are in play:
 
-Read operations (GetRules, GetAllBankTransactionSplits) also use POST with
-the token in the body to stay consistent.
+1. **SNB API** (``api.emoneyadvisor.com/snb-api/api/values/*``) — the MODERN
+   path the live web UI uses. JSON body, Bearer JWT + ``apikey`` auth (same
+   credentials as the SNB *read* tools, via ``_get_snb_credentials``). Verified
+   live (network capture of the official portal, 2026-06-18). Endpoints:
+     UpdateTransaction          {transactionId, categoryId, userDescription, notes}
+     GetBankTransactionRules    (GET) → [{ruleID, categoryID, descriptionContains,
+                                          userDescription, minAmount, maxAmount,
+                                          startDay, endDay, extensionData}, ...]
+     CreateRule / UpdateRule    {Rule:{...ruleObj}, TransactionID}   (POST)
+   (There is no standalone ApplyRule on SNB — application is folded into
+   Create/UpdateRule via the TransactionID field.)
 
-Payload shapes (reverse-engineered from Capstone.Spending.Transactions.js):
-  UpdateTransaction          {TransactionID:{Value}, UserDescription, CategoryID:{Value}}
+2. **Legacy ``/ema/CS/Spending/*``** (ASP.NET anti-forgery POST via
+   ``_csrf_post``) — the original reverse-engineered path. This backend is now
+   served by the "Nexus" subsystem which returns ``IsNexusAvailable:false`` /
+   maintenance for writes, i.e. it is effectively dead. Tools still on this path
+   (splits, hide, rule delete) are pending migration to the SNB API.
+
+Legacy payload shapes (kept for the not-yet-migrated tools):
   UpdateTransactionHiddenStatus  {transactionID:{Value}, isHidden}
   GetAllBankTransactionSplits    {transactionID:{Value}}
   UpdateTransactionSplits    {transactionSplits:[{TransactionSplitID,CategoryID:{Value},SplitAmount,UserDescription},...]}
-  AddRule / UpdateRule       {rule:{...ruleObj}, transactionID}
-  ApplyRule                  {ruleID, transactionID}
-  GetTransactionsByRuleID    {ruleID, filter}
-  GetRules                   {} (empty — just CSRF token)
-
-Rule object shape:
-  {RuleID:{Value,IsValid}, DescriptionContains, MinAmount, MaxAmount,
-   StartDay, EndDay, UserDescription, CategoryID:{Value,IsValid}}
 """
 
 import logging
 import os
 
-from ._helpers import BASE_URL
+from ._helpers import BASE_URL, _SNB_API
 
 _SPENDING = f"{BASE_URL}/ema/CS/Spending"
 _log = logging.getLogger("emoney_mcp.scrapers.transactions")
+
+
+async def _snb_post(http_session, action: str, payload: dict) -> dict:
+    """POST JSON to the SNB API (``/snb-api/api/values/<action>``).
+
+    The modern write path — Bearer JWT + ``apikey`` (the same credentials the
+    SNB read tools scrape). Returns ``{"ok": True, ...}`` on success, or an
+    ``{"error": ...}`` dict (never raises, per the scraper convention).
+    """
+    # Imported lazily to avoid a circular import at module load (spending imports
+    # nothing from here, but keep the dependency one-directional and explicit).
+    from .spending import _get_snb_credentials, _snb_headers
+    jwt_token, api_key = await _get_snb_credentials(http_session)
+    if not jwt_token:
+        return {"error": f"Could not retrieve SNB credentials for {action} — "
+                         "session may be stale (try sync_chrome_session)."}
+    http = await http_session.get_http()
+    headers = {**_snb_headers(jwt_token, api_key), "Content-Type": "application/json"}
+    resp = await http.post(f"{_SNB_API}/api/values/{action}", json=payload,
+                           headers=headers, timeout=20)
+    if resp.status_code not in (200, 201, 204):
+        try:
+            body_snippet = resp.text[:400]
+        except Exception:
+            body_snippet = ""
+        return {"error": f"{action} returned HTTP {resp.status_code}",
+                "response_body": body_snippet}
+    out: dict = {"ok": True}
+    if resp.status_code != 204 and "json" in resp.headers.get("content-type", ""):
+        try:
+            out["data"] = resp.json()
+        except Exception:
+            pass
+    return out
+
+
+async def _snb_get(http_session, action: str) -> dict:
+    """GET JSON from the SNB API (``/snb-api/api/values/<action>``)."""
+    from .spending import _get_snb_credentials, _snb_headers
+    jwt_token, api_key = await _get_snb_credentials(http_session)
+    if not jwt_token:
+        return {"error": f"Could not retrieve SNB credentials for {action} — "
+                         "session may be stale (try sync_chrome_session)."}
+    http = await http_session.get_http()
+    resp = await http.get(f"{_SNB_API}/api/values/{action}",
+                          headers=_snb_headers(jwt_token, api_key), timeout=20)
+    if resp.status_code != 200 or "json" not in resp.headers.get("content-type", ""):
+        return {"error": f"{action} returned HTTP {resp.status_code}"}
+    return {"ok": True, "data": resp.json()}
 
 # Allowlist of fields accepted per split when building the UpdateTransactionSplits
 # form body — so caller-supplied dict keys can't smuggle arbitrary form fields
@@ -97,18 +150,35 @@ async def update_transaction(
     if category_id is None and description is None:
         return {"error": "Provide at least one of category_id or description."}
 
-    data: dict = {"TransactionID[Value]": transaction_id}
-    if description is not None:
-        data["UserDescription"] = description
-    if category_id is not None:
-        data["CategoryID[Value]"] = str(category_id)
+    # The SNB UpdateTransaction replaces the whole object, so the live web UI
+    # always sends the full {transactionId, categoryId, userDescription, notes}.
+    # Look up the transaction's CURRENT values from the SNB read cache and merge
+    # the requested change over them — otherwise a category-only update would
+    # null out the user description (and vice-versa).
+    from .spending import _fetch_snb_raw
+    cur_cat = cur_desc = cur_notes = None
+    ok, txns, _ = await _fetch_snb_raw(http_session)
+    if ok:
+        match = next((t for t in txns if str(t.get("id")) == str(transaction_id)), None)
+        if match:
+            cur_cat = match.get("categoryId")
+            cur_desc = match.get("userDescription")
+            cur_notes = match.get("notes")
 
-    result = await _csrf_post(http_session, "UpdateTransaction", data)
-    if isinstance(result, dict) and "error" in result:
+    payload = {
+        "transactionId": str(transaction_id),
+        "categoryId": str(category_id) if category_id is not None
+                      else (str(cur_cat) if cur_cat is not None else None),
+        "userDescription": description if description is not None else cur_desc,
+        "notes": cur_notes,
+    }
+
+    result = await _snb_post(http_session, "UpdateTransaction", payload)
+    if "error" in result:
         return result
     return {
         "success": True,
-        "transaction_id": transaction_id,
+        "transaction_id": str(transaction_id),
         "updated": {k: v for k, v in
                     [("category_id", category_id), ("description", description)]
                     if v is not None},
@@ -234,52 +304,37 @@ async def get_transaction_rules(http_session) -> dict:
 
     Each rule has: rule_id, description_contains, category_id, user_description,
     min_amount, max_amount, start_day, end_day.
+
+    Reads the SNB API (``GetBankTransactionRules``) — the live web UI's source.
+    (The legacy ``/ema/CS/Spending/GetRules`` Nexus endpoint is dead and reports
+    zero rules even when rules exist.)
     """
-    # JS sends data:{} — empty payload (just the CSRF token from _csrf_post)
-    result = await _csrf_post(http_session, "GetRules", {})
-    if isinstance(result, dict) and "error" in result:
-        body = result.get("response_body", "") or ""
-        body_lower = body.lower()
-        # A Nexus maintenance-window 500 (IsNexusAvailable:false / "unavailable due
-        # to maintenance") must surface as a real error — not be mistaken for
-        # "no rules configured" by the empty-body heuristic below.
-        # NOTE: match IsNexusAvailable *false* specifically — the empty-rules 500
-        # response also carries `"IsNexusAvailable":true`, so a bare substring
-        # check on the field name wrongly flags the no-rules case as maintenance.
-        if '"isnexusavailable":false' in body_lower.replace(" ", "") or "maintenance" in body_lower:
-            return result
-        # Emoney genuinely returns HTTP 500 with an empty/generic body when no
-        # rules exist — treat that (and only that) as an empty rule set.
-        if "500" in result.get("error", "") and (
-            "unexpected error" in body_lower or not body
-        ):
-            return {"rules": [], "count": 0, "note": "No categorization rules configured."}
+    result = await _snb_get(http_session, "GetBankTransactionRules")
+    if "error" in result:
         return result
 
-    # API may return a list [{...}, ...] OR a dict {rule_id: {...}, ...}
-    if isinstance(result, list):
-        items = result
-    elif isinstance(result, dict):
-        items = list(result.values())
+    data = result.get("data")
+    # SNB returns a bare list; tolerate a wrapped {Rules:[...]} just in case.
+    if isinstance(data, list):
+        items = data
+    elif isinstance(data, dict):
+        items = data.get("Rules") or data.get("rules") or list(data.values())
     else:
-        return {"error": f"Unexpected response type from GetRules: {type(result).__name__}"}
+        items = []
 
     rules = []
     for rule in items:
         if not isinstance(rule, dict):
             continue
-        # RuleID and CategoryID may be wrapped {Value, IsValid} or plain scalars
-        rule_id_raw = rule.get("RuleID")
-        cat_id_raw  = rule.get("CategoryID")
         rules.append({
-            "rule_id":              rule_id_raw.get("Value") if isinstance(rule_id_raw, dict) else rule_id_raw,
-            "description_contains": rule.get("DescriptionContains"),
-            "category_id":          cat_id_raw.get("Value")  if isinstance(cat_id_raw,  dict) else cat_id_raw,
-            "user_description":     rule.get("UserDescription"),
-            "min_amount":           rule.get("MinAmount"),
-            "max_amount":           rule.get("MaxAmount"),
-            "start_day":            rule.get("StartDay"),
-            "end_day":              rule.get("EndDay"),
+            "rule_id":              rule.get("ruleID"),
+            "description_contains": rule.get("descriptionContains"),
+            "category_id":          rule.get("categoryID"),
+            "user_description":     rule.get("userDescription"),
+            "min_amount":           rule.get("minAmount"),
+            "max_amount":           rule.get("maxAmount"),
+            "start_day":            rule.get("startDay"),
+            "end_day":              rule.get("endDay"),
         })
     return {"rules": rules, "count": len(rules)}
 

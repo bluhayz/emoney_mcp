@@ -22,18 +22,23 @@ Two backends are in play:
    string yields ``HTTP 400 — could not be converted to DataBankTransactnRuleId``.
    Use ``_unwrap_id`` when reading and ``_wrap_id`` when writing.
 
-2. **Legacy ``/ema/CS/Spending/*``** (ASP.NET anti-forgery POST via
-   ``_csrf_post``) — the original reverse-engineered path. This backend is now
-   served by the "Nexus" subsystem which returns ``IsNexusAvailable:false`` /
-   maintenance for writes, i.e. it is *retired*, not temporarily down — retrying
-   never succeeds. Tools still on this path (apply rule, delete rule, hide,
-   splits) are pending migration to the SNB API; their SNB endpoints have not
-   yet been captured, so they remain here until they are.
+   Migrated to SNB and verified live 2026-06-18 (#121):
+     hide_transaction       → SNB ``ToggleTransactionVisibility`` {hideTransaction, transactionId}
+     get_transaction_splits → SNB ``GetBankTransactionSplits?transactionID=<id>``
+     delete_transaction_rule→ SNB has NO single delete; the UI bulk-replaces the
+                              whole collection via ``POST /ema/CS/Spending/SetRules``
+                              {rules:[{RuleID:{Value},CategoryID:{Value},...}]} (this
+                              one legacy CS/Spending route is LIVE, not Nexus-dead),
+                              CSRF token in the ``__RequestVerificationToken`` header.
 
-Legacy payload shapes (kept for the not-yet-migrated tools):
-  UpdateTransactionHiddenStatus  {transactionID:{Value}, isHidden}
-  GetAllBankTransactionSplits    {transactionID:{Value}}
-  UpdateTransactionSplits    {transactionSplits:[{TransactionSplitID,CategoryID:{Value},SplitAmount,UserDescription},...]}
+2. **Legacy ``/ema/CS/Spending/*``** (ASP.NET anti-forgery POST via
+   ``_csrf_post``) — the original reverse-engineered path, mostly served by the
+   retired "Nexus" subsystem (``IsNexusAvailable:false`` for writes — permanent,
+   not temporary). ``SetRules`` is the exception: it is the live persist path for
+   rule changes (see ``_csrf_post_json``). Still on the dead legacy path / pending
+   migration: ``apply_transaction_rule`` and ``update_transaction_splits`` — the
+   SNB ``UpdateTransactionSplits`` (POST) endpoint exists but its body was not yet
+   captured.
 """
 
 import logging
@@ -105,21 +110,23 @@ def _unwrap_id(v):
 
     ``GetBankTransactionRules`` serializes ``ruleID``/``categoryID`` as a WCF
     DataContract complex type ``{"extensionData": {}, "value": "123"}`` — not a
-    bare string. Return the inner ``value`` (tolerating an already-flat value).
+    bare string. Return the inner value (tolerating ``Value``/``value`` casing
+    and an already-flat value).
     """
     if isinstance(v, dict):
-        return v.get("value")
+        return v.get("value", v.get("Value"))
     return v
 
 
 def _wrap_id(v):
     """Wrap a scalar ID as the SNB ``DataBankTransactnRuleId`` shape.
 
-    ``CreateRule``/``UpdateRule`` reject a flat string for ``ruleID``/``categoryID``
-    (HTTP 400: "could not be converted to ...DataBankTransactnRuleId"); they
-    require ``{"value": "123"}``. Verified live 2026-06-18 (#121).
+    The rule/split write endpoints reject a flat string for ``RuleID``/
+    ``CategoryID`` (HTTP 400/500); they require ``{"Value": "123"}`` — the exact
+    shape the web UI sends. Verified live 2026-06-18 (#121). .NET binds the keys
+    case-insensitively, so PascalCase ``Value`` matches the captured request.
     """
-    return {"value": str(v) if v is not None else None}
+    return {"Value": str(v) if v is not None else None}
 
 
 def _maybe_raw(out: dict, raw) -> dict:
@@ -226,12 +233,17 @@ async def hide_transaction(
 
     transaction_id — the SNB transaction ID
     hidden         — True to hide, False to un-hide
+
+    Posts to the SNB API (``ToggleTransactionVisibility`` —
+    ``{hideTransaction, transactionId}``), the live web UI's path, verified live
+    in both directions 2026-06-18 (#121). (The legacy
+    ``/ema/CS/Spending/UpdateTransactionHiddenStatus`` Nexus endpoint is retired.)
     """
-    result = await _csrf_post(http_session, "UpdateTransactionHiddenStatus", {
-        "transactionID[Value]": transaction_id,
-        "isHidden": "true" if hidden else "false",
+    result = await _snb_post(http_session, "ToggleTransactionVisibility", {
+        "hideTransaction": bool(hidden),
+        "transactionId": str(transaction_id),
     })
-    if isinstance(result, dict) and "error" in result:
+    if "error" in result:
         return result
     return {
         "success": True,
@@ -246,32 +258,45 @@ async def get_transaction_splits(http_session, transaction_id: str) -> dict:
     the total amount and whether the transaction is fully allocated.
 
     transaction_id — the SNB transaction ID
-    """
-    result = await _csrf_post(http_session, "GetAllBankTransactionSplits", {
-        "transactionID[Value]": transaction_id,
-    })
-    if isinstance(result, dict) and "error" in result:
-        return result
 
-    # API returns a list of split objects directly; occasionally wrapped in a dict
+    Reads the SNB API (``GetBankTransactionSplits?transactionID=<id>``), the live
+    web UI's source (verified live 2026-06-18, #121). Each split is a WCF object
+    with wrapped ``categoryID``/``transactionID`` (``{value}``); a non-split
+    transaction returns a single element covering the full amount. (The legacy
+    ``/ema/CS/Spending/GetAllBankTransactionSplits`` Nexus endpoint is retired.)
+    """
+    from .spending import _get_snb_credentials, _snb_headers
+    jwt_token, api_key = await _get_snb_credentials(http_session)
+    if not jwt_token:
+        return {"error": "Could not retrieve SNB credentials for GetBankTransactionSplits — "
+                         "session may be stale (try sync_chrome_session)."}
+    http = await http_session.get_http()
+    resp = await http.get(
+        f"{_SNB_API}/api/values/GetBankTransactionSplits",
+        params={"transactionID": str(transaction_id)},
+        headers=_snb_headers(jwt_token, api_key), timeout=20,
+    )
+    if resp.status_code != 200 or "json" not in resp.headers.get("content-type", ""):
+        return {"error": f"GetBankTransactionSplits returned HTTP {resp.status_code}"}
+    data = resp.json()
     items: list = (
-        result if isinstance(result, list)
-        else result.get("Splits") or result.get("splits") or []
-        if isinstance(result, dict) else []
+        data if isinstance(data, list)
+        else (data.get("splits") or data.get("Splits") or []) if isinstance(data, dict)
+        else []
     )
 
     splits = []
     total = 0.0
     for item in items:
-        cat_raw = item.get("CategoryID")
-        cat_id = cat_raw.get("Value") if isinstance(cat_raw, dict) else cat_raw
-        amount = float(item.get("SplitAmount") or 0)
+        cat_id = _unwrap_id(item.get("categoryID") or item.get("CategoryID"))
+        amount = float(item.get("splitAmount") or item.get("SplitAmount") or 0)
         total += amount
         splits.append({
             "category_id": cat_id,
-            "description": item.get("UserDescription") or item.get("CleanDescription") or item.get("Description"),
-            "original_description": item.get("Description"),
-            "amount": amount,
+            "description": (item.get("userDescription") or item.get("cleanDescription")
+                           or item.get("description") or item.get("UserDescription")),
+            "original_description": item.get("description") or item.get("Description"),
+            "amount": round(amount, 2),
         })
 
     return {
@@ -298,6 +323,14 @@ async def update_transaction_splits(
         "UserDescription": "optional label"
       }
     Amounts must sum to the transaction total. Negative amounts for expenses.
+
+    NOTE (#121): this is the LAST write still on the dead legacy
+    ``/ema/CS/Spending/UpdateTransactionSplits`` (Nexus) path. The SNB endpoint
+    ``UpdateTransactionSplits`` (POST) is confirmed to exist, but its request
+    body shape has not yet been captured (writing splits in the live UI mutates a
+    real transaction, so capture was deferred). Until migrated, this tool may
+    fail with a Nexus maintenance error. ``get_transaction_splits`` is already on
+    SNB; its GET shape (wrapped ``{value}`` ids) is the likely body template.
     """
     # Emoney expects a flat form-encoded representation of the array.
     # jQuery serializes [{...},{...}] as transactionSplits[0][Field]=..., etc.
@@ -389,23 +422,23 @@ async def add_transaction_rule(
     min_amount / max_amount — optional amount range filter
 
     Posts to the SNB API (``CreateRule`` — ``{Rule:{...}, TransactionID}``), the
-    live web UI's path. The ``Rule`` object mirrors the flat camelCase shape
-    ``GetBankTransactionRules`` returns. (The legacy ``/ema/CS/Spending/AddRule``
-    Nexus endpoint is retired and returns ``IsNexusAvailable:false``.)
+    live web UI's path, verified live 2026-06-18 (#121). The ``Rule`` object
+    MUST omit ``RuleID`` on create — sending ``RuleID:{Value:null}`` causes an
+    HTTP 500. ``CategoryID`` is wrapped ``{Value}``; ``TransactionID`` is optional.
+    (The legacy ``/ema/CS/Spending/AddRule`` Nexus endpoint is retired.)
     """
     rule_obj: dict = {
-        "ruleID": _wrap_id(None),
-        "categoryID": _wrap_id(category_id),
-        "descriptionContains": description_contains,
-        "userDescription": user_description or description_contains,
-        "minAmount": min_amount,
-        "maxAmount": max_amount,
-        "startDay": None,
-        "endDay": None,
+        "CategoryID": _wrap_id(category_id),
+        "DescriptionContains": description_contains,
+        "UserDescription": user_description or description_contains,
+        "MinAmount": min_amount,
+        "MaxAmount": max_amount,
+        "StartDay": None,
+        "EndDay": None,
     }
     payload: dict = {"Rule": rule_obj}
     if transaction_id:
-        payload["TransactionID"] = str(transaction_id)
+        payload["TransactionID"] = _wrap_id(transaction_id)
 
     result = await _snb_post(http_session, "CreateRule", payload)
     if "error" in result:
@@ -447,18 +480,18 @@ async def update_transaction_rule(
 
     # Merge requested changes over the existing rule and send the whole object.
     rule_obj = {
-        "ruleID": _wrap_id(rule_id),
-        "categoryID": _wrap_id(category_id if category_id is not None else existing["category_id"]),
-        "descriptionContains": description_contains if description_contains is not None else (existing["description_contains"] or ""),
-        "userDescription": user_description if user_description is not None else (existing["user_description"] or ""),
-        "minAmount": min_amount if min_amount is not None else existing.get("min_amount"),
-        "maxAmount": max_amount if max_amount is not None else existing.get("max_amount"),
-        "startDay": existing.get("start_day"),
-        "endDay": existing.get("end_day"),
+        "RuleID": _wrap_id(rule_id),
+        "CategoryID": _wrap_id(category_id if category_id is not None else existing["category_id"]),
+        "DescriptionContains": description_contains if description_contains is not None else (existing["description_contains"] or ""),
+        "UserDescription": user_description if user_description is not None else (existing["user_description"] or ""),
+        "MinAmount": min_amount if min_amount is not None else existing.get("min_amount"),
+        "MaxAmount": max_amount if max_amount is not None else existing.get("max_amount"),
+        "StartDay": existing.get("start_day"),
+        "EndDay": existing.get("end_day"),
     }
     payload: dict = {"Rule": rule_obj}
     if transaction_id:
-        payload["TransactionID"] = str(transaction_id)
+        payload["TransactionID"] = _wrap_id(transaction_id)
 
     result = await _snb_post(http_session, "UpdateRule", payload)
     if "error" in result:
@@ -500,6 +533,43 @@ async def apply_transaction_rule(
     }, result)
 
 
+def _rule_to_snb(r: dict) -> dict:
+    """Serialize a ``get_transaction_rules`` row to the SNB ``SetRules`` shape
+    (PascalCase, wrapped ``{Value}`` ids) — the exact per-rule object the web UI
+    sends. Captured live 2026-06-18 (#121)."""
+    return {
+        "RuleID":              _wrap_id(r["rule_id"]),
+        "CategoryID":          _wrap_id(r["category_id"]),
+        "DescriptionContains": r["description_contains"] or "",
+        "UserDescription":     r["user_description"] or "",
+        "MinAmount":           r.get("min_amount"),
+        "MaxAmount":           r.get("max_amount"),
+        "StartDay":            r.get("start_day"),
+        "EndDay":              r.get("end_day"),
+    }
+
+
+async def _csrf_post_json(http_session, path: str, body: dict) -> dict:
+    """POST a JSON body to a CS/Spending endpoint with the ASP.NET anti-forgery
+    token in the ``__RequestVerificationToken`` header (the web UI's transport
+    for JSON AJAX writes — verified live for ``SetRules``, #121)."""
+    http = await http_session.get_http()
+    token = await http_session.get_csrf_token()
+    if not token:
+        return {"error": f"Could not obtain CSRF token for {path} — "
+                         "session may be stale (try sync_chrome_session)."}
+    resp = await http.post(
+        f"{_SPENDING}/{path}",
+        json=body,
+        headers={"X-Requested-With": "XMLHttpRequest", "__RequestVerificationToken": token},
+        timeout=30,
+    )
+    if resp.status_code not in (200, 201):
+        return {"error": f"{path} returned HTTP {resp.status_code}", "response_body": resp.text[:400]}
+    ct = resp.headers.get("content-type", "")
+    return resp.json() if "json" in ct else {"ok": True}
+
+
 async def delete_transaction_rule(
     http_session,
     rule_id: str,
@@ -507,7 +577,11 @@ async def delete_transaction_rule(
     """
     Delete an auto-categorization rule.
 
-    JS signature: RemoveRule(ruleID) — POST /ema/CS/Spending/RemoveRule.
+    SNB has no single-rule delete endpoint — the web UI deletes by **replacing
+    the whole rules collection** via ``POST /ema/CS/Spending/SetRules`` with
+    ``{rules:[...]}`` (the full list minus the target). This reads the current
+    rules, drops the one with ``rule_id``, and posts the remainder. Verified live
+    2026-06-18 (#121); supersedes the dead legacy ``RemoveRule``/Nexus path.
 
     rule_id — the rule ID (from get_transaction_rules)
 
@@ -517,11 +591,20 @@ async def delete_transaction_rule(
     if rule_id is None or str(rule_id).strip() == "":
         return {"error": "rule_id is required."}
 
-    result = await _csrf_post(http_session, "RemoveRule", {"ruleID": str(rule_id)})
+    rules_result = await get_transaction_rules(http_session)
+    if "error" in rules_result:
+        return rules_result
+    existing = rules_result["rules"]
+    if not any(str(r["rule_id"]) == str(rule_id) for r in existing):
+        return {"error": f"Rule {rule_id} not found. Call get_transaction_rules to see available rules."}
+
+    keep = [_rule_to_snb(r) for r in existing if str(r["rule_id"]) != str(rule_id)]
+    result = await _csrf_post_json(http_session, "SetRules", {"rules": keep})
     if isinstance(result, dict) and "error" in result:
         return result
     return _maybe_raw({
         "success": True,
         "rule_id": rule_id,
         "deleted": True,
+        "remaining_rule_count": len(keep),
     }, result)

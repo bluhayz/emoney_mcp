@@ -45,6 +45,7 @@ MINIMAL_ARGS = {
     "add_transaction_rule": {"description_contains": "X", "category_id": "5"},
     "update_transaction_rule": {"rule_id": "9"},
     "apply_transaction_rule": {"rule_id": "9"},
+    "delete_transaction_rule": {"rule_id": "9"},
     "get_report_url": {"report_id": "LiquidityReport"},
 }
 

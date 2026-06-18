@@ -359,6 +359,30 @@ class TestGetTransactionRules:
         assert "error" in result
 
     @pytest.mark.asyncio
+    async def test_empty_rules_500_with_nexus_available_returns_empty(self):
+        """No-rules 500 carries `"IsNexusAvailable":true` + generic message — it must
+        be treated as an empty rule set, not flagged as a maintenance error (#19)."""
+        body = ('{"IsNexusAvailable":true,"FaultDetail":null,"FaultDetailType":null,'
+                '"ErrorUrl":null,"RedirectUrl":null,"Success":false,'
+                '"Message":"An unexpected error has occured."}')
+        session = make_mock_http_session()
+        with _make_csrf_mock({"error": "GetRules returned HTTP 500", "response_body": body}):
+            from emoney_mcp.scrapers.transactions import get_transaction_rules
+            result = await get_transaction_rules(session)
+        assert result["count"] == 0
+        assert result["rules"] == []
+
+    @pytest.mark.asyncio
+    async def test_nexus_unavailable_500_surfaces_as_error(self):
+        """A true maintenance 500 (`"IsNexusAvailable":false`) must still surface as an error."""
+        body = ('{"IsNexusAvailable":false,"Message":"Your data is unavailable due to maintenance"}')
+        session = make_mock_http_session()
+        with _make_csrf_mock({"error": "GetRules returned HTTP 500", "response_body": body}):
+            from emoney_mcp.scrapers.transactions import get_transaction_rules
+            result = await get_transaction_rules(session)
+        assert "error" in result
+
+    @pytest.mark.asyncio
     async def test_unexpected_type_returns_error(self):
         """A non-list, non-dict response (e.g. raw string) should return an error dict."""
         session = make_mock_http_session()
@@ -577,6 +601,70 @@ class TestApplyTransactionRule:
         with _make_csrf_mock({"error": "ApplyRule returned HTTP 500", "response_body": ""}):
             from emoney_mcp.scrapers.transactions import apply_transaction_rule
             result = await apply_transaction_rule(session, rule_id="10")
+        assert "error" in result
+
+
+# ===========================================================================
+# delete_transaction_rule (#19)
+# ===========================================================================
+
+class TestDeleteTransactionRule:
+    """
+    delete_transaction_rule sends {ruleID} directly to RemoveRule
+    (JS signature: RemoveRule(ruleID)).
+    """
+
+    @pytest.mark.asyncio
+    async def test_delete_rule_success(self):
+        session = make_mock_http_session()
+        with _make_csrf_mock({"Success": True}):
+            from emoney_mcp.scrapers.transactions import delete_transaction_rule
+            result = await delete_transaction_rule(session, rule_id="42")
+        assert result["success"] is True
+        assert result["deleted"] is True
+        assert result["rule_id"] == "42"
+
+    @pytest.mark.asyncio
+    async def test_delete_sends_rule_id_to_removerule(self):
+        """RemoveRule POST must send ruleID — not a full rule object."""
+        session = make_mock_http_session()
+        captured = {"path": None, "data": {}}
+
+        async def capture(http_session, path, data):
+            captured["path"] = path
+            captured["data"].update(data)
+            return {"Success": True}
+
+        with patch("emoney_mcp.scrapers.transactions._csrf_post", side_effect=capture):
+            from emoney_mcp.scrapers.transactions import delete_transaction_rule
+            await delete_transaction_rule(session, rule_id="42")
+
+        assert captured["path"] == "RemoveRule"
+        assert captured["data"].get("ruleID") == "42"
+        assert "rule[RuleID][Value]" not in captured["data"], "Must not send full rule object"
+
+    @pytest.mark.asyncio
+    async def test_missing_rule_id_returns_error_without_posting(self):
+        session = make_mock_http_session()
+        called = False
+
+        async def capture(http_session, path, data):
+            nonlocal called
+            called = True
+            return {"Success": True}
+
+        with patch("emoney_mcp.scrapers.transactions._csrf_post", side_effect=capture):
+            from emoney_mcp.scrapers.transactions import delete_transaction_rule
+            result = await delete_transaction_rule(session, rule_id="")
+        assert "error" in result
+        assert called is False, "Must not POST when rule_id is empty"
+
+    @pytest.mark.asyncio
+    async def test_csrf_error_propagates(self):
+        session = make_mock_http_session()
+        with _make_csrf_mock({"error": "RemoveRule returned HTTP 500", "response_body": ""}):
+            from emoney_mcp.scrapers.transactions import delete_transaction_rule
+            result = await delete_transaction_rule(session, rule_id="42")
         assert "error" in result
 
 

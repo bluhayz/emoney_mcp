@@ -961,6 +961,21 @@ async def list_tools() -> list[Tool]:
                 "required": ["rule_id"],
             },
         ),
+        Tool(
+            name="delete_transaction_rule",
+            description=(
+                "Delete an auto-categorization rule. rule_id comes from get_transaction_rules. "
+                "Transactions already categorized by the rule keep their categories; only future "
+                "auto-categorization stops. Useful for 'Remove the Starbucks rule'."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "rule_id": {"type": "string", "description": "Rule ID from get_transaction_rules"},
+                },
+                "required": ["rule_id"],
+            },
+        ),
         # ── Reports ───────────────────────────────────────────────────────
         Tool(
             name="get_reports",
@@ -2161,6 +2176,7 @@ _DISPATCH = {
                                                _A("transaction_id", str, optional=True)),
     "apply_transaction_rule":        _passthru("apply_transaction_rule", _A("rule_id", str),
                                                _A("transaction_id", str, optional=True)),
+    "delete_transaction_rule":       _passthru("delete_transaction_rule", _A("rule_id", str)),
     # ── Reports ───────────────────────────────────────────────────────────
     "get_reports":                   _passthru("get_reports"),
     "get_report_url":                _passthru("get_report_url", _A("report_id", str)),

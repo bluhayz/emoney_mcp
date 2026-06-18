@@ -299,29 +299,33 @@ class TestUpdateTransactionSplits:
 # get_transaction_rules  (Bug 2 fix)
 # ===========================================================================
 
-# SNB GetBankTransactionRules shape — flat camelCase objects (the live format)
+# SNB GetBankTransactionRules shape — the LIVE format (captured 2026-06-18, #121).
+# ruleID/categoryID are WCF DataContract complex types, NOT bare strings:
+#   {"extensionData": {}, "value": "42"}
+# A flat-string fixture is what let the v1.0.31 wrapping bug ship — keep this
+# mirroring the real payload (see CLAUDE.md "Fixtures must match the real shape").
 _SNB_RULES = [
     {
-        "ruleID":             "42",
-        "categoryID":         "5",
+        "ruleID":             {"extensionData": {}, "value": "42"},
+        "categoryID":         {"extensionData": {}, "value": "5"},
         "descriptionContains": "AMAZON",
         "userDescription":    "Amazon → Shopping",
         "minAmount":          10.0,
         "maxAmount":          None,
         "startDay":           None,
         "endDay":             None,
-        "extensionData":      None,
+        "extensionData":      {},
     },
     {
-        "ruleID":             "99",
-        "categoryID":         "3",
+        "ruleID":             {"extensionData": {}, "value": "99"},
+        "categoryID":         {"extensionData": {}, "value": "3"},
         "descriptionContains": "STARBUCKS",
         "userDescription":    "Starbucks → Coffee",
         "minAmount":          None,
         "maxAmount":          None,
         "startDay":           None,
         "endDay":             None,
-        "extensionData":      None,
+        "extensionData":      {},
     },
 ]
 
@@ -450,9 +454,10 @@ class TestAddTransactionRule:
         assert captured["action"] == "CreateRule"
         rule = captured["payload"]["Rule"]
         assert rule["descriptionContains"] == "NETFLIX"
-        assert rule["categoryID"] == "6"
+        # IDs must be wrapped {"value": ...} — SNB rejects flat strings (HTTP 400)
+        assert rule["categoryID"] == {"value": "6"}
         assert rule["userDescription"] == "Netflix → Subscriptions"
-        assert rule["ruleID"] is None  # new rule
+        assert rule["ruleID"] == {"value": None}  # new rule — no id yet
 
     @pytest.mark.asyncio
     async def test_add_rule_with_amount_range(self):
@@ -563,8 +568,9 @@ class TestUpdateTransactionRule:
 
         assert captured["action"] == "UpdateRule"
         rule = captured["payload"]["Rule"]
-        assert rule["ruleID"] == "10"
-        assert rule["categoryID"] == "99"                      # changed
+        # IDs must be wrapped {"value": ...} — SNB rejects flat strings (HTTP 400)
+        assert rule["ruleID"] == {"value": "10"}
+        assert rule["categoryID"] == {"value": "99"}           # changed
         assert rule["descriptionContains"] == "COSTCO"          # carried over
         assert rule["userDescription"] == "Costco → Groceries"  # carried over
 

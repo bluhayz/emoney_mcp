@@ -2,7 +2,7 @@
 
 MCP server bridging Claude (and other MCP clients) to Emoney Advisor (`emaplan.com`). Emoney has no public API; this server uses reverse-engineered internal JSON endpoints + Chrome cookie extraction for auth.
 
-**Current version: 1.0.27 · 109 MCP tools.** Read-only data tools (cards + SNB + Profile + Vault + plan goals/cash flow + investment depth), transaction/rules **write** tools, report links, and a large set of pure-Python planning/tax calculators (IRS 2026 figures).
+**Current version: 1.0.32 · 113 MCP tools.** Read-only data tools (cards + SNB + Profile + Vault + plan goals/cash flow + investment depth), transaction/rules **write** tools, an aggregation-refresh **ops** tool (#103), report links, and a large set of pure-Python planning/tax calculators (IRS 2026 figures).
 
 ---
 
@@ -47,7 +47,9 @@ src/emoney_mcp/
     │                  #   get_gifting_and_estate_strategy, get_mortgage_amortization_schedule,
     │                  #   get_mortgage_refinance_analysis, get_mortgage_payoff_vs_invest,
     │                  #   get_healthcare_cost_projection, get_hsa_optimization (#102),
-    │                  #   get_estate_liquidity_analysis (#81)
+    │                  #   get_estate_liquidity_analysis (#81),
+    │                  #   get_long_term_care_analysis (#78),
+    │                  #   get_real_estate_investment_analysis (#100)
     ├── transactions.py# WRITE ops via CS/Spending — update_transaction, hide_transaction,
     │                  #   get/update_transaction_splits, get/add/update/apply_transaction_rule (v0.9.0+)
     ├── reports.py     # get_reports (parse Reports page), get_report_url (CS/Reports/GetReportUrl) (v0.9.0+)
@@ -55,6 +57,9 @@ src/emoney_mcp/
     │                  #   then GETs /ema/api/v1/vault/<guid>/items?path=Vault (same-origin JSON, cookie auth)
     ├── plan_api.py    # get_all_goals_funding_status (#96) — internal-api BFF (api.emoneyadvisor.com),
     │                  #   Bearer JWT + apikey (reuses _get_snb_credentials); clientId/planId from MyPlan HTML
+    ├── aggregation_api.py # refresh_account_aggregation (#103) — aggapi service (api.emoneyadvisor.com),
+    │                  #   Bearer from /ema/CS/Aggregation/GetToken + DISTINCT aggApiKey scraped from
+    │                  #   Organizer/Accounts; POST /users/<guid>/connections/<id>/refresh → 202 {activityId}
     └── explore.py     # explore_emoney_site — dev/discovery crawler that mines pages for endpoints
 ```
 
@@ -147,17 +152,19 @@ All card fetches go through `_get_card(http, card_id)` in `_helpers.py` — 300 
 | `api/values/GetCategories` | Spending category names by ID |
 | `api/values/GetAccounts` | SNB account id→name map (for get_spending_by_account) |
 
-### CS/Spending (transaction + rules WRITE path)
-`POST {BASE_URL}/ema/CS/Spending/<action>` — all go through `transactions._csrf_post()`, which adds `__RequestVerificationToken` (ASP.NET anti-forgery) to the body and sets `X-Requested-With: XMLHttpRequest`. Nested fields use jQuery bracket notation (`TransactionID[Value]=...`, `rule[CategoryID][Value]=...`).
+### Transaction + rules WRITE path — SNB API (modern) vs. legacy CS/Spending
+The live web UI writes through the **SNB API** (`api.emoneyadvisor.com/snb-api/api/values/<action>`, Bearer JWT + `apikey` via `_get_snb_credentials`, JSON body) — `transactions._snb_post()` / `_snb_get()`. The legacy `/ema/CS/Spending/<action>` path (`_csrf_post`, ASP.NET anti-forgery + jQuery bracket notation) is served by the retired "Nexus" backend, which returns `IsNexusAvailable:false` / HTTP 500 for writes — **dead, not in maintenance** (retrying never succeeds).
 
-| Action | Tool |
-|--------|------|
-| `UpdateTransaction` | update_transaction |
-| `UpdateTransactionHiddenStatus` | hide_transaction |
-| `GetAllBankTransactionSplits` / `UpdateTransactionSplits` | get/update_transaction_splits |
-| `GetRules` (empty body) / `AddRule` / `UpdateRule` / `ApplyRule` (`{ruleID, transactionID}`) | rules tools |
+| Action (SNB) | Tool | Status |
+|--------|------|--------|
+| `UpdateTransaction` | update_transaction | ✅ SNB, live-verified |
+| `GetBankTransactionRules` (GET) | get_transaction_rules | ✅ SNB, live-verified |
+| `CreateRule` / `UpdateRule` (`{Rule, TransactionID}`) | add/update_transaction_rule | ✅ SNB, live-verified (#121) |
+| rule delete · hide · splits | delete_transaction_rule, hide_transaction, get/update_transaction_splits | ⏳ still on dead legacy `_csrf_post`; SNB endpoints not yet captured (#121) |
 
-> **Nexus backend:** these writes are served by Emoney's "Nexus" backend, which periodically returns HTTP 500 with `IsNexusAvailable:false` ("Your data is unavailable due to maintenance"). `_csrf_post` surfaces the body in the error dict. `GetRules` also returns 500 when no rules exist — treated as an empty list. End-to-end write verification is tracked in GitHub issue #19.
+> **Rule ID wrapping (#121, verified 2026-06-18):** SNB serializes `ruleID`/`categoryID` as WCF complex types `{"extensionData":{}, "value":"123"}`, NOT bare strings. The GET response wraps them and Create/UpdateRule *require* the same `{"value": ...}` shape — a flat string returns `HTTP 400 ...DataBankTransactnRuleId`. Use `transactions._unwrap_id` when reading and `_wrap_id` when writing. (This bug shipped in 1.0.31 because the test fixture used flat ids — fixtures must mirror the live wrapped shape.)
+>
+> **Remaining migration** (tracked in #121, superseding the closed #19): capture the SNB delete/hide/splits endpoints via live browser network capture (all guessed SNB action names 404; legacy path is dead).
 
 ### CS/Profile and CS/Reports
 - `GET /ema/CS/Profile/GetProfileData` — household identity (names, DOB, ages, dependents, properties) → `get_client_profile`.

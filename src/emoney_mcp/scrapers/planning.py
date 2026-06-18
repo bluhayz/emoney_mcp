@@ -19,6 +19,17 @@ get_fire_number(http_session, swr, annual_return)
 get_gifting_and_estate_strategy(http_session, num_recipients, filing_status)
     Estate snapshot, annual gift exclusion availability, 529 superfunding
     opportunity, and a prioritised action list.
+
+get_long_term_care_analysis(http_session, current_age, care_age, care_years, ...)
+    Project the inflated cost of a long-term care event, net it against any
+    existing LTC/hybrid policy benefit, and assess self-insure feasibility
+    against the portfolio projected to the age care begins.
+
+get_real_estate_investment_analysis(http_session, monthly_rent, ...)
+    Income-property metrics for a rental: cap rate, NOI, cash-on-cash return,
+    DSCR, gross rent multiplier, equity, and monthly/annual cash flow. Property
+    value + mortgage auto-fill from the balance sheet (via get_home_equity) when
+    not supplied; rental income/expenses are caller inputs (eMoney has none).
 """
 
 import asyncio
@@ -28,7 +39,7 @@ from datetime import datetime
 
 from .accounts import (
     get_accounts, get_retirement_accounts, get_net_worth_breakdown, _calc_investable_assets,
-)
+)  # _calc_investable_assets used by get_fire_number and get_long_term_care_analysis
 from .spending import _fetch_snb_data, _sum_income_spending
 from ._helpers import _get_card
 from .tax import _CONTRIBUTION_LIMITS, _IRS_CAVEAT
@@ -1079,5 +1090,441 @@ async def get_estate_liquidity_analysis(
         "caveat": (
             "Estimate only; estate settlement and tax are highly fact-specific. Consult an estate "
             "attorney and tax professional."
+        ),
+    }
+
+
+# ---------------------------------------------------------------------------
+# get_long_term_care_analysis  (#78)
+# ---------------------------------------------------------------------------
+
+# Annual cost of care in TODAY's dollars, national medians, per person. These
+# are conservative planning placeholders (order-of-magnitude of the Genworth
+# Cost of Care survey), NOT quotes — replace with regional figures via
+# daily_cost / cost_multiplier for a precise plan.
+_LTC_ANNUAL_COST_TODAY = {
+    "home_health_aide":     75_500,   # ~44 hrs/week of in-home aide
+    "assisted_living":      64_200,   # assisted living facility, base
+    "nursing_home_semi":   104_000,   # nursing home, semi-private room
+    "nursing_home_private": 116_800,  # nursing home, private room
+}
+_LTC_DEFAULT_SETTING   = "assisted_living"
+_LTC_INFLATION_DEFAULT = 0.045        # LTC costs historically outpace general CPI
+
+# Rough, illustrative state cost index (1.0 = national median). Only a subset of
+# states is listed; anything else defaults to 1.0. Intended as a coarse nudge,
+# not an authoritative regional rate — override with cost_multiplier if known.
+_LTC_STATE_COST_INDEX = {
+    "AK": 1.65, "CT": 1.45, "MA": 1.45, "NY": 1.35, "NJ": 1.30, "HI": 1.30,
+    "CA": 1.25, "WA": 1.20, "NH": 1.20, "MN": 1.15, "MD": 1.10, "CO": 1.05,
+    "IL": 1.00, "FL": 1.00, "VA": 1.00, "AZ": 0.95, "NC": 0.90, "GA": 0.88,
+    "TN": 0.85, "OH": 0.85, "TX": 0.88, "MO": 0.82, "AL": 0.80, "LA": 0.78,
+    "MS": 0.78, "OK": 0.80, "AR": 0.78,
+}
+
+# Probability context (Dept. of Health & Human Services / industry estimates):
+# ~70% of those turning 65 will need some LTC; average duration ~3 yrs; ~20%
+# need it for 5+ years. Used for narrative only, not the cost math.
+_LTC_LIFETIME_NEED_PROB = 0.70
+
+
+async def get_long_term_care_analysis(
+    http_session,
+    current_age: int,
+    care_age: int = 80,
+    care_years: float = 3.0,
+    care_setting: str = _LTC_DEFAULT_SETTING,
+    daily_cost: float | None = None,
+    state: str | None = None,
+    cost_multiplier: float | None = None,
+    ltc_inflation: float = _LTC_INFLATION_DEFAULT,
+    coverage: str = "individual",
+    investment_return: float = 0.06,
+    existing_annual_benefit: float = 0.0,
+    policy_benefit_inflation: float = 0.0,
+) -> dict:
+    """
+    Project a long-term care (LTC) event's cost and assess how to fund it.
+
+    LTC is one of the largest uninsured retirement liabilities. This models the
+    cost of a care episode starting at ``care_age`` lasting ``care_years``,
+    inflated at an LTC-specific rate, nets out any existing LTC/hybrid policy
+    benefit, and tests whether the portfolio — projected to ``care_age`` — can
+    self-insure the remaining need.
+
+    Parameters
+    ----------
+    current_age       : your age today (sets the inflation horizon)
+    care_age          : age care is assumed to begin (default 80)
+    care_years        : expected duration of care in years (default 3)
+    care_setting      : one of 'home_health_aide', 'assisted_living',
+                        'nursing_home_semi', 'nursing_home_private'
+    daily_cost        : override the per-day cost (else the setting's national median)
+    state             : 2-letter state code — applies a rough regional cost index
+    cost_multiplier   : explicit cost multiplier (overrides the state index)
+    ltc_inflation     : annual LTC cost inflation (default 0.045 = 4.5%)
+    coverage          : 'individual' or 'couple' (couple scales the cost ×2 — conservative)
+    investment_return : assumed annual portfolio return for the self-insure projection
+    existing_annual_benefit  : annual benefit from an in-force LTC/hybrid policy (today's $)
+    policy_benefit_inflation : annual growth of that benefit if the policy has an
+                               inflation rider (default 0 = level benefit)
+    """
+    if current_age is None or current_age <= 0:
+        return {"error": "current_age must be a positive integer."}
+    if care_age < current_age:
+        return {"error": "care_age must be greater than or equal to current_age."}
+    if care_years <= 0:
+        return {"error": "care_years must be positive."}
+
+    setting = str(care_setting).lower().strip()
+    if setting not in _LTC_ANNUAL_COST_TODAY:
+        return {"error": "care_setting must be one of: "
+                         + ", ".join(_LTC_ANNUAL_COST_TODAY)}
+
+    people = 2 if str(coverage).lower() in ("couple", "joint", "family", "mfj") else 1
+
+    # Base annual cost in today's dollars (per person), with regional adjustment.
+    if daily_cost is not None and daily_cost > 0:
+        base_annual_today = float(daily_cost) * 365
+        cost_basis = f"daily_cost ${float(daily_cost):,.0f}/day × 365"
+    else:
+        base_annual_today = float(_LTC_ANNUAL_COST_TODAY[setting])
+        cost_basis = f"{setting} national median"
+
+    if cost_multiplier is not None and cost_multiplier > 0:
+        mult = float(cost_multiplier)
+        mult_source = f"cost_multiplier={mult}"
+    elif state and str(state).upper() in _LTC_STATE_COST_INDEX:
+        mult = _LTC_STATE_COST_INDEX[str(state).upper()]
+        mult_source = f"state index ({str(state).upper()})"
+    else:
+        mult = 1.0
+        mult_source = "national (no regional adjustment)"
+
+    annual_today_per_person = base_annual_today * mult
+    annual_today = annual_today_per_person * people
+
+    # Inflate cost year-by-year across the care episode; same for the policy
+    # benefit (which only grows if it has an inflation rider).
+    years_to_care = care_age - current_age
+    full_years = int(care_years)
+    fractional = care_years - full_years
+
+    total_cost_future = 0.0
+    total_policy_future = 0.0
+    schedule: list[dict] = []
+    for i in range(full_years + (1 if fractional > 0 else 0)):
+        age = care_age + i
+        portion = 1.0 if i < full_years else fractional
+        years_from_now = years_to_care + i
+        cost_inflator = (1 + ltc_inflation) ** years_from_now
+        year_cost = annual_today * cost_inflator * portion
+        # Policy benefit grows from today at its (usually lower) rider rate.
+        benefit_inflator = (1 + policy_benefit_inflation) ** years_from_now
+        year_benefit = min(existing_annual_benefit * people * benefit_inflator * portion,
+                           year_cost)
+        total_cost_future += year_cost
+        total_policy_future += year_benefit
+        schedule.append({
+            "age":            age,
+            "year":           datetime.now().year + years_from_now,
+            "annual_cost":    round(year_cost, 2),
+            "policy_benefit": round(year_benefit, 2),
+            "net_cost":       round(year_cost - year_benefit, 2),
+        })
+
+    total_cost_future = round(total_cost_future, 2)
+    total_policy_future = round(total_policy_future, 2)
+    net_need_future = round(max(0.0, total_cost_future - total_policy_future), 2)
+
+    # Self-insure feasibility: grow today's investable assets to care_age, then
+    # see how much of that projected portfolio the net need consumes.
+    accts = await get_accounts(http_session)
+    if "error" in accts:
+        return accts
+    investable_today = _calc_investable_assets(accts)
+    projected_portfolio = round(
+        investable_today * ((1 + investment_return) ** max(0, years_to_care)), 2
+    )
+    pct_of_portfolio = (
+        round(net_need_future / projected_portfolio * 100, 1)
+        if projected_portfolio > 0 else None
+    )
+
+    # Status: a care episode that eats a large share of the projected portfolio
+    # threatens the rest of the retirement plan → favor insurance.
+    if net_need_future <= 0:
+        status = "covered_by_policy"
+    elif pct_of_portfolio is None:
+        status = "insurance_recommended"
+    elif pct_of_portfolio <= 25:
+        status = "self_insurable"
+    elif pct_of_portfolio <= 50:
+        status = "tight"
+    else:
+        status = "insurance_recommended"
+
+    return {
+        "as_of":            datetime.now().strftime("%Y-%m-%d"),
+        "current_age":      current_age,
+        "care_age":         care_age,
+        "care_years":       care_years,
+        "coverage":         "couple" if people == 2 else "individual",
+        "people":           people,
+        "cost_assumptions": {
+            "care_setting":            setting,
+            "annual_cost_today_per_person": round(annual_today_per_person, 2),
+            "annual_cost_today_total": round(annual_today, 2),
+            "cost_basis":              cost_basis,
+            "regional_multiplier":     round(mult, 2),
+            "regional_multiplier_source": mult_source,
+            "ltc_inflation_pct":       round(ltc_inflation * 100, 1),
+        },
+        "projected_cost": {
+            "total_care_cost_future_dollars": total_cost_future,
+            "total_policy_benefit_future":    total_policy_future,
+            "net_self_pay_need":              net_need_future,
+            "first_year_annual_cost":         schedule[0]["annual_cost"] if schedule else 0.0,
+        },
+        "self_insure": {
+            "current_investable_assets":   investable_today,
+            "projected_portfolio_at_care_age": projected_portfolio,
+            "net_need_pct_of_portfolio":   pct_of_portfolio,
+            "assumed_return_pct":          round(investment_return * 100, 1),
+            "status":                      status,
+        },
+        "probability_context": {
+            "lifetime_need_prob_age65": _LTC_LIFETIME_NEED_PROB,
+            "note": (
+                "~70% of people turning 65 will need some long-term care; the average "
+                "episode lasts ~3 years and ~20% need care for 5+ years. Women, on "
+                "average, need care longer than men."
+            ),
+        },
+        "interpretation": (
+            {
+                "covered_by_policy":      "An in-force policy benefit covers the projected care cost.",
+                "self_insurable":         f"The net ${net_need_future:,.0f} need is a modest share "
+                                          f"({pct_of_portfolio}%) of the projected portfolio — likely self-insurable.",
+                "tight":                  f"The net ${net_need_future:,.0f} need consumes {pct_of_portfolio}% of the "
+                                          "projected portfolio — self-insuring is possible but would strain the plan; "
+                                          "consider partial LTC or hybrid coverage.",
+                "insurance_recommended":  f"The net ${net_need_future:,.0f} need is a large share "
+                                          + (f"({pct_of_portfolio}%) " if pct_of_portfolio is not None else "")
+                                          + "of (or exceeds) the projected portfolio — LTC or hybrid insurance is worth pricing.",
+            }[status]
+        ),
+        "yearly_schedule":  schedule,
+        "note": (
+            "Costs use conservative national-median placeholders inflated at the LTC rate; "
+            "actual costs vary widely by setting, region, and care needs. The regional index is "
+            "a coarse adjustment — supply daily_cost or cost_multiplier for your area. Couple "
+            "coverage scales cost ×2 (conservative; spouses rarely need care simultaneously). "
+            "existing_annual_benefit lets you net out an in-force LTC or hybrid life/LTC policy "
+            "(set policy_benefit_inflation if it has an inflation rider). Self-insure feasibility "
+            "grows today's investable assets — excluding home equity — to care_age."
+        ),
+        "caveat": (
+            "Planning estimate only, not insurance or medical advice. LTC policy pricing depends "
+            "on age, health, and underwriting. Consult a licensed LTC specialist."
+        ),
+    }
+
+
+# ---------------------------------------------------------------------------
+# get_real_estate_investment_analysis  (#100)
+# ---------------------------------------------------------------------------
+
+async def get_real_estate_investment_analysis(
+    http_session,
+    monthly_rent: float,
+    property_value: float | None = None,
+    property_name: str | None = None,
+    monthly_operating_expenses: float | None = None,
+    operating_expense_ratio: float = 0.40,
+    mortgage_balance: float | None = None,
+    monthly_mortgage_payment: float | None = None,
+    mortgage_rate: float | None = None,
+    mortgage_years_remaining: float | None = None,
+    purchase_price: float | None = None,
+    cash_invested: float | None = None,
+    annual_appreciation: float = 0.03,
+) -> dict:
+    """
+    Income-property analysis for a rental: cap rate, NOI, cash-on-cash return,
+    DSCR, gross rent multiplier, equity, and cash flow.
+
+    eMoney holds the property value and mortgage (counted as balance-sheet equity)
+    but no rental income/expense data — so rent and operating expenses are caller
+    inputs. ``property_value`` and ``mortgage_balance`` auto-fill from the balance
+    sheet (via get_home_equity) when omitted; pass ``property_name`` to pick a
+    specific property when more than one is held.
+
+    Parameters
+    ----------
+    monthly_rent               : gross monthly rental income (required)
+    property_value             : current market value (else pulled from accounts)
+    property_name              : account-name substring to select the property
+    monthly_operating_expenses : monthly operating costs EXCLUDING mortgage P&I
+                                 (taxes, insurance, management, maintenance, vacancy).
+                                 If omitted, estimated as operating_expense_ratio × rent.
+    operating_expense_ratio    : fallback expense ratio when expenses omitted (default 0.40 = 50% rule-ish)
+    mortgage_balance           : loan balance (else pulled from accounts)
+    monthly_mortgage_payment   : P&I payment; else computed from balance/rate/years
+    mortgage_rate              : annual rate (e.g. 0.065) — used to compute the payment
+    mortgage_years_remaining   : years left — used to compute the payment
+    purchase_price             : cost basis for cap rate (default: property_value)
+    cash_invested              : equity invested, for cash-on-cash (default: current equity)
+    annual_appreciation        : assumed annual value growth for total-return context (default 0.03)
+    """
+    if monthly_rent is None or monthly_rent <= 0:
+        return {"error": "monthly_rent must be positive."}
+
+    # Auto-fill property value / mortgage from the balance sheet when not supplied.
+    source = "provided"
+    if property_value is None or mortgage_balance is None:
+        equity_data = await get_home_equity(http_session)
+        if "error" in equity_data:
+            return equity_data
+        props = equity_data.get("properties", [])
+        if property_name:
+            name_l = property_name.lower()
+            props = [p for p in props if name_l in (p.get("account_name") or "").lower()]
+        if not props:
+            return {"error": (
+                "Could not find a matching property on the balance sheet. "
+                "Pass property_value (and mortgage_balance) explicitly, or check property_name."
+            )}
+        if len(props) > 1:
+            return {"error": (
+                "Multiple properties found ("
+                + ", ".join(p.get("account_name") or "?" for p in props)
+                + "). Specify property_name to pick one, or pass property_value explicitly."
+            )}
+        prop = props[0]
+        if property_value is None:
+            property_value = prop.get("property_value")
+        if mortgage_balance is None:
+            mortgage_balance = prop.get("mortgage_balance") or 0.0
+        source = f"balance sheet ({prop.get('account_name')})"
+
+    if not property_value or property_value <= 0:
+        return {"error": "property_value must be positive (none found on the balance sheet)."}
+    mortgage_balance = mortgage_balance or 0.0
+
+    # Income & operating expenses (NOI excludes financing by definition).
+    gross_annual_rent = monthly_rent * 12
+    if monthly_operating_expenses is not None:
+        annual_opex = monthly_operating_expenses * 12
+        opex_basis = "provided"
+    else:
+        ratio = max(0.0, min(operating_expense_ratio, 0.95))
+        annual_opex = gross_annual_rent * ratio
+        opex_basis = f"estimated at {ratio:.0%} of rent (no expenses provided)"
+    noi = gross_annual_rent - annual_opex
+
+    # Debt service: use the provided payment, else amortize from balance/rate/years.
+    if monthly_mortgage_payment is not None:
+        pmt = monthly_mortgage_payment
+        pmt_basis = "provided"
+    elif mortgage_balance > 0 and mortgage_rate and mortgage_years_remaining:
+        pmt = _monthly_payment(mortgage_balance, mortgage_rate,
+                               int(round(mortgage_years_remaining * 12)))
+        pmt_basis = "computed from balance/rate/term"
+    else:
+        pmt = 0.0
+        pmt_basis = "none (treated as all-cash / no financing)"
+    annual_debt_service = pmt * 12
+
+    annual_cash_flow = noi - annual_debt_service
+    equity = property_value - mortgage_balance
+
+    basis = purchase_price if purchase_price and purchase_price > 0 else property_value
+    invested = cash_invested if cash_invested and cash_invested > 0 else max(0.0, equity)
+
+    cap_rate = noi / basis if basis > 0 else None
+    coc = annual_cash_flow / invested if invested > 0 else None
+    dscr = noi / annual_debt_service if annual_debt_service > 0 else None
+    grm = property_value / gross_annual_rent if gross_annual_rent > 0 else None
+    expense_ratio = annual_opex / gross_annual_rent if gross_annual_rent > 0 else None
+    one_pct = monthly_rent / property_value if property_value > 0 else None
+
+    # First-year total return: cash flow + appreciation + principal paydown on equity.
+    appreciation_gain = property_value * annual_appreciation
+    r = (mortgage_rate / 12) if mortgage_rate else 0.0
+    first_year_principal = max(0.0, (pmt - mortgage_balance * r) * 12) if (pmt > 0 and mortgage_balance > 0) else 0.0
+    total_first_year_gain = annual_cash_flow + appreciation_gain + first_year_principal
+    total_return_on_equity = total_first_year_gain / invested if invested > 0 else None
+
+    def _pct(x):
+        return round(x * 100, 2) if x is not None else None
+
+    # Plain-English flags on the standard screens.
+    flags = []
+    if dscr is not None and dscr < 1.0:
+        flags.append("DSCR below 1.0 — rental income does not cover debt service (negative leverage).")
+    elif dscr is not None and dscr < 1.25:
+        flags.append("DSCR below 1.25 — thin coverage; most lenders want ≥1.25 for refinance.")
+    if annual_cash_flow < 0:
+        flags.append("Negative cash flow — the property costs money to hold each month.")
+    if one_pct is not None and one_pct < 0.01:
+        flags.append("Fails the 1% rule (monthly rent < 1% of value) — common in appreciation markets.")
+    if cap_rate is not None and cap_rate < 0.04:
+        flags.append("Cap rate under 4% — low income yield relative to value.")
+
+    return {
+        "as_of":            datetime.now().strftime("%Y-%m-%d"),
+        "property": {
+            "value":            round(property_value, 2),
+            "purchase_price":   round(basis, 2),
+            "mortgage_balance": round(mortgage_balance, 2),
+            "equity":           round(equity, 2),
+            "data_source":      source,
+            "property_name":    property_name,
+        },
+        "income_and_expenses": {
+            "monthly_rent":             round(monthly_rent, 2),
+            "gross_annual_rent":        round(gross_annual_rent, 2),
+            "annual_operating_expenses": round(annual_opex, 2),
+            "operating_expense_basis":  opex_basis,
+            "net_operating_income":     round(noi, 2),
+            "monthly_mortgage_payment": round(pmt, 2),
+            "mortgage_payment_basis":   pmt_basis,
+            "annual_debt_service":      round(annual_debt_service, 2),
+            "annual_cash_flow":         round(annual_cash_flow, 2),
+            "monthly_cash_flow":        round(annual_cash_flow / 12, 2),
+        },
+        "returns": {
+            "cap_rate_pct":             _pct(cap_rate),
+            "cash_on_cash_pct":         _pct(coc),
+            "dscr":                     round(dscr, 2) if dscr is not None else None,
+            "gross_rent_multiplier":    round(grm, 1) if grm is not None else None,
+            "operating_expense_ratio_pct": _pct(expense_ratio),
+            "cash_invested":            round(invested, 2),
+            "one_percent_rule_ratio_pct": _pct(one_pct),
+            "estimated_total_return_on_equity_pct": _pct(total_return_on_equity),
+            "total_return_components": {
+                "annual_cash_flow":     round(annual_cash_flow, 2),
+                "appreciation_gain":    round(appreciation_gain, 2),
+                "principal_paydown_yr1": round(first_year_principal, 2),
+            },
+        },
+        "rules_of_thumb": {
+            "cap_rate_healthy":     "≥ 5–8% in most markets",
+            "dscr_lender_target":   "≥ 1.25",
+            "one_percent_rule":     "monthly rent ≥ 1% of value",
+            "fifty_percent_rule":   "operating expenses ≈ 50% of rent (long-run, incl. capex/vacancy)",
+        },
+        "flags": flags or ["No standard screens flagged — metrics are within typical ranges."],
+        "note": (
+            "Cap rate and NOI are unlevered (exclude the mortgage); cash-on-cash and cash flow are "
+            "levered (include it). When operating expenses aren't supplied they're estimated as a "
+            "share of rent — supply monthly_operating_expenses (taxes, insurance, management, "
+            "maintenance, vacancy, capex) for an accurate figure. Property value and mortgage come "
+            "from the eMoney balance sheet; rent and expenses are your inputs."
+        ),
+        "caveat": (
+            "Estimate only. Excludes income taxes, depreciation, and transaction costs. "
+            "Returns depend heavily on the expense and appreciation assumptions."
         ),
     }

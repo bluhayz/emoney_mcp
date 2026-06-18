@@ -18,8 +18,10 @@ Two backends are in play:
 2. **Legacy ``/ema/CS/Spending/*``** (ASP.NET anti-forgery POST via
    ``_csrf_post``) — the original reverse-engineered path. This backend is now
    served by the "Nexus" subsystem which returns ``IsNexusAvailable:false`` /
-   maintenance for writes, i.e. it is effectively dead. Tools still on this path
-   (splits, hide, rule delete) are pending migration to the SNB API.
+   maintenance for writes, i.e. it is *retired*, not temporarily down — retrying
+   never succeeds. Tools still on this path (apply rule, delete rule, hide,
+   splits) are pending migration to the SNB API; their SNB endpoints have not
+   yet been captured, so they remain here until they are.
 
 Legacy payload shapes (kept for the not-yet-migrated tools):
   UpdateTransactionHiddenStatus  {transactionID:{Value}, isHidden}
@@ -356,33 +358,34 @@ async def add_transaction_rule(
     user_description     — optional display name for the rule (defaults to description_contains)
     transaction_id       — optional SNB transaction ID that triggered this rule
     min_amount / max_amount — optional amount range filter
+
+    Posts to the SNB API (``CreateRule`` — ``{Rule:{...}, TransactionID}``), the
+    live web UI's path. The ``Rule`` object mirrors the flat camelCase shape
+    ``GetBankTransactionRules`` returns. (The legacy ``/ema/CS/Spending/AddRule``
+    Nexus endpoint is retired and returns ``IsNexusAvailable:false``.)
     """
-    rule: dict = {
-        "RuleID[Value]": "",
-        "RuleID[IsValid]": "false",
-        "DescriptionContains": description_contains,
-        "CategoryID[Value]": str(category_id),
-        "CategoryID[IsValid]": "true",
-        "UserDescription": user_description or description_contains,
+    rule_obj: dict = {
+        "ruleID": None,
+        "categoryID": str(category_id),
+        "descriptionContains": description_contains,
+        "userDescription": user_description or description_contains,
+        "minAmount": min_amount,
+        "maxAmount": max_amount,
+        "startDay": None,
+        "endDay": None,
     }
-    if min_amount is not None:
-        rule["MinAmount"] = str(min_amount)
-    if max_amount is not None:
-        rule["MaxAmount"] = str(max_amount)
-
-    # jQuery encodes {rule: {RuleID: {Value: ""}}} as rule[RuleID][Value]=...
-    flat: dict = {f"rule[{k}]": v for k, v in rule.items()}
+    payload: dict = {"Rule": rule_obj}
     if transaction_id:
-        flat["transactionID"] = transaction_id
+        payload["TransactionID"] = str(transaction_id)
 
-    result = await _csrf_post(http_session, "AddRule", flat)
-    if isinstance(result, dict) and "error" in result:
+    result = await _snb_post(http_session, "CreateRule", payload)
+    if "error" in result:
         return result
     return _maybe_raw({
         "success": True,
         "description_contains": description_contains,
         "category_id": category_id,
-    }, result)
+    }, result.get("data"))
 
 
 async def update_transaction_rule(
@@ -400,6 +403,10 @@ async def update_transaction_rule(
 
     rule_id — the rule ID (from get_transaction_rules)
     All other parameters are optional — only provided fields are changed.
+
+    Posts to the SNB API (``UpdateRule`` — ``{Rule:{...}, TransactionID}``). The
+    full ``Rule`` object is sent (the modern endpoint replaces the whole rule),
+    so unspecified fields are carried over from the current rule.
     """
     # Fetch current rules to find this one
     rules_result = await get_transaction_rules(http_session)
@@ -409,30 +416,23 @@ async def update_transaction_rule(
     if not existing:
         return {"error": f"Rule {rule_id} not found. Call get_transaction_rules to see available rules."}
 
-    # Merge changes
-    merged = {
-        "RuleID[Value]": str(rule_id),
-        "RuleID[IsValid]": "true",
-        "DescriptionContains": description_contains if description_contains is not None else (existing["description_contains"] or ""),
-        "CategoryID[Value]": str(category_id) if category_id is not None else str(existing["category_id"] or ""),
-        "CategoryID[IsValid]": "true",
-        "UserDescription": user_description if user_description is not None else (existing["user_description"] or ""),
+    # Merge requested changes over the existing rule and send the whole object.
+    rule_obj = {
+        "ruleID": str(rule_id),
+        "categoryID": str(category_id) if category_id is not None else str(existing["category_id"] or ""),
+        "descriptionContains": description_contains if description_contains is not None else (existing["description_contains"] or ""),
+        "userDescription": user_description if user_description is not None else (existing["user_description"] or ""),
+        "minAmount": min_amount if min_amount is not None else existing.get("min_amount"),
+        "maxAmount": max_amount if max_amount is not None else existing.get("max_amount"),
+        "startDay": existing.get("start_day"),
+        "endDay": existing.get("end_day"),
     }
-    if min_amount is not None:
-        merged["MinAmount"] = str(min_amount)
-    elif existing["min_amount"] is not None:
-        merged["MinAmount"] = str(existing["min_amount"])
-    if max_amount is not None:
-        merged["MaxAmount"] = str(max_amount)
-    elif existing["max_amount"] is not None:
-        merged["MaxAmount"] = str(existing["max_amount"])
-
-    flat: dict = {f"rule[{k}]": v for k, v in merged.items()}
+    payload: dict = {"Rule": rule_obj}
     if transaction_id:
-        flat["transactionID"] = transaction_id
+        payload["TransactionID"] = str(transaction_id)
 
-    result = await _csrf_post(http_session, "UpdateRule", flat)
-    if isinstance(result, dict) and "error" in result:
+    result = await _snb_post(http_session, "UpdateRule", payload)
+    if "error" in result:
         return result
     return {
         "success": True,

@@ -35,6 +35,20 @@ def _make_csrf_mock(return_value):
     )
 
 
+def _make_snb_post_mock(return_value=None):
+    """Patch _snb_post (the modern SNB write path) to return a fixed value.
+
+    Defaults to a success envelope, matching ``_snb_post``'s ``{"ok": True,
+    "data": ...}`` shape on a 2xx with no JSON body.
+    """
+    if return_value is None:
+        return_value = {"ok": True}
+    return patch(
+        "emoney_mcp.scrapers.transactions._snb_post",
+        new=AsyncMock(return_value=return_value),
+    )
+
+
 # ===========================================================================
 # _csrf_post error surfacing (v0.9.1 fix)
 # ===========================================================================
@@ -395,11 +409,13 @@ class TestGetTransactionRules:
 # ===========================================================================
 
 class TestAddTransactionRule:
+    """add_transaction_rule posts to the SNB CreateRule endpoint
+    (``{Rule:{...camelCase...}, TransactionID}``), not the dead legacy AddRule."""
 
     @pytest.mark.asyncio
     async def test_add_rule_success(self):
         session = make_mock_http_session()
-        with _make_csrf_mock({"Success": True, "RuleID": {"Value": "77"}}):
+        with _make_snb_post_mock({"ok": True, "data": {"ruleID": "77"}}):
             from emoney_mcp.scrapers.transactions import add_transaction_rule
             result = await add_transaction_rule(
                 session,
@@ -412,9 +428,42 @@ class TestAddTransactionRule:
         assert result["category_id"] == "6"
 
     @pytest.mark.asyncio
+    async def test_add_rule_posts_to_snb_createrule(self):
+        """Must hit SNB CreateRule with a camelCase Rule object — not legacy AddRule."""
+        session = make_mock_http_session()
+        captured = {}
+
+        async def cap(http_session, action, payload):
+            captured["action"] = action
+            captured["payload"] = payload
+            return {"ok": True}
+
+        with patch("emoney_mcp.scrapers.transactions._snb_post", side_effect=cap):
+            from emoney_mcp.scrapers.transactions import add_transaction_rule
+            await add_transaction_rule(
+                session,
+                description_contains="NETFLIX",
+                category_id="6",
+                user_description="Netflix → Subscriptions",
+            )
+
+        assert captured["action"] == "CreateRule"
+        rule = captured["payload"]["Rule"]
+        assert rule["descriptionContains"] == "NETFLIX"
+        assert rule["categoryID"] == "6"
+        assert rule["userDescription"] == "Netflix → Subscriptions"
+        assert rule["ruleID"] is None  # new rule
+
+    @pytest.mark.asyncio
     async def test_add_rule_with_amount_range(self):
         session = make_mock_http_session()
-        with _make_csrf_mock({"Success": True}):
+        captured = {}
+
+        async def cap(http_session, action, payload):
+            captured["payload"] = payload
+            return {"ok": True}
+
+        with patch("emoney_mcp.scrapers.transactions._snb_post", side_effect=cap):
             from emoney_mcp.scrapers.transactions import add_transaction_rule
             result = await add_transaction_rule(
                 session,
@@ -424,17 +473,19 @@ class TestAddTransactionRule:
                 max_amount=20.0,
             )
         assert result["success"] is True
+        assert captured["payload"]["Rule"]["minAmount"] == 5.0
+        assert captured["payload"]["Rule"]["maxAmount"] == 20.0
 
     @pytest.mark.asyncio
     async def test_add_rule_with_transaction_id(self):
         session = make_mock_http_session()
-        captured_data = {}
+        captured = {}
 
-        async def capture(http_session, path, data):
-            captured_data.update(data)
-            return {"Success": True}
+        async def cap(http_session, action, payload):
+            captured["payload"] = payload
+            return {"ok": True}
 
-        with patch("emoney_mcp.scrapers.transactions._csrf_post", side_effect=capture):
+        with patch("emoney_mcp.scrapers.transactions._snb_post", side_effect=cap):
             from emoney_mcp.scrapers.transactions import add_transaction_rule
             await add_transaction_rule(
                 session,
@@ -443,12 +494,12 @@ class TestAddTransactionRule:
                 transaction_id="txn-999",
             )
 
-        assert captured_data.get("transactionID") == "txn-999"
+        assert captured["payload"].get("TransactionID") == "txn-999"
 
     @pytest.mark.asyncio
-    async def test_csrf_error_propagates(self):
+    async def test_snb_error_propagates(self):
         session = make_mock_http_session()
-        with _make_csrf_mock({"error": "AddRule returned HTTP 403", "response_body": ""}):
+        with _make_snb_post_mock({"error": "CreateRule returned HTTP 403", "response_body": ""}):
             from emoney_mcp.scrapers.transactions import add_transaction_rule
             result = await add_transaction_rule(session, description_contains="X", category_id="1")
         assert "error" in result
@@ -476,13 +527,14 @@ _EXISTING_RULES_RESPONSE = {
 
 
 class TestUpdateTransactionRule:
+    """update_transaction_rule posts the full merged Rule object to SNB UpdateRule."""
 
     @pytest.mark.asyncio
     async def test_update_category(self):
         session = make_mock_http_session()
         with patch("emoney_mcp.scrapers.transactions.get_transaction_rules",
                    new=AsyncMock(return_value=_EXISTING_RULES_RESPONSE)):
-            with _make_csrf_mock({"Success": True}):
+            with _make_snb_post_mock({"ok": True}):
                 from emoney_mcp.scrapers.transactions import update_transaction_rule
                 result = await update_transaction_rule(
                     session, rule_id="10", category_id="99"
@@ -490,6 +542,31 @@ class TestUpdateTransactionRule:
         assert result["success"] is True
         assert result["rule_id"] == "10"
         assert result["updated"]["category_id"] == "99"
+
+    @pytest.mark.asyncio
+    async def test_update_posts_full_merged_rule_to_snb(self):
+        """UpdateRule must carry the full Rule object — changed field overridden,
+        the rest carried over from the existing rule."""
+        session = make_mock_http_session()
+        captured = {}
+
+        async def cap(http_session, action, payload):
+            captured["action"] = action
+            captured["payload"] = payload
+            return {"ok": True}
+
+        with patch("emoney_mcp.scrapers.transactions.get_transaction_rules",
+                   new=AsyncMock(return_value=_EXISTING_RULES_RESPONSE)):
+            with patch("emoney_mcp.scrapers.transactions._snb_post", side_effect=cap):
+                from emoney_mcp.scrapers.transactions import update_transaction_rule
+                await update_transaction_rule(session, rule_id="10", category_id="99")
+
+        assert captured["action"] == "UpdateRule"
+        rule = captured["payload"]["Rule"]
+        assert rule["ruleID"] == "10"
+        assert rule["categoryID"] == "99"                      # changed
+        assert rule["descriptionContains"] == "COSTCO"          # carried over
+        assert rule["userDescription"] == "Costco → Groceries"  # carried over
 
     @pytest.mark.asyncio
     async def test_rule_not_found_returns_error(self):
@@ -648,7 +725,7 @@ class TestRawGating:
     async def test_add_rule_omits_raw_by_default(self, monkeypatch):
         monkeypatch.delenv("EMONEY_DEV", raising=False)
         session = make_mock_http_session()
-        with _make_csrf_mock({"Success": True, "RuleID": {"Value": "77"}}):
+        with _make_snb_post_mock({"ok": True, "data": {"ruleID": "77"}}):
             from emoney_mcp.scrapers.transactions import add_transaction_rule
             result = await add_transaction_rule(session, description_contains="X", category_id="1")
         assert "raw" not in result
@@ -658,10 +735,10 @@ class TestRawGating:
     async def test_add_rule_includes_raw_in_dev(self, monkeypatch):
         monkeypatch.setenv("EMONEY_DEV", "1")
         session = make_mock_http_session()
-        with _make_csrf_mock({"Success": True, "RuleID": {"Value": "77"}}):
+        with _make_snb_post_mock({"ok": True, "data": {"ruleID": "77"}}):
             from emoney_mcp.scrapers.transactions import add_transaction_rule
             result = await add_transaction_rule(session, description_contains="X", category_id="1")
-        assert result.get("raw") == {"Success": True, "RuleID": {"Value": "77"}}
+        assert result.get("raw") == {"ruleID": "77"}
 
     @pytest.mark.asyncio
     async def test_apply_rule_omits_raw_by_default(self, monkeypatch):

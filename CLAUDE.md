@@ -2,7 +2,7 @@
 
 MCP server bridging Claude (and other MCP clients) to Emoney Advisor (`emaplan.com`). Emoney has no public API; this server uses reverse-engineered internal JSON endpoints + Chrome cookie extraction for auth.
 
-**Current version: 1.0.32 · 113 MCP tools.** Read-only data tools (cards + SNB + Profile + Vault + plan goals/cash flow + investment depth), transaction/rules **write** tools, an aggregation-refresh **ops** tool (#103), report links, and a large set of pure-Python planning/tax calculators (IRS 2026 figures).
+**Current version: 1.0.33 · 113 MCP tools.** Read-only data tools (cards + SNB + Profile + Vault + plan goals/cash flow + investment depth), transaction/rules **write** tools, an aggregation-refresh **ops** tool (#103), report links, and a large set of pure-Python planning/tax calculators (IRS 2026 figures).
 
 ---
 
@@ -155,16 +155,20 @@ All card fetches go through `_get_card(http, card_id)` in `_helpers.py` — 300 
 ### Transaction + rules WRITE path — SNB API (modern) vs. legacy CS/Spending
 The live web UI writes through the **SNB API** (`api.emoneyadvisor.com/snb-api/api/values/<action>`, Bearer JWT + `apikey` via `_get_snb_credentials`, JSON body) — `transactions._snb_post()` / `_snb_get()`. The legacy `/ema/CS/Spending/<action>` path (`_csrf_post`, ASP.NET anti-forgery + jQuery bracket notation) is served by the retired "Nexus" backend, which returns `IsNexusAvailable:false` / HTTP 500 for writes — **dead, not in maintenance** (retrying never succeeds).
 
-| Action (SNB) | Tool | Status |
+| Action | Tool | Status |
 |--------|------|--------|
-| `UpdateTransaction` | update_transaction | ✅ SNB, live-verified |
-| `GetBankTransactionRules` (GET) | get_transaction_rules | ✅ SNB, live-verified |
-| `CreateRule` / `UpdateRule` (`{Rule, TransactionID}`) | add/update_transaction_rule | ✅ SNB, live-verified (#121) |
-| rule delete · hide · splits | delete_transaction_rule, hide_transaction, get/update_transaction_splits | ⏳ still on dead legacy `_csrf_post`; SNB endpoints not yet captured (#121) |
+| `UpdateTransaction` (SNB) | update_transaction | ✅ SNB, live-verified |
+| `GetBankTransactionRules` (SNB GET) | get_transaction_rules | ✅ SNB, live-verified |
+| `CreateRule` / `UpdateRule` (SNB, `{Rule, TransactionID}`) | add/update_transaction_rule | ✅ SNB, live-verified (#121) |
+| `SetRules` (CS/Spending bulk-replace) | delete_transaction_rule | ✅ live-verified (#121) |
+| `ToggleTransactionVisibility` (SNB) | hide_transaction | ✅ SNB, live-verified (#121) |
+| `GetBankTransactionSplits` (SNB GET) | get_transaction_splits | ✅ SNB, live-verified (#121) |
+| `UpdateTransactionSplits` | update_transaction_splits | ⏳ SNB endpoint exists; POST body not yet captured — still on dead legacy path |
+| `ApplyRule` | apply_transaction_rule | ⏳ dead legacy path (application folds into Create/UpdateRule's TransactionID) |
 
-> **Rule ID wrapping (#121, verified 2026-06-18):** SNB serializes `ruleID`/`categoryID` as WCF complex types `{"extensionData":{}, "value":"123"}`, NOT bare strings. The GET response wraps them and Create/UpdateRule *require* the same `{"value": ...}` shape — a flat string returns `HTTP 400 ...DataBankTransactnRuleId`. Use `transactions._unwrap_id` when reading and `_wrap_id` when writing. (This bug shipped in 1.0.31 because the test fixture used flat ids — fixtures must mirror the live wrapped shape.)
+> **Rule/ID shapes (#121, verified live 2026-06-18):** SNB serializes `ruleID`/`categoryID` (and split `categoryID`/`transactionID`) as WCF complex types `{"value":"123"}`, NOT bare strings — Create/Update/SetRules *require* the wrapped `{Value}` form (flat → HTTP 400/500). Use `transactions._unwrap_id`/`_wrap_id`. **CreateRule must OMIT `RuleID`** on create (sending `{Value:null}` → 500 — the bug that shipped in 1.0.31). **Rule delete has no single endpoint**: the UI bulk-replaces the whole collection via `POST /ema/CS/Spending/SetRules {rules:[...]}` (the one *live* CS/Spending route — the rest of that path is dead Nexus), CSRF token in the `__RequestVerificationToken` header (`_csrf_post_json`). hide = SNB `ToggleTransactionVisibility {hideTransaction, transactionId}`.
 >
-> **Remaining migration** (tracked in #121, superseding the closed #19): capture the SNB delete/hide/splits endpoints via live browser network capture (all guessed SNB action names 404; legacy path is dead).
+> **Remaining (#121):** only `update_transaction_splits` — the SNB `UpdateTransactionSplits` POST body wasn't captured (writing splits mutates a real transaction; deferred).
 
 ### CS/Profile and CS/Reports
 - `GET /ema/CS/Profile/GetProfileData` — household identity (names, DOB, ages, dependents, properties) → `get_client_profile`.

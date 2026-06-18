@@ -189,27 +189,42 @@ class TestUpdateTransaction:
 class TestHideTransaction:
 
     @pytest.mark.asyncio
-    async def test_hide_returns_success(self):
+    async def test_hide_posts_to_snb_toggle_visibility(self):
+        """Must hit SNB ToggleTransactionVisibility with {hideTransaction, transactionId}."""
         session = make_mock_http_session()
-        with _make_csrf_mock({"Success": True}):
+        captured = {}
+
+        async def cap(http_session, action, payload):
+            captured["action"] = action
+            captured["payload"] = payload
+            return {"ok": True}
+
+        with patch("emoney_mcp.scrapers.transactions._snb_post", side_effect=cap):
             from emoney_mcp.scrapers.transactions import hide_transaction
             result = await hide_transaction(session, transaction_id="txn-001", hidden=True)
-        assert result["success"] is True
-        assert result["hidden"] is True
+        assert result["success"] is True and result["hidden"] is True
+        assert captured["action"] == "ToggleTransactionVisibility"
+        assert captured["payload"] == {"hideTransaction": True, "transactionId": "txn-001"}
 
     @pytest.mark.asyncio
-    async def test_unhide_returns_success(self):
+    async def test_unhide_sends_false(self):
         session = make_mock_http_session()
-        with _make_csrf_mock({"Success": True}):
+        captured = {}
+
+        async def cap(http_session, action, payload):
+            captured["payload"] = payload
+            return {"ok": True}
+
+        with patch("emoney_mcp.scrapers.transactions._snb_post", side_effect=cap):
             from emoney_mcp.scrapers.transactions import hide_transaction
             result = await hide_transaction(session, transaction_id="txn-001", hidden=False)
-        assert result["success"] is True
         assert result["hidden"] is False
+        assert captured["payload"]["hideTransaction"] is False
 
     @pytest.mark.asyncio
-    async def test_csrf_error_propagates(self):
+    async def test_snb_error_propagates(self):
         session = make_mock_http_session()
-        with _make_csrf_mock({"error": "UpdateTransactionHiddenStatus returned HTTP 500", "response_body": ""}):
+        with _make_snb_post_mock({"error": "ToggleTransactionVisibility returned HTTP 500"}):
             from emoney_mcp.scrapers.transactions import hide_transaction
             result = await hide_transaction(session, transaction_id="txn-001")
         assert "error" in result
@@ -219,20 +234,35 @@ class TestHideTransaction:
 # get_transaction_splits
 # ===========================================================================
 
-class TestGetTransactionSplits:
+def _snb_get_session(body, status=200, ctype="application/json; charset=utf-8"):
+    """Session whose http.get returns a fixed JSON response — for the SNB GET path
+    (GetBankTransactionSplits). Also patch _get_snb_credentials when using it."""
+    resp = MagicMock()
+    resp.status_code = status
+    resp.headers = {"content-type": ctype}
+    resp.json.return_value = body
+    http = AsyncMock()
+    http.get = AsyncMock(return_value=resp)
+    session = AsyncMock()
+    session.get_http = AsyncMock(return_value=http)
+    return session
 
+
+def _patch_snb_creds():
+    return patch("emoney_mcp.scrapers.spending._get_snb_credentials",
+                 new=AsyncMock(return_value=("jwt-token", "api-key")))
+
+
+class TestGetTransactionSplits:
+    # Live SNB GetBankTransactionSplits shape: camelCase, wrapped {value} ids.
     @pytest.mark.asyncio
     async def test_returns_splits_list(self):
-        session = make_mock_http_session()
-        # API may return dict-wrapped or list directly; test both shapes via the dict form
-        api_response = {
-            "Splits": [
-                {"TransactionSplitID": "s1", "CategoryID": {"Value": "1"}, "SplitAmount": 50.0},
-                {"TransactionSplitID": "s2", "CategoryID": {"Value": "2"}, "SplitAmount": 35.0},
-            ],
-            "Total": 85.0,
-        }
-        with _make_csrf_mock(api_response):
+        body = [
+            {"categoryID": {"value": "1"}, "splitAmount": 50.0, "userDescription": "A"},
+            {"categoryID": {"value": "2"}, "splitAmount": 35.0, "userDescription": "B"},
+        ]
+        session = _snb_get_session(body)
+        with _patch_snb_creds():
             from emoney_mcp.scrapers.transactions import get_transaction_splits
             result = await get_transaction_splits(session, transaction_id="txn-split")
         assert result["transaction_id"] == "txn-split"
@@ -243,14 +273,13 @@ class TestGetTransactionSplits:
         assert result["splits"][1]["category_id"] == "2"
 
     @pytest.mark.asyncio
-    async def test_list_response_shape(self):
-        """API returns a bare list — code must handle it without crashing."""
-        session = make_mock_http_session()
-        api_response = [
-            {"CategoryID": {"Value": "21"}, "SplitAmount": -40.01,
-             "Description": "TST* PURA VIDA", "UserDescription": None},
+    async def test_single_split_not_flagged(self):
+        body = [
+            {"categoryID": {"value": "21"}, "splitAmount": -40.01,
+             "description": "TST* PURA VIDA", "userDescription": None},
         ]
-        with _make_csrf_mock(api_response):
+        session = _snb_get_session(body)
+        with _patch_snb_creds():
             from emoney_mcp.scrapers.transactions import get_transaction_splits
             result = await get_transaction_splits(session, transaction_id="txn-list")
         assert result["split_count"] == 1
@@ -259,9 +288,18 @@ class TestGetTransactionSplits:
         assert result["splits"][0]["category_id"] == "21"
 
     @pytest.mark.asyncio
-    async def test_csrf_error_propagates(self):
-        session = make_mock_http_session()
-        with _make_csrf_mock({"error": "GetAllBankTransactionSplits returned HTTP 404", "response_body": ""}):
+    async def test_http_error_propagates(self):
+        session = _snb_get_session(None, status=404, ctype="text/html")
+        with _patch_snb_creds():
+            from emoney_mcp.scrapers.transactions import get_transaction_splits
+            result = await get_transaction_splits(session, transaction_id="txn-x")
+        assert "error" in result
+
+    @pytest.mark.asyncio
+    async def test_missing_credentials_errors(self):
+        session = _snb_get_session([])
+        with patch("emoney_mcp.scrapers.spending._get_snb_credentials",
+                   new=AsyncMock(return_value=(None, None))):
             from emoney_mcp.scrapers.transactions import get_transaction_splits
             result = await get_transaction_splits(session, transaction_id="txn-x")
         assert "error" in result
@@ -433,7 +471,8 @@ class TestAddTransactionRule:
 
     @pytest.mark.asyncio
     async def test_add_rule_posts_to_snb_createrule(self):
-        """Must hit SNB CreateRule with a camelCase Rule object — not legacy AddRule."""
+        """Must hit SNB CreateRule with the captured PascalCase Rule shape — and
+        MUST omit RuleID on create (sending RuleID:{Value:null} causes HTTP 500)."""
         session = make_mock_http_session()
         captured = {}
 
@@ -453,11 +492,11 @@ class TestAddTransactionRule:
 
         assert captured["action"] == "CreateRule"
         rule = captured["payload"]["Rule"]
-        assert rule["descriptionContains"] == "NETFLIX"
-        # IDs must be wrapped {"value": ...} — SNB rejects flat strings (HTTP 400)
-        assert rule["categoryID"] == {"value": "6"}
-        assert rule["userDescription"] == "Netflix → Subscriptions"
-        assert rule["ruleID"] == {"value": None}  # new rule — no id yet
+        assert rule["DescriptionContains"] == "NETFLIX"
+        # IDs must be wrapped {"Value": ...} — SNB rejects flat strings
+        assert rule["CategoryID"] == {"Value": "6"}
+        assert rule["UserDescription"] == "Netflix → Subscriptions"
+        assert "RuleID" not in rule  # create MUST omit RuleID
 
     @pytest.mark.asyncio
     async def test_add_rule_with_amount_range(self):
@@ -478,8 +517,8 @@ class TestAddTransactionRule:
                 max_amount=20.0,
             )
         assert result["success"] is True
-        assert captured["payload"]["Rule"]["minAmount"] == 5.0
-        assert captured["payload"]["Rule"]["maxAmount"] == 20.0
+        assert captured["payload"]["Rule"]["MinAmount"] == 5.0
+        assert captured["payload"]["Rule"]["MaxAmount"] == 20.0
 
     @pytest.mark.asyncio
     async def test_add_rule_with_transaction_id(self):
@@ -499,7 +538,7 @@ class TestAddTransactionRule:
                 transaction_id="txn-999",
             )
 
-        assert captured["payload"].get("TransactionID") == "txn-999"
+        assert captured["payload"].get("TransactionID") == {"Value": "txn-999"}
 
     @pytest.mark.asyncio
     async def test_snb_error_propagates(self):
@@ -568,11 +607,11 @@ class TestUpdateTransactionRule:
 
         assert captured["action"] == "UpdateRule"
         rule = captured["payload"]["Rule"]
-        # IDs must be wrapped {"value": ...} — SNB rejects flat strings (HTTP 400)
-        assert rule["ruleID"] == {"value": "10"}
-        assert rule["categoryID"] == {"value": "99"}           # changed
-        assert rule["descriptionContains"] == "COSTCO"          # carried over
-        assert rule["userDescription"] == "Costco → Groceries"  # carried over
+        # IDs must be wrapped {"Value": ...} — SNB rejects flat strings
+        assert rule["RuleID"] == {"Value": "10"}
+        assert rule["CategoryID"] == {"Value": "99"}           # changed
+        assert rule["DescriptionContains"] == "COSTCO"          # carried over
+        assert rule["UserDescription"] == "Costco → Groceries"  # carried over
 
     @pytest.mark.asyncio
     async def test_rule_not_found_returns_error(self):
@@ -661,63 +700,99 @@ class TestApplyTransactionRule:
 # delete_transaction_rule (#19)
 # ===========================================================================
 
+_DELETE_RULES_RESPONSE = {
+    "rules": [
+        {"rule_id": "42", "description_contains": "AMAZON", "category_id": "5",
+         "user_description": "Amazon", "min_amount": 10.0, "max_amount": None,
+         "start_day": None, "end_day": None},
+        {"rule_id": "99", "description_contains": "STARBUCKS", "category_id": "3",
+         "user_description": "Starbucks", "min_amount": None, "max_amount": None,
+         "start_day": None, "end_day": None},
+    ],
+    "count": 2,
+}
+
+
 class TestDeleteTransactionRule:
     """
-    delete_transaction_rule sends {ruleID} directly to RemoveRule
-    (JS signature: RemoveRule(ruleID)).
+    SNB has no single-rule delete — delete_transaction_rule reads the current
+    rules and bulk-replaces the collection minus the target via SetRules
+    (POST /ema/CS/Spending/SetRules, JSON body, CSRF token in header).
     """
 
     @pytest.mark.asyncio
     async def test_delete_rule_success(self):
         session = make_mock_http_session()
-        with _make_csrf_mock({"Success": True}):
-            from emoney_mcp.scrapers.transactions import delete_transaction_rule
-            result = await delete_transaction_rule(session, rule_id="42")
+        with patch("emoney_mcp.scrapers.transactions.get_transaction_rules",
+                   new=AsyncMock(return_value=_DELETE_RULES_RESPONSE)):
+            with patch("emoney_mcp.scrapers.transactions._csrf_post_json",
+                       new=AsyncMock(return_value={"RuleIDs": [{"Value": "99", "IsValid": True}]})):
+                from emoney_mcp.scrapers.transactions import delete_transaction_rule
+                result = await delete_transaction_rule(session, rule_id="42")
         assert result["success"] is True
         assert result["deleted"] is True
         assert result["rule_id"] == "42"
+        assert result["remaining_rule_count"] == 1
 
     @pytest.mark.asyncio
-    async def test_delete_sends_rule_id_to_removerule(self):
-        """RemoveRule POST must send ruleID — not a full rule object."""
+    async def test_delete_posts_full_list_minus_target_to_setrules(self):
+        """SetRules must receive the whole rules collection EXCEPT the deleted one,
+        each in the wrapped PascalCase shape."""
         session = make_mock_http_session()
-        captured = {"path": None, "data": {}}
+        captured = {}
 
-        async def capture(http_session, path, data):
+        async def cap(http_session, path, body):
             captured["path"] = path
-            captured["data"].update(data)
-            return {"Success": True}
+            captured["body"] = body
+            return {"RuleIDs": []}
 
-        with patch("emoney_mcp.scrapers.transactions._csrf_post", side_effect=capture):
-            from emoney_mcp.scrapers.transactions import delete_transaction_rule
-            await delete_transaction_rule(session, rule_id="42")
+        with patch("emoney_mcp.scrapers.transactions.get_transaction_rules",
+                   new=AsyncMock(return_value=_DELETE_RULES_RESPONSE)):
+            with patch("emoney_mcp.scrapers.transactions._csrf_post_json", side_effect=cap):
+                from emoney_mcp.scrapers.transactions import delete_transaction_rule
+                await delete_transaction_rule(session, rule_id="42")
 
-        assert captured["path"] == "RemoveRule"
-        assert captured["data"].get("ruleID") == "42"
-        assert "rule[RuleID][Value]" not in captured["data"], "Must not send full rule object"
+        assert captured["path"] == "SetRules"
+        kept = captured["body"]["rules"]
+        assert len(kept) == 1
+        assert kept[0]["RuleID"] == {"Value": "99"}        # the survivor, wrapped
+        assert kept[0]["CategoryID"] == {"Value": "3"}
+        assert all(r["RuleID"] != {"Value": "42"} for r in kept)  # target removed
 
     @pytest.mark.asyncio
-    async def test_missing_rule_id_returns_error_without_posting(self):
+    async def test_delete_unknown_rule_errors_without_posting(self):
         session = make_mock_http_session()
         called = False
 
-        async def capture(http_session, path, data):
+        async def cap(http_session, path, body):
             nonlocal called
             called = True
-            return {"Success": True}
+            return {}
 
-        with patch("emoney_mcp.scrapers.transactions._csrf_post", side_effect=capture):
-            from emoney_mcp.scrapers.transactions import delete_transaction_rule
-            result = await delete_transaction_rule(session, rule_id="")
+        with patch("emoney_mcp.scrapers.transactions.get_transaction_rules",
+                   new=AsyncMock(return_value=_DELETE_RULES_RESPONSE)):
+            with patch("emoney_mcp.scrapers.transactions._csrf_post_json", side_effect=cap):
+                from emoney_mcp.scrapers.transactions import delete_transaction_rule
+                result = await delete_transaction_rule(session, rule_id="does-not-exist")
         assert "error" in result
-        assert called is False, "Must not POST when rule_id is empty"
+        assert called is False, "Must not POST SetRules when the rule isn't found"
 
     @pytest.mark.asyncio
-    async def test_csrf_error_propagates(self):
+    async def test_missing_rule_id_returns_error(self):
         session = make_mock_http_session()
-        with _make_csrf_mock({"error": "RemoveRule returned HTTP 500", "response_body": ""}):
-            from emoney_mcp.scrapers.transactions import delete_transaction_rule
-            result = await delete_transaction_rule(session, rule_id="42")
+        from emoney_mcp.scrapers.transactions import delete_transaction_rule
+        result = await delete_transaction_rule(session, rule_id="")
+        assert "error" in result
+
+    @pytest.mark.asyncio
+    async def test_setrules_error_propagates(self):
+        session = make_mock_http_session()
+        with patch("emoney_mcp.scrapers.transactions.get_transaction_rules",
+                   new=AsyncMock(return_value=_DELETE_RULES_RESPONSE)):
+            with patch("emoney_mcp.scrapers.transactions._csrf_post_json",
+                       new=AsyncMock(return_value={"error": "SetRules returned HTTP 500"})):
+                from emoney_mcp.scrapers.transactions import delete_transaction_rule
+                result = await delete_transaction_rule(session, rule_id="42")
         assert "error" in result
 
 

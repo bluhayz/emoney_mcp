@@ -153,3 +153,66 @@ class TestAuthDebugLogging:
         assert all("not valid json" not in r.getMessage() for r in caplog.records)
 
         importlib.reload(browser)  # restore default env for other tests
+
+
+class TestIsLoggedInRetry:
+    """is_logged_in should retry the validation probe to absorb the Akamai
+    bot-challenge that 302s the FIRST post-login request to SignIn (issue #57)."""
+
+    HOME = "https://wealth.emaplan.com/ema/CS/Home"
+    SIGNIN = "https://wealth.emaplan.com/ema/SignIn"
+
+    @staticmethod
+    def _session_with(urls):
+        """Build a session whose probe returns one queued final URL per call."""
+        from emoney_mcp.browser import EmoneyHttpSession
+
+        class _FakeResp:
+            def __init__(self, url):
+                self.url = url
+
+        class _FakeHttp:
+            def __init__(self, urls):
+                self._urls = list(urls)
+                self._last = None
+                self.calls = 0
+
+            async def get(self, url, allow_redirects=True, timeout=20):
+                self.calls += 1
+                if self._urls:
+                    self._last = self._urls.pop(0)
+                return _FakeResp(self._last)
+
+        http = _FakeHttp(urls)
+        session = EmoneyHttpSession()
+        session.has_cookies = lambda: True
+
+        async def _get_http():
+            return http
+
+        session.get_http = _get_http
+        return session, http
+
+    async def test_first_hit_signin_then_home_passes_with_retries(self):
+        session, http = self._session_with([self.SIGNIN, self.HOME])
+        assert await session.is_logged_in(retries=2, delay=0) is True
+        assert http.calls == 2  # stops as soon as it lands on Home
+
+    async def test_single_shot_does_not_retry(self):
+        # The throttled health check uses the default (retries=0) and must not
+        # pay the extra latency — one probe, no retry.
+        session, http = self._session_with([self.SIGNIN, self.HOME])
+        assert await session.is_logged_in(delay=0) is False
+        assert http.calls == 1
+
+    async def test_all_attempts_signin_fails(self):
+        session, http = self._session_with([self.SIGNIN, self.SIGNIN, self.SIGNIN])
+        assert await session.is_logged_in(retries=2, delay=0) is False
+        assert http.calls == 3  # retries + 1 attempts, all rejected
+
+    async def test_no_cookies_short_circuits(self):
+        from emoney_mcp.browser import EmoneyHttpSession
+
+        session = EmoneyHttpSession()
+        session.has_cookies = lambda: False
+        assert await session.is_logged_in(retries=2, delay=0) is False

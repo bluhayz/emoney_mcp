@@ -401,18 +401,29 @@ class EmoneyHttpSession:
                 self._http.cookies.set(k, v, domain=f"{_SUBDOMAIN}.emaplan.com")
         return self._http
 
-    async def is_logged_in(self) -> bool:
+    async def is_logged_in(self, *, retries: int = 0, delay: float = 0.6) -> bool:
         if not self.has_cookies():
             return False
         http = await self.get_http()
-        try:
-            resp = await http.get(HOME_URL, allow_redirects=True, timeout=20)
-            final_url = str(resp.url)
-            # Must land back on emaplan.com (not a third-party SSO/error domain)
-            # AND not be sitting in the signin/OAuth flow.
-            return is_emoney_host(final_url) and not _is_signin_url(final_url)
-        except Exception:
-            return False
+        # The very first request after a fresh login often trips an Akamai bot
+        # challenge that 302s to SignIn even with valid cookies; the challenge
+        # cookies (_abck/bm_sz/ak_bmsc) are set on that response, so retrying on
+        # the same session usually clears it. `retries` adds extra attempts —
+        # callers validating right after save_cookies() pass retries>0; the
+        # throttled health check leaves it at 0 to stay fast. (issue #57)
+        for attempt in range(retries + 1):
+            try:
+                resp = await http.get(HOME_URL, allow_redirects=True, timeout=20)
+                final_url = str(resp.url)
+                # Must land back on emaplan.com (not a third-party SSO/error
+                # domain) AND not be sitting in the signin/OAuth flow.
+                if is_emoney_host(final_url) and not _is_signin_url(final_url):
+                    return True
+            except Exception:
+                pass
+            if attempt < retries:
+                await asyncio.sleep(delay)
+        return False
 
     async def get_page_html(self, url: str) -> str:
         http = await self.get_http()
@@ -727,7 +738,7 @@ async def get_authenticated_session() -> "EmoneyHttpSession | str":
     #    just completed, sync_chrome_session was used, or cookies were saved
     #    while a browser window happened to be open (the common stuck state).
     if _http_session.has_cookies():
-        if await _http_session.is_logged_in():
+        if await _http_session.is_logged_in(retries=2):
             _login_session.stop()          # cancel any pending browser window
             return _http_session
         # Cookies exist but are stale — fall through to re-authenticate
@@ -740,7 +751,7 @@ async def get_authenticated_session() -> "EmoneyHttpSession | str":
     chrome_cookies = extract_chrome_emaplan_cookies()
     if chrome_cookies:
         _http_session.save_cookies(chrome_cookies)
-        if await _http_session.is_logged_in():
+        if await _http_session.is_logged_in(retries=2):
             return _http_session
 
     # 4. Need fresh login via nodriver

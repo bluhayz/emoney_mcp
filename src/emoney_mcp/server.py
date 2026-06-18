@@ -2819,8 +2819,10 @@ async def _sync_chrome_session() -> dict:
             ),
         }
     _http_session.save_cookies(cookies)
-    # Verify they actually work
-    if await _http_session.is_logged_in():
+    # Verify they actually work. Retry the probe — the first request right after
+    # extracting fresh cookies frequently trips an Akamai bot challenge that
+    # 302s to SignIn even though the cookies are valid (issue #57).
+    if await _http_session.is_logged_in(retries=2):
         return {
             "success": True,
             "cookie_count": len(cookies),

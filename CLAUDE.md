@@ -2,7 +2,7 @@
 
 MCP server bridging Claude (and other MCP clients) to Emoney Advisor (`emaplan.com`). Emoney has no public API; this server uses reverse-engineered internal JSON endpoints + Chrome cookie extraction for auth.
 
-**Current version: 1.0.34 · 113 MCP tools.** Read-only data tools (cards + SNB + Profile + Vault + plan goals/cash flow + investment depth), transaction/rules **write** tools, an aggregation-refresh **ops** tool (#103), report links, and a large set of pure-Python planning/tax calculators (IRS 2026 figures).
+**Current version: 1.0.35 · 113 MCP tools.** Read-only data tools (cards + SNB + Profile + Vault + plan goals/cash flow + investment depth), transaction/rules **write** tools, an aggregation-refresh **ops** tool (#103), report links, and a large set of pure-Python planning/tax calculators (IRS 2026 figures).
 
 ---
 
@@ -10,7 +10,7 @@ MCP server bridging Claude (and other MCP clients) to Emoney Advisor (`emaplan.c
 
 ```
 src/emoney_mcp/
-├── server.py          # MCP entry point: list_tools(), call_tool(), _call_tool_inner(), private wrappers (93 tools)
+├── server.py          # MCP entry point: list_tools(), call_tool(), _call_tool_inner(), private wrappers (113 tools)
 ├── browser.py         # EmoneyHttpSession (curl_cffi + cookie persistence, 0o600), Chrome cookie extraction, nodriver fallback
 ├── scraper.py         # Backward-compat shim — re-exports scrapers/*; target of importlib.reload() in EMONEY_DEV mode
 └── scrapers/
@@ -227,7 +227,7 @@ if not card:
 
 ## Testing
 
-**Framework**: `pytest` + `pytest-asyncio` (`asyncio_mode = "auto"`). **27 test files, 473 tests, no live network calls.** All tests use `make_mock_http_session()` from `tests/helpers.py`, or patch `_get_card` / `_fetch_snb_raw` / `_csrf_post` directly.
+**Framework**: `pytest` + `pytest-asyncio` (`asyncio_mode = "auto"`). **37 test files, 600 tests, no live network calls.** All tests use `make_mock_http_session()` from `tests/helpers.py`, or patch `_get_card` / `_fetch_snb_raw` / `_csrf_post` directly.
 
 ```python
 from helpers import make_mock_http_session, load_fixture
@@ -267,7 +267,7 @@ Run tests: `pytest tests/ -v --tb=short`
 
 - **Tax constants are hardcoded for 2026** (`_TAX_YEAR` in `tax.py`). Update `_BRACKETS`, `_CONTRIBUTION_LIMITS`, `_STD_DEDUCTION`, `_LTCG_THRESHOLDS`, `_NIIT_THRESHOLD` each January.
 - **Card 8 `History` is oldest-first**; current value is the `NetWorth` field. Don't assume newest-first.
-- **CS/Spending writes go through the Nexus backend**, which can be in maintenance (`IsNexusAvailable:false`) — surface the error, don't treat it as a code bug.
+- **Transaction/rule writes run on the SNB API**, not the legacy `/ema/CS/Spending/*` path. That legacy path is served by the **retired Nexus backend** (`IsNexusAvailable:false` / HTTP 500) — it is *dead, not in maintenance*; retrying never succeeds. The lone exception is `CS/Spending/SetRules` (rule delete), which is still live. See **Data Sources → WRITE path**.
 - **`nodriver` runs in its own OS thread** with a separate event loop — do not `await` it from the main async context.
 - **`curl_cffi` is required** (not `aiohttp`/`httpx`) — Emoney blocks standard Python TLS fingerprints; Chrome impersonation is mandatory.
 - **`scraper.py` is the hot-reload target** — keep it a thin re-export shim; put all logic in `scrapers/`.

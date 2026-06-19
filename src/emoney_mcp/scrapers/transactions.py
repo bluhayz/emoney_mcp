@@ -209,12 +209,64 @@ async def update_transaction(
     result = await _snb_post(http_session, "UpdateTransaction", payload)
     if "error" in result:
         return result
+
+    requested = {k: v for k, v in
+                 [("category_id", category_id), ("description", description)]
+                 if v is not None}
+
+    # Post-write verification (#126). The SNB UpdateTransaction endpoint returns
+    # HTTP 200 even when the change does not commit to the store the read tools
+    # query — so a bare "ok" is NOT proof the write persisted. Reporting success
+    # on the 200 alone produces a false positive that silently misleads the
+    # caller (a financial-data correctness bug). Re-read the transaction and only
+    # claim success if the requested change is actually reflected.
+    from .spending import clear_snb_cache
+    clear_snb_cache()  # bust the 5-min SNB cache so we read post-write state
+    ok2, txns2, _ = await _fetch_snb_raw(http_session)
+    if not ok2:
+        # Couldn't read back — don't claim a verified success, but don't invent a
+        # failure either (the write may well have landed). Flag it honestly.
+        return {
+            "success": True,
+            "verified": False,
+            "transaction_id": str(transaction_id),
+            "updated": requested,
+            "warning": "Write was accepted (HTTP 200) but could not be confirmed "
+                       "— re-reading the transaction failed. Verify manually.",
+        }
+
+    match2 = next((t for t in txns2 if str(t.get("id")) == str(transaction_id)), None)
+    mismatches = {}
+    if match2 is None:
+        mismatches["transaction"] = {"expected": "present", "actual": "not found on read-back"}
+    else:
+        if category_id is not None and str(match2.get("categoryId")) != str(category_id):
+            mismatches["category_id"] = {
+                "expected": str(category_id),
+                "actual": (None if match2.get("categoryId") is None
+                           else str(match2.get("categoryId"))),
+            }
+        if description is not None and (match2.get("userDescription") or "") != description:
+            mismatches["description"] = {
+                "expected": description,
+                "actual": match2.get("userDescription"),
+            }
+
+    if mismatches:
+        return {
+            "error": "UpdateTransaction returned HTTP 200 but the change did not "
+                     "persist (confirmed by reading the transaction back). The SNB "
+                     "write was a no-op — the transaction is unchanged.",
+            "transaction_id": str(transaction_id),
+            "attempted": requested,
+            "actual": mismatches,
+        }
+
     return {
         "success": True,
+        "verified": True,
         "transaction_id": str(transaction_id),
-        "updated": {k: v for k, v in
-                    [("category_id", category_id), ("description", description)]
-                    if v is not None},
+        "updated": requested,
     }
 
 

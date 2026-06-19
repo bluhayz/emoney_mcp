@@ -189,7 +189,7 @@ async def update_transaction(
     # the requested change over them — otherwise a category-only update would
     # null out the user description (and vice-versa).
     from .spending import _fetch_snb_raw
-    cur_cat = cur_desc = cur_notes = None
+    cur_cat = cur_desc = cur_notes = cur_clean = None
     ok, txns, _ = await _fetch_snb_raw(http_session)
     if ok:
         match = next((t for t in txns if str(t.get("id")) == str(transaction_id)), None)
@@ -197,12 +197,23 @@ async def update_transaction(
             cur_cat = match.get("categoryId")
             cur_desc = match.get("userDescription")
             cur_notes = match.get("notes")
+            cur_clean = match.get("cleanDescription") or match.get("description")
+
+    # CRITICAL (#126): the SNB UpdateTransaction endpoint SILENTLY no-ops — it
+    # returns HTTP 200 but persists nothing — when userDescription is null. That
+    # is the stored state for every transaction the user never manually renamed,
+    # so category-only updates on those failed invisibly (the false-positive this
+    # tool shipped). The live web UI NEVER sends null: it always populates
+    # userDescription with the transaction's display text (cleanDescription).
+    # Mirror that exactly. Verified by capturing the official client's request
+    # and replaying it on our own session, 2026-06-19.
+    effective_desc = description if description is not None else (cur_desc or cur_clean)
 
     payload = {
         "transactionId": str(transaction_id),
         "categoryId": str(category_id) if category_id is not None
                       else (str(cur_cat) if cur_cat is not None else None),
-        "userDescription": description if description is not None else cur_desc,
+        "userDescription": effective_desc,
         "notes": cur_notes,
     }
 

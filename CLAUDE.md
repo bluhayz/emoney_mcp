@@ -2,7 +2,7 @@
 
 MCP server bridging Claude (and other MCP clients) to Emoney Advisor (`emaplan.com`). Emoney has no public API; this server uses reverse-engineered internal JSON endpoints + Chrome cookie extraction for auth.
 
-**Current version: 1.0.36 · 113 MCP tools.** Read-only data tools (cards + SNB + Profile + Vault + plan goals/cash flow + investment depth), transaction/rules **write** tools, an aggregation-refresh **ops** tool (#103), report links, and a large set of pure-Python planning/tax calculators (IRS 2026 figures).
+**Current version: 1.0.37 · 113 MCP tools.** Read-only data tools (cards + SNB + Profile + Vault + plan goals/cash flow + investment depth), transaction/rules **write** tools, an aggregation-refresh **ops** tool (#103), report links, and a large set of pure-Python planning/tax calculators (IRS 2026 figures).
 
 ---
 
@@ -157,7 +157,7 @@ The live web UI writes through the **SNB API** (`api.emoneyadvisor.com/snb-api/a
 
 | Action | Tool | Status |
 |--------|------|--------|
-| `UpdateTransaction` (SNB) | update_transaction | ✅ SNB, live-verified · **reads back to confirm persistence (#126)** |
+| `UpdateTransaction` (SNB) | update_transaction | ✅ SNB, live-verified · **must send non-null `userDescription` or it no-ops; reads back to confirm persistence (#126)** |
 | `GetBankTransactionRules` (SNB GET) | get_transaction_rules | ✅ SNB, live-verified |
 | `CreateRule` / `UpdateRule` (SNB, `{Rule, TransactionID}`) | add/update_transaction_rule | ✅ SNB, live-verified (#121) |
 | `SetRules` (CS/Spending bulk-replace) | delete_transaction_rule | ✅ live-verified (#121) |
@@ -166,6 +166,8 @@ The live web UI writes through the **SNB API** (`api.emoneyadvisor.com/snb-api/a
 | `updateTransactionSplits` (SNB) | update_transaction_splits | ✅ live-verified (#121) — POST a bare ARRAY of split objects |
 | `ApplyRule` | apply_transaction_rule | ⏳ dead legacy path; no standalone SNB ApplyRule (folds into Create/UpdateRule's TransactionID) — effectively deprecated |
 
+> **`UpdateTransaction` null-userDescription no-op (#126, verified live 2026-06-19):** the SNB `UpdateTransaction` endpoint returns HTTP 200 but **persists nothing when `userDescription` is `null`** — the stored state for any transaction the user never manually renamed. The live web UI never sends null; it always populates `userDescription` with the transaction's display text (`cleanDescription`). `update_transaction` mirrors this (falls back to existing `userDescription` → `cleanDescription`) and reads the transaction back to confirm the write actually landed, returning an honest error otherwise. Found by capturing the official client's XHR; `categoryId`/`transactionId` are plain strings here (NOT the `{value}`-wrapped WCF shape the rules/splits endpoints require — wrapping them yields HTTP 400).
+>
 > **Rule/ID shapes (#121, verified live 2026-06-18):** SNB serializes `ruleID`/`categoryID` (and split `categoryID`/`transactionID`) as WCF complex types `{"value":"123"}`, NOT bare strings — Create/Update/SetRules *require* the wrapped `{Value}` form (flat → HTTP 400/500). Use `transactions._unwrap_id`/`_wrap_id`. **CreateRule must OMIT `RuleID`** on create (sending `{Value:null}` → 500 — the bug that shipped in 1.0.31). **Rule delete has no single endpoint**: the UI bulk-replaces the whole collection via `POST /ema/CS/Spending/SetRules {rules:[...]}` (the one *live* CS/Spending route — the rest of that path is dead Nexus), CSRF token in the `__RequestVerificationToken` header (`_csrf_post_json`). hide = SNB `ToggleTransactionVisibility {hideTransaction, transactionId}`.
 >
 > **Splits write (#121):** `update_transaction_splits(transaction_id, splits)` POSTs a **bare JSON array** to SNB `updateTransactionSplits`. The first split is the parent (`transactionID:{value}`, `parentTransactionID:null`); each additional split is a child (`transactionID:null`, `parentTransactionID:{value}`, `identity:N`); `splitAmount` is a string; transaction metadata (descriptions/dates) is carried over from `GetBankTransactionSplits`. Pass a single split to un-split. Contract captured live (split + revert observed).

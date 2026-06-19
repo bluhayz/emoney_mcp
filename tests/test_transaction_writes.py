@@ -193,6 +193,34 @@ class TestUpdateTransaction:
         assert result["actual"]["category_id"] == {"expected": "42", "actual": "7"}
 
     @pytest.mark.asyncio
+    async def test_null_userdescription_falls_back_to_clean_description(self):
+        """#126 ROOT CAUSE: the SNB endpoint silently no-ops (200, no persist)
+        when userDescription is null — the stored state for any never-renamed
+        transaction. A category-only update must send the cleanDescription as
+        userDescription (mirroring the web UI), never null."""
+        session = make_mock_http_session()
+        captured = {}
+
+        async def snb(http_session, action, payload):
+            captured["payload"] = payload
+            return {"ok": True}
+
+        pre = [{"id": "txn-9", "categoryId": "111", "userDescription": None,
+                "cleanDescription": "EAT N PARK", "notes": None}]
+        post = [{"id": "txn-9", "categoryId": "21", "userDescription": "EAT N PARK",
+                 "cleanDescription": "EAT N PARK", "notes": None}]
+        raw = patch("emoney_mcp.scrapers.spending._fetch_snb_raw",
+                    new=AsyncMock(side_effect=[(True, pre, {}), (True, post, {})]))
+        with patch("emoney_mcp.scrapers.transactions._snb_post", side_effect=snb), raw:
+            from emoney_mcp.scrapers.transactions import update_transaction
+            result = await update_transaction(session, transaction_id="txn-9", category_id="21")
+        assert result["success"] is True
+        assert result["verified"] is True
+        # The decisive assertion: userDescription is the clean description, NOT None
+        assert captured["payload"]["userDescription"] == "EAT N PARK"
+        assert captured["payload"]["categoryId"] == "21"
+
+    @pytest.mark.asyncio
     async def test_unverifiable_write_is_flagged_not_claimed(self):
         """#126: if the read-back itself fails, don't claim a verified success —
         return success with verified=False and a warning."""

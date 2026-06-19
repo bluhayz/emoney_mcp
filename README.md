@@ -97,7 +97,7 @@ Then point Claude Desktop at your local clone:
 
 ---
 
-## Available tools (93 total)
+## Available tools (113 total)
 
 ### 🏠 Overview & Dashboard
 
@@ -257,7 +257,8 @@ Then point Claude Desktop at your local clone:
 | `get_transaction_rules` | **List all auto-categorization rules** — returns the full rule set Emoney applies to new transactions (merchant match, keyword match, amount range, category assignment) |
 | `add_transaction_rule` | **Create a new categorization rule** — define how Emoney should auto-categorize future transactions. Required: `rule` dict with rule fields (merchant, keyword, category_id, etc.) |
 | `update_transaction_rule` | **Modify an existing rule** — overwrite specific rule fields while keeping others. Required: `rule_id`, `rule` dict with updated fields |
-| `apply_transaction_rule` | **Apply a rule immediately** to existing transactions — re-runs the rule against the transaction history without waiting for new imports. Required: `rule_id` |
+| `delete_transaction_rule` | **Remove a rule.** SNB has no single-delete endpoint, so this bulk-replaces the rule collection (the rule set minus the target) via the one live `CS/Spending/SetRules` route. Required: `rule_id` |
+| `apply_transaction_rule` | **Apply a rule immediately** to existing transactions. *Effectively deprecated* — the legacy `ApplyRule` path is dead and SNB has no standalone equivalent; creating/updating a rule with `transaction_id` set already categorizes the triggering transaction and auto-matches future ones. Required: `rule_id` |
 
 ### 📊 Reports
 
@@ -327,6 +328,14 @@ Then point Claude Desktop at your local clone:
 |------|-------------|
 | `model_life_event_scenario` | "What happens to the plan if ___?" — models early_retirement, home_purchase, new_child, job_loss, downsizing, or market_crash against a baseline retirement projection and contrasts ending balance/depletion. Required: `event`. Optional: `params` (object), `years`, `annual_spending`, `real_return` |
 | `get_estate_liquidity_analysis` | Whether the estate can pay tax + debts + final expenses without a forced sale; flags illiquid-heavy estates at risk. Optional: `filing_status`, `final_expenses`, `liquidation_haircut` |
+
+### 🧮 Planning & Account Ops (v1.0.32)
+
+| Tool | Description |
+|------|-------------|
+| `get_long_term_care_analysis` | **Can we self-insure long-term care?** Projects LTC cost at care age (by care setting + state), nets out any existing policy benefit, and compares the remaining need against the portfolio grown to that age. Required: `current_age`. Optional: `care_age`, `care_years`, `care_setting`, `daily_cost`, `state`, `ltc_inflation`, `coverage`, `investment_return`, `existing_annual_benefit` |
+| `get_real_estate_investment_analysis` | **Rental/investment property metrics** — cap rate, NOI, cash-on-cash, DSCR, GRM, equity, and annual cash flow. Required: `monthly_rent`. Optional: `property_value`, `property_name`, `monthly_operating_expenses`, `operating_expense_ratio`, `mortgage_balance`, `monthly_mortgage_payment`, `purchase_price`, `cash_invested`, `annual_appreciation` |
+| `refresh_account_aggregation` | **Force a sync of linked institutions.** Triggers eMoney's account-aggregation refresh (the aggapi service) and returns the activity id. Refreshes every connection by default; use after `get_aggregation_status` flags a stale/broken feed. Optional: `institution`, `connection_id` |
 
 ---
 
@@ -514,21 +523,24 @@ Tools with multiple independent data sources use `asyncio.gather()` for parallel
 Claude Desktop
      │  MCP stdio
      ▼
-emoney_mcp/server.py         ← tool registration + dispatch (109 tools)
+emoney_mcp/server.py         ← tool registration + registry dispatch (113 tools)
 emoney_mcp/scraper.py         ← re-export shim (backward-compatible)
 emoney_mcp/scrapers/          ← domain-split scraping package
   ├── _helpers.py             ←   shared URL constants + TTL-cached _get_card()
-  ├── accounts.py             ←   balance sheet tools
-  ├── investments.py          ←   holdings, performance, transactions
+  ├── accounts.py             ←   balance sheet, client profile, aggregation status
+  ├── investments.py          ←   holdings, performance, transactions, dividends, sector/geo
   ├── spending.py             ←   SNB-based cash flow tools + TTL cache
   ├── goals.py                ←   goals, financial summary, health score, monthly review
   ├── tax.py                  ←   2026 IRS tax planning tools
-  ├── retirement.py           ←   runway, withdrawal, net worth projection, run_scenario
-  ├── portfolio.py            ←   asset location, rebalancing, card discovery
-  ├── planning.py             ←   insurance gap analysis
-  ├── transactions.py         ←   transaction writes, splits, rules engine (v0.9.0)
+  ├── retirement.py           ←   runway, withdrawal, projections, scenarios, life events
+  ├── portfolio.py            ←   asset location, rebalancing, risk metrics, card discovery
+  ├── planning.py             ←   insurance, mortgage, estate, LTC, real estate, healthcare
+  ├── transactions.py         ←   transaction/rules/splits writes via SNB API (v0.9.0+)
   ├── reports.py              ←   report catalog + URL generation (v0.9.0)
-  └── explore.py              ←   Emoney site explorer (dev/discovery tool)
+  ├── vault.py                ←   eMoney Vault document inventory (#104)
+  ├── plan_api.py             ←   My Plan internal-api BFF — goals + lifetime cash flow (#96/#82)
+  ├── aggregation_api.py      ←   account-aggregation refresh via aggapi (#103)
+  └── explore.py              ←   Emoney site/endpoint explorer (dev/discovery tools)
 emoney_mcp/browser.py         ← session management + nodriver login
      │
      ├── curl_cffi AsyncSession  ← Chrome TLS fingerprint for API calls
@@ -576,21 +588,30 @@ The spending module uses a separate REST API authenticated with a short-lived JW
 | `api/values/GetFilteredTransactions` | All bank/CC transactions with `categoryId` (full history, client-side filtered) |
 | `api/values/GetCategories` | 114 spending category names mapped by ID |
 
-### CS/Spending (transaction writes, rules, reports)
+### Transaction & rule writes — SNB API (modern path)
 
-Write endpoints live on the main emaplan.com host under `/ema/CS/Spending/`. All require an ASP.NET anti-forgery token (`__RequestVerificationToken`) in the POST body and the `X-Requested-With: XMLHttpRequest` header. jQuery bracket notation is used for nested fields (`TransactionID[Value]=...`).
+The live web UI writes through the **SNB API** (`api.emoneyadvisor.com/snb-api/api/values/<action>`), the same host + auth (Bearer JWT + `apikey`) as the SNB reads — JSON bodies, not form-encoded. The legacy `/ema/CS/Spending/*` write path is served by the retired **Nexus** backend (returns `IsNexusAvailable:false` / HTTP 500) and is **dead, not in maintenance** — retrying never succeeds. Migrated to SNB across v1.0.30–v1.0.34 (#19, #121).
+
+| Endpoint | Operation | Notes |
+|----------|-----------|-------|
+| `snb-api/.../UpdateTransaction` | Edit description and/or category | merges over current values |
+| `snb-api/.../GetBankTransactionRules` | List rules | 34 rules where legacy reported 0 |
+| `snb-api/.../CreateRule` · `UpdateRule` | Create / modify a rule | body `{Rule, TransactionID}`; ids are WCF `{Value}` objects; **omit `RuleID` on create** |
+| `snb-api/.../ToggleTransactionVisibility` | Hide / unhide a transaction | |
+| `snb-api/.../GetBankTransactionSplits` · `updateTransactionSplits` | Read / write splits | write POSTs a **bare array** of split objects (first = parent) |
+| `CS/Spending/SetRules` | Delete a rule (bulk-replace whole collection) | the **one** live CS/Spending route; CSRF token in `__RequestVerificationToken` header |
+| `CS/Reports/GetReportUrl` | Generate a URL for a named Emoney report | |
+
+### internal-api BFF, Vault & aggregation (read + ops)
 
 | Endpoint | Operation |
 |----------|-----------|
-| `CS/Spending/UpdateTransaction` | Edit transaction description and/or category |
-| `CS/Spending/HideTransaction` | Exclude a transaction from spending view |
-| `CS/Spending/GetTransactionSplits` | Fetch existing splits for a transaction |
-| `CS/Spending/UpdateTransactionSplits` | Write split sub-transactions |
-| `CS/Spending/GetClassifiableHoldings` | Fetch transaction categorization rules |
-| `CS/Spending/AddRule` | Create a new auto-categorization rule |
-| `CS/Spending/UpdateRule` | Modify an existing rule |
-| `CS/Spending/ApplyRule` | Apply a rule retroactively to history |
-| `CS/Reports/GetReportUrl` | Generate a URL for a named Emoney report |
+| `internal-api/.../plans/<id>/projection/montecarlo/goals` (+ `goalfunding/retirement`) | Per-goal funding status → `get_all_goals_funding_status` (#96) |
+| `internal-api/.../plans/<id>/projection/linear/cashflow/details` | Year-by-year lifetime cash flow → `get_lifetime_cash_flow_projection` (#82) |
+| `CS/Vault` + `/ema/api/v1/vault/<guid>/items?path=Vault` | Vault folder inventory → `get_vault_documents` (#104) |
+| aggapi `.../connections/<id>/refresh` (Bearer from `CS/Aggregation/GetToken`) | Trigger an aggregation re-pull → `refresh_account_aggregation` (#103) |
+
+Both BFF families use the same Apigee auth as the SNB API (Bearer JWT + `apikey`); the aggapi service needs a distinct `aggApiKey` scraped from the Organizer/Accounts page.
 
 ---
 

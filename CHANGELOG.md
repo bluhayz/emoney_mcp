@@ -2,7 +2,72 @@
 
 All notable changes to emoney-mcp are documented here.
 
-## [1.0.31] — 2026-06-18 (current)
+## [1.0.35] — 2026-06-19 (current)
+
+Documentation sync — no code changes. Brings the published docs in line with the v1.0.28–1.0.34 work and forces a PyPI re-publish so the updated `README_PYPI.md` description ships.
+
+### Docs
+
+- **`README.md` / `README_PYPI.md`** — tool count 93 → **113**; added `delete_transaction_rule`, `get_long_term_care_analysis` (#78), `get_real_estate_investment_analysis` (#100), and `refresh_account_aggregation` (#103). README architecture/endpoints rewritten: transaction & rule writes now documented on the **SNB API** (the legacy `/ema/CS/Spending/*` path is retired Nexus, not "maintenance"), with the internal-api BFF, Vault, and aggregation endpoints added.
+- **`CHANGELOG.md`** — backfilled the missing 1.0.28–1.0.30 and 1.0.32–1.0.34 entries.
+- **`CLAUDE.md`** — corrected stale figures (113 tools, 600 tests, 37 test files) and rewrote the "Nexus maintenance" constraint to reflect the retired-Nexus / SNB-write reality.
+
+## [1.0.34] — 2026-06-19
+
+Migrate `update_transaction_splits` to the SNB API — **completes the #121 write-path migration**. Every transaction write now runs on the live SNB path; the dead legacy Nexus form-encoded path is fully removed.
+
+### Changed
+
+- **`scrapers/transactions.py`** (#121) — `update_transaction_splits(transaction_id, splits)` now POSTs a **bare JSON array** to SNB `updateTransactionSplits` (contract captured live by splitting a real transaction and reverting it). The first split is the parent (`transactionID:{value}`, `parentTransactionID:null`); each additional split is a child (`transactionID:null`, `parentTransactionID:{value}`, `identity:N`); `splitAmount` is a string and transaction metadata (descriptions/dates) is carried over from `GetBankTransactionSplits`. Pass a single split to un-split. The new signature replaces the old legacy form-encoded one. `get_transaction_splits` refactored to share `_fetch_splits_raw`.
+- Removed the now-dead legacy form-encoding split path and its allowlist constants.
+
+### Status of #19/#121
+
+- This was the **last** write still on the dead legacy Nexus path. Only `apply_transaction_rule` remains there — there is no standalone SNB `ApplyRule` (it folds into Create/UpdateRule's `TransactionID`), so it is effectively deprecated.
+
+### Tests
+
+- Updated split tests to the SNB array shape. Full suite: **600 passed**, ruff + mypy clean.
+
+## [1.0.33] — 2026-06-18
+
+Migrate rule-delete / hide / get-splits to the SNB API and fix `CreateRule` (#121). All contracts captured via live Chrome network capture and verified end-to-end (test account restored to baseline).
+
+### Changed
+
+- **`scrapers/transactions.py`** (#121):
+  - **`CreateRule` fix** — must **OMIT `RuleID`** on create; sending `RuleID:{Value:null}` caused HTTP 500 (the create half of the 1.0.31 bug). Rule payloads switched to the captured PascalCase `{Value}` shape.
+  - **`delete_transaction_rule`** — SNB has no single-delete endpoint, so the UI bulk-replaces the whole collection via `POST /ema/CS/Spending/SetRules {rules:[...]}` (the one *live* CS/Spending route), CSRF token in the `__RequestVerificationToken` header (new `_csrf_post_json` helper).
+  - **`hide_transaction`** → SNB `ToggleTransactionVisibility {hideTransaction, transactionId}`.
+  - **`get_transaction_splits`** → SNB `GetBankTransactionSplits?transactionID=<id>` (camelCase, wrapped `{value}` ids).
+
+### Still pending (#121)
+
+- `update_transaction_splits` — the SNB POST endpoint exists but its body wasn't yet captured (writing splits mutates a real transaction; deferred to 1.0.34).
+
+### Tests
+
+- Tests updated to the SNB shapes. Full suite: **598 passed**.
+
+## [1.0.32] — 2026-06-18
+
+Track A+B of the FP&A roadmap — long-term care (#78), real-estate investment (#100), and an account-aggregation **ops** tool (#103) — plus a fix to the rule-write id shape (#121). **111 → 113 tools.**
+
+### Added
+
+- **`scrapers/planning.py`** (#78) — `get_long_term_care_analysis`: LTC cost projection by care setting + state, existing-policy benefit offset, and self-insure feasibility vs. the portfolio grown to care age.
+- **`scrapers/planning.py`** (#100) — `get_real_estate_investment_analysis`: cap rate, NOI, cash-on-cash, DSCR, GRM, equity, and annual cash flow; auto-fills value/mortgage from `get_home_equity`.
+- **`scrapers/aggregation_api.py`** (#103) — `refresh_account_aggregation`: new module solving the aggapi auth flow — a **distinct `aggApiKey`** (from page config) + a Bearer minted from `/ema/CS/Aggregation/GetToken`, then `POST aggapi/.../connections/<id>/refresh` → `202 {activityId}`. Live-verified.
+
+### Fixed
+
+- **`scrapers/transactions.py`** (#121) — SNB serializes `ruleID`/`categoryID` as WCF `{"value": ...}` objects, not flat strings. v1.0.31's `add`/`update_transaction_rule` sent flat strings → HTTP 400, and `get_transaction_rules` emitted malformed nested ids. Fixed with `_unwrap_id`/`_wrap_id`; updated fixtures to the real wrapped shape. Live-verified read → update(no-op) → read.
+
+### Tests
+
+- +32 (LTC 11, real estate 11, aggregation 10) and updated rule-write fixtures. Full suite: **596 passed**, ruff + mypy clean.
+
+## [1.0.31] — 2026-06-18
 
 Migrate rule **creation/editing** off the retired Nexus write path (#19).
 
@@ -17,6 +82,46 @@ Migrate rule **creation/editing** off the retired Nexus write path (#19).
 ### Tests
 
 - Rewrote `TestAddTransactionRule` / `TestUpdateTransactionRule` and the add-rule raw-gating tests to assert the SNB `CreateRule`/`UpdateRule` contract (action name + camelCase `Rule` payload). Full suite: 564 passed.
+
+## [1.0.30] — 2026-06-18
+
+Migrate `update_transaction` + `get_transaction_rules` to the **SNB API** (#19). Live network capture of the official portal (2026-06-18) showed the web UI does **not** use the legacy `/ema/CS/Spending/*` endpoints our write tools targeted — those are served by the Nexus subsystem (`IsNexusAvailable:false`, effectively dead). The UI uses the SNB API (`api.emoneyadvisor.com/snb-api`), the same host + auth as our SNB reads.
+
+### Changed
+
+- **`scrapers/transactions.py`** — `update_transaction` now POSTs JSON `{transactionId, categoryId, userDescription, notes}` to `snb-api/.../UpdateTransaction`, **merging** the requested change over the transaction's current values (from the SNB read cache) so a category-only update doesn't null the description.
+- `get_transaction_rules` now GETs `snb-api/.../GetBankTransactionRules`. The legacy path reported 0 rules even when rules exist; this account actually has **34**. New SNB rule shape: `{ruleID, categoryID, descriptionContains, userDescription, minAmount, maxAmount, startDay, endDay, extensionData}`.
+- New `_snb_post` / `_snb_get` helpers reuse `_get_snb_credentials` + `_snb_headers`.
+
+Verified live (34 rules returned; idempotent update no-op). 562 tests pass. Rule writes/delete + hide + splits still on the legacy path at this point — staged for follow-up.
+
+## [1.0.29] — 2026-06-18
+
+Add `delete_transaction_rule` + fix a `get_transaction_rules` empty-case guard (#19). **109 → 110 tools.**
+
+### Added
+
+- **`scrapers/transactions.py`** — `delete_transaction_rule` wires up the client-side `RemoveRule` action (at this point still `POST /ema/CS/Spending/RemoveRule {ruleID}` via `_csrf_post`; later moved to SNB `SetRules` in 1.0.33). Lets the #19 verification create and then fully remove its own throwaway test rule.
+
+### Fixed
+
+- `get_transaction_rules` maintenance guard matched the bare substring `"isnexusavailable"`, but the no-rules 500 response carries `"IsNexusAvailable":true` — so an empty rule set on a healthy backend was wrongly surfaced as a maintenance error instead of an empty list. Now matches `"isnexusavailable":false` specifically.
+
+### Tests
+
+- `TestDeleteTransactionRule` (4) + two GetRules envelope cases. 566 passing.
+
+## [1.0.28] — 2026-06-18
+
+Retry `is_logged_in()` to absorb the Akamai first-hit challenge (#57).
+
+### Fixed
+
+- **`browser.py`** — the first portal request right after fresh cookies are extracted frequently trips an Akamai bot challenge that 302s to SignIn even when the cookies are valid (the challenge cookies `_abck`/`bm_sz`/`ak_bmsc` are only set on that first response). `sync_chrome_session` then reported "Found cookies but they don't authenticate" and fell through to a needless re-login. `is_logged_in()` now takes optional `retries`/`delay`; the same-session retry clears the challenge. Post-save validations pass `retries=2`; the throttled health check stays single-shot (`retries=0`) to avoid added latency.
+
+### Tests
+
+- Adds `test_browser_helpers.py` retry coverage.
 
 ## [1.0.27] — 2026-06-17
 

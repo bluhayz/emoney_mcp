@@ -23,31 +23,32 @@ Two backends are in play:
    Use ``_unwrap_id`` when reading and ``_wrap_id`` when writing.
 
    Migrated to SNB and verified live 2026-06-18 (#121):
-     hide_transaction       → SNB ``ToggleTransactionVisibility`` {hideTransaction, transactionId}
-     get_transaction_splits → SNB ``GetBankTransactionSplits?transactionID=<id>``
-     delete_transaction_rule→ SNB has NO single delete; the UI bulk-replaces the
-                              whole collection via ``POST /ema/CS/Spending/SetRules``
-                              {rules:[{RuleID:{Value},CategoryID:{Value},...}]} (this
-                              one legacy CS/Spending route is LIVE, not Nexus-dead),
-                              CSRF token in the ``__RequestVerificationToken`` header.
+     hide_transaction          → SNB ``ToggleTransactionVisibility`` {hideTransaction, transactionId}
+     get_transaction_splits    → SNB ``GetBankTransactionSplits?transactionID=<id>``
+     update_transaction_splits → SNB ``updateTransactionSplits`` — POST a bare ARRAY
+                                 of split objects (first = parent w/ transactionID set;
+                                 rest = children w/ parentTransactionID set + identity).
+     delete_transaction_rule   → SNB has NO single delete; the UI bulk-replaces the
+                                 whole collection via ``POST /ema/CS/Spending/SetRules``
+                                 {rules:[{RuleID:{Value},CategoryID:{Value},...}]} (this
+                                 one legacy CS/Spending route is LIVE, not Nexus-dead),
+                                 CSRF token in the ``__RequestVerificationToken`` header.
 
 2. **Legacy ``/ema/CS/Spending/*``** (ASP.NET anti-forgery POST via
    ``_csrf_post``) — the original reverse-engineered path, mostly served by the
    retired "Nexus" subsystem (``IsNexusAvailable:false`` for writes — permanent,
    not temporary). ``SetRules`` is the exception: it is the live persist path for
-   rule changes (see ``_csrf_post_json``). Still on the dead legacy path / pending
-   migration: ``apply_transaction_rule`` and ``update_transaction_splits`` — the
-   SNB ``UpdateTransactionSplits`` (POST) endpoint exists but its body was not yet
-   captured.
+   rule changes (see ``_csrf_post_json``). The only tool still on the dead legacy
+   path is ``apply_transaction_rule`` — there is no standalone SNB ApplyRule
+   (application folds into Create/UpdateRule via the ``TransactionID`` field), so
+   the standalone tool is effectively deprecated.
 """
 
-import logging
 import os
 
 from ._helpers import BASE_URL, _SNB_API
 
 _SPENDING = f"{BASE_URL}/ema/CS/Spending"
-_log = logging.getLogger("emoney_mcp.scrapers.transactions")
 
 
 async def _snb_post(http_session, action: str, payload: dict) -> dict:
@@ -97,12 +98,6 @@ async def _snb_get(http_session, action: str) -> dict:
     if resp.status_code != 200 or "json" not in resp.headers.get("content-type", ""):
         return {"error": f"{action} returned HTTP {resp.status_code}"}
     return {"ok": True, "data": resp.json()}
-
-# Allowlist of fields accepted per split when building the UpdateTransactionSplits
-# form body — so caller-supplied dict keys can't smuggle arbitrary form fields
-# into the Emoney write request.
-_ALLOWED_SPLIT_KEYS = {"TransactionSplitID", "CategoryID", "SplitAmount", "UserDescription"}
-_ALLOWED_SPLIT_SUBKEYS = {"Value", "IsValid"}
 
 
 def _unwrap_id(v):
@@ -252,6 +247,34 @@ async def hide_transaction(
     }
 
 
+async def _fetch_splits_raw(http_session, transaction_id: str):
+    """GET the raw SNB split objects for a transaction.
+
+    Returns ``(items, None)`` on success or ``(None, error_dict)``. A non-split
+    transaction returns a single element covering the full amount.
+    """
+    from .spending import _get_snb_credentials, _snb_headers
+    jwt_token, api_key = await _get_snb_credentials(http_session)
+    if not jwt_token:
+        return None, {"error": "Could not retrieve SNB credentials for GetBankTransactionSplits — "
+                               "session may be stale (try sync_chrome_session)."}
+    http = await http_session.get_http()
+    resp = await http.get(
+        f"{_SNB_API}/api/values/GetBankTransactionSplits",
+        params={"transactionID": str(transaction_id)},
+        headers=_snb_headers(jwt_token, api_key), timeout=20,
+    )
+    if resp.status_code != 200 or "json" not in resp.headers.get("content-type", ""):
+        return None, {"error": f"GetBankTransactionSplits returned HTTP {resp.status_code}"}
+    data = resp.json()
+    items = (
+        data if isinstance(data, list)
+        else (data.get("splits") or data.get("Splits") or []) if isinstance(data, dict)
+        else []
+    )
+    return items, None
+
+
 async def get_transaction_splits(http_session, transaction_id: str) -> dict:
     """
     Return all splits for a transaction. Returns the existing splits plus
@@ -265,25 +288,9 @@ async def get_transaction_splits(http_session, transaction_id: str) -> dict:
     transaction returns a single element covering the full amount. (The legacy
     ``/ema/CS/Spending/GetAllBankTransactionSplits`` Nexus endpoint is retired.)
     """
-    from .spending import _get_snb_credentials, _snb_headers
-    jwt_token, api_key = await _get_snb_credentials(http_session)
-    if not jwt_token:
-        return {"error": "Could not retrieve SNB credentials for GetBankTransactionSplits — "
-                         "session may be stale (try sync_chrome_session)."}
-    http = await http_session.get_http()
-    resp = await http.get(
-        f"{_SNB_API}/api/values/GetBankTransactionSplits",
-        params={"transactionID": str(transaction_id)},
-        headers=_snb_headers(jwt_token, api_key), timeout=20,
-    )
-    if resp.status_code != 200 or "json" not in resp.headers.get("content-type", ""):
-        return {"error": f"GetBankTransactionSplits returned HTTP {resp.status_code}"}
-    data = resp.json()
-    items: list = (
-        data if isinstance(data, list)
-        else (data.get("splits") or data.get("Splits") or []) if isinstance(data, dict)
-        else []
-    )
+    items, err = await _fetch_splits_raw(http_session, transaction_id)
+    if err:
+        return err
 
     splits = []
     total = 0.0
@@ -308,54 +315,87 @@ async def get_transaction_splits(http_session, transaction_id: str) -> dict:
     }
 
 
+def _split_id(v):
+    """Wrap a split id as ``{"value": ...}`` — the exact (lowercase) shape the
+    web UI sends to ``updateTransactionSplits`` (captured live, #121)."""
+    return {"value": str(v)} if v is not None else None
+
+
 async def update_transaction_splits(
     http_session,
-    transaction_splits: list[dict],
+    transaction_id: str,
+    splits: list[dict],
 ) -> dict:
     """
-    Replace all splits on a transaction.
+    Replace ALL splits on a transaction with the provided list.
 
-    transaction_splits — list of split dicts, each with:
-      {
-        "TransactionSplitID": "...",   (omit or null for new splits)
-        "CategoryID": {"Value": "65"},
-        "SplitAmount": 25.00,
-        "UserDescription": "optional label"
-      }
-    Amounts must sum to the transaction total. Negative amounts for expenses.
+    transaction_id — the SNB transaction ID to split
+    splits         — list of ``{"category_id": "65", "amount": -25.00,
+                     "description": "optional"}``. Amounts must sum to the
+                     transaction total (negative for expenses). Pass a single
+                     split to un-split (merge back to one).
 
-    NOTE (#121): this is the LAST write still on the dead legacy
-    ``/ema/CS/Spending/UpdateTransactionSplits`` (Nexus) path. The SNB endpoint
-    ``UpdateTransactionSplits`` (POST) is confirmed to exist, but its request
-    body shape has not yet been captured (writing splits in the live UI mutates a
-    real transaction, so capture was deferred). Until migrated, this tool may
-    fail with a Nexus maintenance error. ``get_transaction_splits`` is already on
-    SNB; its GET shape (wrapped ``{value}`` ids) is the likely body template.
+    Posts the bare split array to the SNB API (``updateTransactionSplits``), the
+    live web UI's path, verified live 2026-06-18 (#121). The first split becomes
+    the parent (``transactionID`` set, ``parentTransactionID`` null); additional
+    splits are children (``transactionID`` null, ``parentTransactionID`` set).
+    Transaction metadata (descriptions, dates) is carried over from the existing
+    record. (The legacy ``/ema/CS/Spending/UpdateTransactionSplits`` Nexus
+    endpoint is retired.)
     """
-    # Emoney expects a flat form-encoded representation of the array.
-    # jQuery serializes [{...},{...}] as transactionSplits[0][Field]=..., etc.
-    flat: dict = {}
-    for i, split in enumerate(transaction_splits):
-        for key, val in split.items():
-            if key not in _ALLOWED_SPLIT_KEYS:
-                _log.debug("Ignoring unexpected transaction-split field: %r", key)
-                continue
-            if isinstance(val, dict):
-                for subkey, subval in val.items():
-                    if subkey not in _ALLOWED_SPLIT_SUBKEYS:
-                        _log.debug("Ignoring unexpected split subfield: %s[%r]", key, subkey)
-                        continue
-                    flat[f"transactionSplits[{i}][{key}][{subkey}]"] = str(subval) if subval is not None else ""
-            else:
-                flat[f"transactionSplits[{i}][{key}]"] = str(val) if val is not None else ""
+    if not splits:
+        return {"error": "Provide at least one split."}
+    for s in splits:
+        if s.get("category_id") is None:
+            return {"error": "Each split needs a 'category_id'."}
+        if s.get("amount") is None:
+            return {"error": "Each split needs an 'amount'."}
 
-    result = await _csrf_post(http_session, "UpdateTransactionSplits", flat)
-    if isinstance(result, dict) and "error" in result:
+    # Carry the transaction's metadata (description/dates) from the existing record.
+    existing, err = await _fetch_splits_raw(http_session, transaction_id)
+    if err:
+        return err
+    if not existing:
+        return {"error": f"Transaction {transaction_id} not found (no splits returned)."}
+    parent = existing[0]
+    clean_desc = parent.get("cleanDescription")
+    orig_desc  = parent.get("description")
+    post_date  = parent.get("postDate")
+    txn_date   = parent.get("transactionDate")
+
+    body = []
+    for i, s in enumerate(splits):
+        obj = {
+            "extensionData":    {},
+            "action":           0,
+            "categoryID":       _split_id(s["category_id"]),
+            "cleanDescription": clean_desc,
+            "description":      s.get("description") or orig_desc,
+            "postDate":         post_date,
+            "splitAmount":      f"{float(s['amount']):.2f}",
+            "transactionDate":  txn_date,
+            "userDescription":  s.get("user_description"),
+        }
+        if i == 0:
+            obj["transactionID"] = _split_id(transaction_id)
+            obj["parentTransactionID"] = None
+        else:
+            obj["transactionID"] = None
+            obj["parentTransactionID"] = _split_id(transaction_id)
+            obj["identity"] = i
+        body.append(obj)
+
+    result = await _snb_post(http_session, "updateTransactionSplits", body)
+    if "error" in result:
         return result
-    return {
+    total = round(sum(float(s["amount"]) for s in splits), 2)
+    return _maybe_raw({
         "success": True,
-        "splits_updated": len(transaction_splits),
-    }
+        "transaction_id": transaction_id,
+        "splits_written": len(splits),
+        "total_amount": total,
+        "is_split": len(splits) > 1,
+    }, result.get("data"))
 
 
 # ---------------------------------------------------------------------------

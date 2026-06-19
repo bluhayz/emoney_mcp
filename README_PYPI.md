@@ -164,7 +164,7 @@ Get me a link to the Liquidity Report.
 
 ---
 
-## Available tools (93 total)
+## Available tools (113 total)
 
 ### Overview & Dashboard
 | Tool | What it answers |
@@ -278,7 +278,8 @@ Get me a link to the Liquidity Report.
 | `get_transaction_rules` | **New.** List all Emoney auto-categorization rules |
 | `add_transaction_rule` | **New.** Create a rule to auto-categorize future transactions |
 | `update_transaction_rule` | **New.** Modify an existing categorization rule |
-| `apply_transaction_rule` | **New.** Apply a rule retroactively to existing transactions |
+| `delete_transaction_rule` | **New.** Remove a categorization rule |
+| `apply_transaction_rule` | Apply a rule to existing transactions (deprecated — creating a rule already categorizes its trigger and future matches) |
 
 ### Reports
 | Tool | What it answers |
@@ -340,6 +341,13 @@ Get me a link to the Liquidity Report.
 |------|----------------|
 | `model_life_event_scenario` | "What happens to the plan if ___?" — early retirement, home purchase, new child, job loss, downsizing, or a market crash, baseline vs. scenario |
 | `get_estate_liquidity_analysis` | Can the estate pay its tax + debts + final expenses without a forced sale? Flags illiquid-heavy estates at risk |
+
+### Planning & Account Ops (v1.0.32 — 3 new tools)
+| Tool | What it answers |
+|------|----------------|
+| `get_long_term_care_analysis` | Can we self-insure long-term care, or do we need a policy? Projects LTC cost at care age, nets out any policy benefit, vs. the portfolio grown to that age |
+| `get_real_estate_investment_analysis` | Is this rental a good deal? Cap rate, NOI, cash-on-cash, DSCR, GRM, equity, and annual cash flow |
+| `refresh_account_aggregation` | Force eMoney to re-pull a stale or broken linked-institution feed |
 
 ---
 

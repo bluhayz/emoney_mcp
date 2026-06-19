@@ -2,7 +2,23 @@
 
 All notable changes to emoney-mcp are documented here.
 
-## [1.0.36] — 2026-06-19 (current)
+## [1.0.37] — 2026-06-19 (current)
+
+Fix the **root cause** of the `update_transaction` no-op (#126) — found via live request capture of the official Emoney web client.
+
+### Fixed
+
+- **`scrapers/transactions.py` — `update_transaction` (#126)** — the SNB `UpdateTransaction` endpoint **silently no-ops (returns HTTP 200 but persists nothing) when `userDescription` is `null`**. That is the stored state for every transaction the user never manually renamed, so category-only updates on those transactions failed invisibly — the real cause of the false-positive. The tool merged in the raw (null) `userDescription`; the live web UI never sends null — it always populates `userDescription` with the transaction's display text (`cleanDescription`). The tool now mirrors the UI: when no description is supplied it falls back to the existing `userDescription` or the `cleanDescription`, never `null`. **Verified live**: capturing the official client's request showed `userDescription:"EAT N PARK MONROEVILLE PA"` (not null); replaying that shape on our own session persisted the change, and the patched tool now round-trips category-only updates end-to-end (`success/verified: true`).
+
+### How it was found
+
+Black-box payload probing proved the endpoint returns 200 for every shape but persists nothing, and that ID-wrapping (à la #121) is rejected (400). Reading the Spending SPA bundle showed the UI posts the identical `{transactionId, categoryId, userDescription, notes}` body to the same endpoint. A live network capture of an actual UI recategorization revealed the one difference: a non-null `userDescription`.
+
+### Tests
+
+- Added a regression asserting a category-only update on a transaction with `userDescription: null` sends the `cleanDescription` (not null). Full suite: **603 passed**.
+
+## [1.0.36] — 2026-06-19
 
 Fix a correctness-critical false-positive in `update_transaction` (#126).
 

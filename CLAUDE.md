@@ -2,7 +2,7 @@
 
 MCP server bridging Claude (and other MCP clients) to Emoney Advisor (`emaplan.com`). Emoney has no public API; this server uses reverse-engineered internal JSON endpoints + Chrome cookie extraction for auth.
 
-**Current version: 1.0.33 · 113 MCP tools.** Read-only data tools (cards + SNB + Profile + Vault + plan goals/cash flow + investment depth), transaction/rules **write** tools, an aggregation-refresh **ops** tool (#103), report links, and a large set of pure-Python planning/tax calculators (IRS 2026 figures).
+**Current version: 1.0.34 · 113 MCP tools.** Read-only data tools (cards + SNB + Profile + Vault + plan goals/cash flow + investment depth), transaction/rules **write** tools, an aggregation-refresh **ops** tool (#103), report links, and a large set of pure-Python planning/tax calculators (IRS 2026 figures).
 
 ---
 
@@ -163,12 +163,12 @@ The live web UI writes through the **SNB API** (`api.emoneyadvisor.com/snb-api/a
 | `SetRules` (CS/Spending bulk-replace) | delete_transaction_rule | ✅ live-verified (#121) |
 | `ToggleTransactionVisibility` (SNB) | hide_transaction | ✅ SNB, live-verified (#121) |
 | `GetBankTransactionSplits` (SNB GET) | get_transaction_splits | ✅ SNB, live-verified (#121) |
-| `UpdateTransactionSplits` | update_transaction_splits | ⏳ SNB endpoint exists; POST body not yet captured — still on dead legacy path |
-| `ApplyRule` | apply_transaction_rule | ⏳ dead legacy path (application folds into Create/UpdateRule's TransactionID) |
+| `updateTransactionSplits` (SNB) | update_transaction_splits | ✅ live-verified (#121) — POST a bare ARRAY of split objects |
+| `ApplyRule` | apply_transaction_rule | ⏳ dead legacy path; no standalone SNB ApplyRule (folds into Create/UpdateRule's TransactionID) — effectively deprecated |
 
 > **Rule/ID shapes (#121, verified live 2026-06-18):** SNB serializes `ruleID`/`categoryID` (and split `categoryID`/`transactionID`) as WCF complex types `{"value":"123"}`, NOT bare strings — Create/Update/SetRules *require* the wrapped `{Value}` form (flat → HTTP 400/500). Use `transactions._unwrap_id`/`_wrap_id`. **CreateRule must OMIT `RuleID`** on create (sending `{Value:null}` → 500 — the bug that shipped in 1.0.31). **Rule delete has no single endpoint**: the UI bulk-replaces the whole collection via `POST /ema/CS/Spending/SetRules {rules:[...]}` (the one *live* CS/Spending route — the rest of that path is dead Nexus), CSRF token in the `__RequestVerificationToken` header (`_csrf_post_json`). hide = SNB `ToggleTransactionVisibility {hideTransaction, transactionId}`.
 >
-> **Remaining (#121):** only `update_transaction_splits` — the SNB `UpdateTransactionSplits` POST body wasn't captured (writing splits mutates a real transaction; deferred).
+> **Splits write (#121):** `update_transaction_splits(transaction_id, splits)` POSTs a **bare JSON array** to SNB `updateTransactionSplits`. The first split is the parent (`transactionID:{value}`, `parentTransactionID:null`); each additional split is a child (`transactionID:null`, `parentTransactionID:{value}`, `identity:N`); `splitAmount` is a string; transaction metadata (descriptions/dates) is carried over from `GetBankTransactionSplits`. Pass a single split to un-split. Contract captured live (split + revert observed).
 
 ### CS/Profile and CS/Reports
 - `GET /ema/CS/Profile/GetProfileData` — household identity (names, DOB, ages, dependents, properties) → `get_client_profile`.

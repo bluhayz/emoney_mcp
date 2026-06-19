@@ -863,21 +863,23 @@ async def list_tools() -> list[Tool]:
         Tool(
             name="update_transaction_splits",
             description=(
-                "Replace all splits on a transaction — divide one transaction across "
-                "multiple categories with specific amounts. Amounts must sum to the total. "
-                "Each split needs CategoryID (numeric string) and SplitAmount (negative for expenses). "
-                "Useful for 'Split this Costco charge: $80 groceries and $40 gas'."
+                "Replace ALL splits on a transaction — divide one transaction across multiple "
+                "categories with specific amounts (or pass a single split to un-split/merge back). "
+                "Amounts must sum to the transaction total (negative for expenses). Requires "
+                "transaction_id and a splits list, each split {category_id, amount, description?}. "
+                "Useful for 'Split this Costco charge: -$80 groceries and -$40 gas'."
             ),
             inputSchema={
                 "type": "object",
                 "properties": {
-                    "transaction_splits": {
+                    "transaction_id": {"type": "string", "description": "The SNB transaction ID to split"},
+                    "splits": {
                         "type": "array",
-                        "description": "List of split objects: [{CategoryID:{Value:'65'}, SplitAmount:-80.00, UserDescription:'Groceries'}, ...]",
+                        "description": "Splits that replace the current ones: [{\"category_id\":\"65\", \"amount\":-80.00, \"description\":\"Groceries\"}, ...]. Amounts must sum to the transaction total.",
                         "items": {"type": "object"},
                     },
                 },
-                "required": ["transaction_splits"],
+                "required": ["transaction_id", "splits"],
             },
         ),
         # ── Rules engine ──────────────────────────────────────────────────
@@ -2246,7 +2248,8 @@ _DISPATCH = {
                                                _A("hidden", _bool, True)),
     "get_transaction_splits":        _passthru("get_transaction_splits", _A("transaction_id", str)),
     "update_transaction_splits":     _passthru("update_transaction_splits",
-                                               _A("transaction_splits", _identity)),
+                                               _A("transaction_id", str),
+                                               _A("splits", _identity)),
     "get_transaction_rules":         _passthru("get_transaction_rules"),
     "add_transaction_rule":          _passthru("add_transaction_rule",
                                                _A("description_contains", str),

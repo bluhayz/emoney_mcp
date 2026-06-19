@@ -43,7 +43,7 @@ MINIMAL_ARGS = {
     "update_transaction": {"transaction_id": "t1", "category_id": "5"},
     "hide_transaction": {"transaction_id": "t1"},
     "get_transaction_splits": {"transaction_id": "t1"},
-    "update_transaction_splits": {"transaction_splits": []},
+    "update_transaction_splits": {"transaction_id": "t1", "splits": [{"category_id": "5", "amount": -10}]},
     "add_transaction_rule": {"description_contains": "X", "category_id": "5"},
     "update_transaction_rule": {"rule_id": "9"},
     "apply_transaction_rule": {"rule_id": "9"},

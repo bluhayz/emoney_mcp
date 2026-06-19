@@ -81,7 +81,8 @@ class TestCallToolErrorType:
 
 
 # ---------------------------------------------------------------------------
-# #56 — update_transaction_splits only emits allowlisted form fields
+# #56 / #121 — update_transaction_splits builds a typed SNB body; caller-supplied
+# unexpected keys cannot smuggle fields into the request.
 # ---------------------------------------------------------------------------
 
 class TestSplitFieldAllowlist:
@@ -90,29 +91,37 @@ class TestSplitFieldAllowlist:
     async def test_unexpected_keys_dropped(self):
         from emoney_mcp.scrapers.transactions import update_transaction_splits
 
+        _existing = [{
+            "categoryID": {"value": "5"}, "splitAmount": -10.0,
+            "cleanDescription": "X", "description": "X",
+            "postDate": "2026-06-18T00:00:00Z", "transactionDate": "2026-06-18T00:00:00Z",
+            "transactionID": {"value": "t1"}, "parentTransactionID": None,
+        }]
         captured: dict = {}
 
-        async def fake_post(session, path, data):
-            captured.update(data)
+        async def fake_post(session, action, payload):
+            captured["body"] = payload
             return {"ok": True}
 
-        with patch("emoney_mcp.scrapers.transactions._csrf_post", new=fake_post):
-            await update_transaction_splits(AsyncMock(), transaction_splits=[
-                {
-                    "TransactionSplitID": "ts1",
-                    "CategoryID": {"Value": "5"},
-                    "SplitAmount": 10.0,
-                    "UserDescription": "ok",
-                    "injected": "evil",          # must be dropped
-                    "CategoryID_typo": {"x": 1},  # must be dropped
-                },
-            ])
+        with patch("emoney_mcp.scrapers.transactions._fetch_splits_raw",
+                   new=AsyncMock(return_value=(_existing, None))):
+            with patch("emoney_mcp.scrapers.transactions._snb_post", new=fake_post):
+                await update_transaction_splits(AsyncMock(), transaction_id="t1", splits=[
+                    {
+                        "category_id": "5",
+                        "amount": -10.0,
+                        "description": "ok",
+                        "injected": "evil",          # must be ignored
+                        "TransactionSplitID": "ts1",  # legacy key — must be ignored
+                    },
+                ])
 
-        keys = set(captured)
-        assert "transactionSplits[0][SplitAmount]" in keys
-        assert "transactionSplits[0][CategoryID][Value]" in keys
-        assert "transactionSplits[0][UserDescription]" in keys
-        assert not any("injected" in k or "evil" in k or "typo" in k for k in keys)
+        # Body is a typed list; only the known fields appear — no smuggled keys.
+        obj = captured["body"][0]
+        assert obj["categoryID"] == {"value": "5"}
+        assert obj["splitAmount"] == "-10.00"
+        assert "injected" not in obj and "evil" not in obj.values()
+        assert "TransactionSplitID" not in obj
 
 
 # ---------------------------------------------------------------------------

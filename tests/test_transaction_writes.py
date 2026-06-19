@@ -310,26 +310,89 @@ class TestGetTransactionSplits:
 # ===========================================================================
 
 class TestUpdateTransactionSplits:
+    # Existing-split metadata returned by GetBankTransactionSplits (carried over).
+    _EXISTING = [{
+        "categoryID": {"value": "103"}, "splitAmount": -80.0,
+        "cleanDescription": "VENMO PAYMENT", "description": "VENMO PAYMENT",
+        "postDate": "2026-06-18T00:00:00Z", "transactionDate": "2026-06-18T00:00:00Z",
+        "transactionID": {"value": "txn-1"}, "parentTransactionID": None,
+    }]
 
     @pytest.mark.asyncio
-    async def test_success(self):
+    async def test_two_way_split_builds_parent_and_child(self):
         session = make_mock_http_session()
-        splits = [
-            {"TransactionSplitID": None, "CategoryID": {"Value": "1"}, "SplitAmount": 30.0, "UserDescription": ""},
-            {"TransactionSplitID": None, "CategoryID": {"Value": "2"}, "SplitAmount": 55.0, "UserDescription": ""},
-        ]
-        with _make_csrf_mock({"Success": True}):
-            from emoney_mcp.scrapers.transactions import update_transaction_splits
-            result = await update_transaction_splits(session, transaction_splits=splits)
-        assert result["success"] is True
-        assert result["splits_updated"] == 2
+        captured = {}
+
+        async def cap(http_session, action, payload):
+            captured["action"] = action
+            captured["payload"] = payload
+            return {"ok": True}
+
+        with patch("emoney_mcp.scrapers.transactions._fetch_splits_raw",
+                   new=AsyncMock(return_value=(self._EXISTING, None))):
+            with patch("emoney_mcp.scrapers.transactions._snb_post", side_effect=cap):
+                from emoney_mcp.scrapers.transactions import update_transaction_splits
+                result = await update_transaction_splits(session, transaction_id="txn-1", splits=[
+                    {"category_id": "103", "amount": -40.00},
+                    {"category_id": "103", "amount": -40.00},
+                ])
+        assert result["success"] is True and result["splits_written"] == 2 and result["is_split"] is True
+        assert captured["action"] == "updateTransactionSplits"
+        body = captured["payload"]
+        assert isinstance(body, list) and len(body) == 2
+        # parent: transactionID set, parentTransactionID null; amount is a string
+        assert body[0]["transactionID"] == {"value": "txn-1"}
+        assert body[0]["parentTransactionID"] is None
+        assert body[0]["categoryID"] == {"value": "103"}
+        assert body[0]["splitAmount"] == "-40.00"
+        # child: transactionID null, parentTransactionID set, identity present
+        assert body[1]["transactionID"] is None
+        assert body[1]["parentTransactionID"] == {"value": "txn-1"}
+        assert body[1]["identity"] == 1
+        # metadata carried over from the existing record
+        assert body[0]["description"] == "VENMO PAYMENT"
+        assert body[0]["transactionDate"] == "2026-06-18T00:00:00Z"
 
     @pytest.mark.asyncio
-    async def test_csrf_error_propagates(self):
+    async def test_single_split_unsplits(self):
         session = make_mock_http_session()
-        with _make_csrf_mock({"error": "UpdateTransactionSplits returned HTTP 400", "response_body": "Bad Request"}):
-            from emoney_mcp.scrapers.transactions import update_transaction_splits
-            result = await update_transaction_splits(session, transaction_splits=[])
+        captured = {}
+
+        async def cap(http_session, action, payload):
+            captured["payload"] = payload
+            return {"ok": True}
+
+        with patch("emoney_mcp.scrapers.transactions._fetch_splits_raw",
+                   new=AsyncMock(return_value=(self._EXISTING, None))):
+            with patch("emoney_mcp.scrapers.transactions._snb_post", side_effect=cap):
+                from emoney_mcp.scrapers.transactions import update_transaction_splits
+                result = await update_transaction_splits(session, transaction_id="txn-1", splits=[
+                    {"category_id": "103", "amount": -80.00},
+                ])
+        assert result["is_split"] is False
+        assert len(captured["payload"]) == 1
+        assert captured["payload"][0]["parentTransactionID"] is None
+
+    @pytest.mark.asyncio
+    async def test_validation_errors(self):
+        session = make_mock_http_session()
+        from emoney_mcp.scrapers.transactions import update_transaction_splits
+        assert "error" in await update_transaction_splits(session, transaction_id="t", splits=[])
+        assert "error" in await update_transaction_splits(session, transaction_id="t",
+                                                          splits=[{"amount": -10}])  # no category_id
+        assert "error" in await update_transaction_splits(session, transaction_id="t",
+                                                          splits=[{"category_id": "5"}])  # no amount
+
+    @pytest.mark.asyncio
+    async def test_snb_error_propagates(self):
+        session = make_mock_http_session()
+        with patch("emoney_mcp.scrapers.transactions._fetch_splits_raw",
+                   new=AsyncMock(return_value=(self._EXISTING, None))):
+            with patch("emoney_mcp.scrapers.transactions._snb_post",
+                       new=AsyncMock(return_value={"error": "updateTransactionSplits returned HTTP 400"})):
+                from emoney_mcp.scrapers.transactions import update_transaction_splits
+                result = await update_transaction_splits(session, transaction_id="txn-1",
+                                                         splits=[{"category_id": "5", "amount": -80}])
         assert "error" in result
 
 

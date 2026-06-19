@@ -111,9 +111,16 @@ class TestUpdateTransaction:
 
     _TXNS = [{"id": "txn-123", "categoryId": "7", "userDescription": "Old desc", "notes": None}]
 
-    def _patch_raw(self):
+    def _patch_raw(self, post=None):
+        """Patch _fetch_snb_raw with a 2-call sequence: the pre-write read (current
+        values, for the merge) then the post-write read-back (#126 verification).
+
+        ``post`` is the transaction list the read-back sees; defaults to the
+        pre-write state (i.e. nothing changed → simulates a no-op write)."""
+        post_state = self._TXNS if post is None else post
         return patch("emoney_mcp.scrapers.spending._fetch_snb_raw",
-                     new=AsyncMock(return_value=(True, self._TXNS, {})))
+                     new=AsyncMock(side_effect=[(True, self._TXNS, {}),
+                                                (True, post_state, {})]))
 
     @pytest.mark.asyncio
     async def test_update_category_preserves_description(self):
@@ -125,10 +132,12 @@ class TestUpdateTransaction:
             captured["payload"] = payload
             return {"ok": True}
 
-        with patch("emoney_mcp.scrapers.transactions._snb_post", side_effect=snb), self._patch_raw():
+        post = [{"id": "txn-123", "categoryId": "42", "userDescription": "Old desc", "notes": None}]
+        with patch("emoney_mcp.scrapers.transactions._snb_post", side_effect=snb), self._patch_raw(post):
             from emoney_mcp.scrapers.transactions import update_transaction
             result = await update_transaction(session, transaction_id="txn-123", category_id="42")
         assert result["success"] is True
+        assert result["verified"] is True
         assert result["transaction_id"] == "txn-123"
         assert result["updated"]["category_id"] == "42"
         # merge: category changed, description preserved (not nulled)
@@ -146,7 +155,8 @@ class TestUpdateTransaction:
             captured["payload"] = payload
             return {"ok": True}
 
-        with patch("emoney_mcp.scrapers.transactions._snb_post", side_effect=snb), self._patch_raw():
+        post = [{"id": "txn-123", "categoryId": "7", "userDescription": "Coffee run", "notes": None}]
+        with patch("emoney_mcp.scrapers.transactions._snb_post", side_effect=snb), self._patch_raw(post):
             from emoney_mcp.scrapers.transactions import update_transaction
             result = await update_transaction(session, transaction_id="txn-123", description="Coffee run")
         assert result["updated"]["description"] == "Coffee run"
@@ -156,14 +166,46 @@ class TestUpdateTransaction:
     @pytest.mark.asyncio
     async def test_update_both_fields(self):
         session = make_mock_http_session()
+        post = [{"id": "txn-123", "categoryId": "10", "userDescription": "Lunch", "notes": None}]
         with patch("emoney_mcp.scrapers.transactions._snb_post",
-                   new=AsyncMock(return_value={"ok": True})), self._patch_raw():
+                   new=AsyncMock(return_value={"ok": True})), self._patch_raw(post):
             from emoney_mcp.scrapers.transactions import update_transaction
             result = await update_transaction(
                 session, transaction_id="txn-123", category_id="10", description="Lunch")
         assert result["success"] is True
+        assert result["verified"] is True
         assert "category_id" in result["updated"]
         assert "description" in result["updated"]
+
+    @pytest.mark.asyncio
+    async def test_no_op_write_reports_error_not_false_success(self):
+        """#126: a 200 from SNB that does NOT persist must surface as an error,
+        not a false-positive success. Read-back still shows the old category."""
+        session = make_mock_http_session()
+        # post-write read-back returns the UNCHANGED transaction (no-op write)
+        with patch("emoney_mcp.scrapers.transactions._snb_post",
+                   new=AsyncMock(return_value={"ok": True})), self._patch_raw():
+            from emoney_mcp.scrapers.transactions import update_transaction
+            result = await update_transaction(session, transaction_id="txn-123", category_id="42")
+        assert "success" not in result
+        assert "error" in result
+        assert "did not persist" in result["error"]
+        assert result["actual"]["category_id"] == {"expected": "42", "actual": "7"}
+
+    @pytest.mark.asyncio
+    async def test_unverifiable_write_is_flagged_not_claimed(self):
+        """#126: if the read-back itself fails, don't claim a verified success —
+        return success with verified=False and a warning."""
+        session = make_mock_http_session()
+        raw = patch("emoney_mcp.scrapers.spending._fetch_snb_raw",
+                    new=AsyncMock(side_effect=[(True, self._TXNS, {}), (False, [], {})]))
+        with patch("emoney_mcp.scrapers.transactions._snb_post",
+                   new=AsyncMock(return_value={"ok": True})), raw:
+            from emoney_mcp.scrapers.transactions import update_transaction
+            result = await update_transaction(session, transaction_id="txn-123", category_id="42")
+        assert result["success"] is True
+        assert result["verified"] is False
+        assert "warning" in result
 
     @pytest.mark.asyncio
     async def test_neither_field_provided_returns_error(self):

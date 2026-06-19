@@ -2,7 +2,19 @@
 
 All notable changes to emoney-mcp are documented here.
 
-## [1.0.35] — 2026-06-19 (current)
+## [1.0.36] — 2026-06-19 (current)
+
+Fix a correctness-critical false-positive in `update_transaction` (#126).
+
+### Fixed
+
+- **`scrapers/transactions.py` — `update_transaction` (#126)** — the tool returned `{"success": true}` on the SNB `UpdateTransaction` HTTP 200 alone, without confirming the write persisted. The SNB endpoint returns 200 even when the change does **not** commit to the store the read tools query, so no-op writes were reported as successes — a silent data-integrity bug for a financial tool. Now adds a **post-write read-back**: after the POST it busts the SNB cache, re-reads the transaction, and only returns `success`/`verified: true` if the requested `category_id`/`description` is actually reflected. If the change didn't persist it returns an honest `error` (with `attempted` vs `actual`); if the read-back itself is unavailable it returns `success` flagged `verified: false` with a warning rather than claiming a verified write.
+
+### Tests
+
+- Updated `update_transaction` tests to model persistence (2-call `_fetch_snb_raw` sequence) and added regressions: a no-op write now surfaces as an `error`, and an unverifiable write is flagged rather than falsely claimed. Full suite: **602 passed**.
+
+## [1.0.35] — 2026-06-19
 
 Documentation sync — no code changes. Brings the published docs in line with the v1.0.28–1.0.34 work and forces a PyPI re-publish so the updated `README_PYPI.md` description ships.
 

@@ -2,7 +2,7 @@
 
 MCP server bridging Claude (and other MCP clients) to Emoney Advisor (`emaplan.com`). Emoney has no public API; this server uses reverse-engineered internal JSON endpoints + Chrome cookie extraction for auth.
 
-**Current version: 1.0.35 · 113 MCP tools.** Read-only data tools (cards + SNB + Profile + Vault + plan goals/cash flow + investment depth), transaction/rules **write** tools, an aggregation-refresh **ops** tool (#103), report links, and a large set of pure-Python planning/tax calculators (IRS 2026 figures).
+**Current version: 1.0.36 · 113 MCP tools.** Read-only data tools (cards + SNB + Profile + Vault + plan goals/cash flow + investment depth), transaction/rules **write** tools, an aggregation-refresh **ops** tool (#103), report links, and a large set of pure-Python planning/tax calculators (IRS 2026 figures).
 
 ---
 
@@ -157,7 +157,7 @@ The live web UI writes through the **SNB API** (`api.emoneyadvisor.com/snb-api/a
 
 | Action | Tool | Status |
 |--------|------|--------|
-| `UpdateTransaction` (SNB) | update_transaction | ✅ SNB, live-verified |
+| `UpdateTransaction` (SNB) | update_transaction | ✅ SNB, live-verified · **reads back to confirm persistence (#126)** |
 | `GetBankTransactionRules` (SNB GET) | get_transaction_rules | ✅ SNB, live-verified |
 | `CreateRule` / `UpdateRule` (SNB, `{Rule, TransactionID}`) | add/update_transaction_rule | ✅ SNB, live-verified (#121) |
 | `SetRules` (CS/Spending bulk-replace) | delete_transaction_rule | ✅ live-verified (#121) |

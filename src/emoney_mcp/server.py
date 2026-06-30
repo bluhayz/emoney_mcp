@@ -949,10 +949,9 @@ async def list_tools() -> list[Tool]:
         Tool(
             name="apply_transaction_rule",
             description=(
-                "Apply an existing rule to all past transactions that match its description pattern. "
-                "This bulk-recategorizes historical transactions. "
-                "rule_id comes from get_transaction_rules. "
-                "Useful for 'Apply the Starbucks rule to all past transactions'."
+                "[DEPRECATED — non-functional] The ApplyRule endpoint was retired with the Nexus backend "
+                "and always returns an error. Use add_transaction_rule or update_transaction_rule with "
+                "transaction_id to apply a rule to a specific transaction instead."
             ),
             inputSchema={
                 "type": "object",

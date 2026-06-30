@@ -476,7 +476,11 @@ async def run_monte_carlo_retirement(
             "p90":    round(s[int(m * 0.90)], 2),
         })
 
-    # Find the SWR (to nearest 0.25%) that achieves 90% success
+    # Find the SWR (to nearest 0.25%) that achieves 90% success.
+    # Use an independent RNG seeded at 42 so the SWR result does not depend on
+    # the simulations count (bug #136 — previously the SWR search continued on
+    # the same rng object whose state was advanced through the main simulation).
+    swr_rng = random.Random(42)
     safe_swr = None
     for candidate_rate_bp in range(500, 100, -25):
         candidate_rate = candidate_rate_bp / 10_000
@@ -487,8 +491,8 @@ async def run_monte_carlo_retirement(
             spending = cand_withdrawal
             ok       = True
             for _yr in range(years):
-                ret  = rng.gauss(mean_return, std_dev)
-                inf  = max(0.0, rng.gauss(inflation_mean, inflation_std))
+                ret  = swr_rng.gauss(mean_return, std_dev)
+                inf  = max(0.0, swr_rng.gauss(inflation_mean, inflation_std))
                 bal  = bal * (1 + ret) - spending
                 spending *= (1 + inf)
                 if bal <= 0:

@@ -66,10 +66,10 @@ async def get_accounts(http_session) -> dict:
     card1 = await _get_card(http, 1)
     if card1 is None:
         return {
-            "net_worth": net_worth,
-            "total_assets": total_assets,
-            "total_liabilities": total_liab,
-            "error": "Card 1 (accounts) unavailable",
+            "error": (
+                "Card 1 (accounts) unavailable. "
+                "Net-worth totals are still accessible via get_net_worth."
+            )
         }
 
     groups = []

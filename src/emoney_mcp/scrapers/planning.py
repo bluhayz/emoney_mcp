@@ -50,8 +50,8 @@ _log = logging.getLogger("emoney_mcp.scrapers.planning")
 # 2026 IRS constants used by get_gifting_and_estate_strategy
 # ---------------------------------------------------------------------------
 _ANNUAL_GIFT_EXCLUSION  = 19_000        # per recipient per year (2026)
-_ESTATE_EXEMPTION_SINGLE = 13_610_000   # federal estate/gift tax exemption (2025)
-_ESTATE_EXEMPTION_MFJ    = 27_220_000   # married — each spouse has their own exemption
+_ESTATE_EXEMPTION_SINGLE = 13_990_000   # federal estate/gift tax exemption (2026)
+_ESTATE_EXEMPTION_MFJ    = 27_980_000   # married (2026)
 _ESTATE_TOP_RATE         = 0.40         # federal estate tax top marginal rate
 _529_SUPERFUND_YEARS     = 5            # years that can be front-loaded in one go
 

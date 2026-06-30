@@ -39,7 +39,7 @@ import json
 import time
 from datetime import datetime, timedelta
 
-from ._helpers import _get_card, _INV_URL, _parse_card8_history
+from ._helpers import _get_card, _get_investment_data, _INV_URL, _parse_card8_history
 
 
 async def get_holdings(http_session) -> dict:
@@ -47,14 +47,9 @@ async def get_holdings(http_session) -> dict:
     Return all investment positions across every account that has holdings.
     Source: GET /ema/CS/Investments/GetInvestmentData
     """
-    ts = int(time.time() * 1000)
-    http = await http_session.get_http()
-
-    resp = await http.get(f"{_INV_URL}/GetInvestmentData?_={ts}", timeout=30)
-    if resp.status_code != 200 or "json" not in resp.headers.get("content-type", ""):
-        return {"error": f"GetInvestmentData returned {resp.status_code}. Session may have expired."}
-
-    data = resp.json()
+    data, err = await _get_investment_data(http_session)
+    if err:
+        return err
 
     portfolio_value = data.get("Holdings")   # total holdings value (excl. cash)
     portfolio_cash  = data.get("Cash")
@@ -115,14 +110,9 @@ async def get_asset_allocation(http_session) -> dict:
     Pulls the rich AssetAllocation object from GetInvestmentData and
     supplements with any model targets from CardSwitcher card 4.
     """
-    ts = int(time.time() * 1000)
-    http = await http_session.get_http()
-
-    resp = await http.get(f"{_INV_URL}/GetInvestmentData?_={ts}", timeout=30)
-    if resp.status_code != 200 or "json" not in resp.headers.get("content-type", ""):
-        return {"error": f"GetInvestmentData returned {resp.status_code}. Session may have expired."}
-
-    data = resp.json()
+    data, err = await _get_investment_data(http_session)
+    if err:
+        return err
     total_portfolio = (data.get("Holdings") or 0) + (data.get("Cash") or 0)
 
     aa = data.get("AssetAllocation") or {}
@@ -491,13 +481,10 @@ async def get_dividend_income_analysis(http_session, days: int = 365) -> dict:
     total_income = round(dividends + interest, 2)
 
     # Portfolio value for the yield calc
-    ts = int(time.time() * 1000)
-    http = await http_session.get_http()
-    resp = await http.get(f"{_INV_URL}/GetInvestmentData?_={ts}", timeout=30)
+    inv_data, _ = await _get_investment_data(http_session)
     portfolio_value = None
-    if resp.status_code == 200 and "json" in resp.headers.get("content-type", ""):
-        d = resp.json()
-        portfolio_value = (d.get("Holdings") or 0) + (d.get("Cash") or 0) or d.get("CurrentValue")
+    if inv_data is not None:
+        portfolio_value = (inv_data.get("Holdings") or 0) + (inv_data.get("Cash") or 0) or inv_data.get("CurrentValue")
 
     yield_pct = round(total_income / portfolio_value * 100, 2) if portfolio_value else None
 
@@ -544,13 +531,9 @@ async def get_sector_geographic_allocation(http_session) -> dict:
     available; this surfaces geographic concentration and style tilt, which the
     broad asset-class view hides.
     """
-    ts = int(time.time() * 1000)
-    http = await http_session.get_http()
-    resp = await http.get(f"{_INV_URL}/GetInvestmentData?_={ts}", timeout=30)
-    if resp.status_code != 200 or "json" not in resp.headers.get("content-type", ""):
-        return {"error": f"GetInvestmentData returned {resp.status_code}. Session may have expired."}
-
-    data = resp.json()
+    data, err = await _get_investment_data(http_session)
+    if err:
+        return err
     aa = data.get("AssetAllocation") or {}
     asset_types = aa.get("AssetTypes") or []
     if not asset_types:

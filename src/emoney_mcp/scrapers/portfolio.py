@@ -38,7 +38,7 @@ import statistics
 import time
 from datetime import datetime
 
-from ._helpers import _get_card, _INV_URL, _month_offset, _parse_card8_history
+from ._helpers import _get_card, _get_investment_data, _INV_URL, _month_offset, _parse_card8_history
 from .accounts import _build_account_type_map, _match_tax_bucket
 from .investments import get_asset_allocation
 
@@ -158,23 +158,9 @@ def _classify_asset(ticker: str, description: str) -> str:
 # Shared investment data fetch helper
 # ---------------------------------------------------------------------------
 
-async def _get_investment_data(http_session) -> tuple[dict | None, dict | None]:
-    """
-    Fetch GetInvestmentData and return (data_dict, error_dict).
-
-    On success: (data, None).  On failure: (None, {"error": "..."}).
-    Callers should check the second element first.
-    """
-    http = await http_session.get_http()
-    resp = await http.get(f"{_INV_URL}/GetInvestmentData?_={int(time.time()*1000)}", timeout=30)
-    if resp.status_code != 200 or "json" not in resp.headers.get("content-type", ""):
-        return None, {"error": f"GetInvestmentData returned {resp.status_code}. Session may have expired."}
-    # Guard against a JSON null / non-object body so callers never receive
-    # (None, None) and crash on data.get(...). Same hardening as _get_card.
-    payload = resp.json()
-    if not isinstance(payload, dict):
-        return None, {"error": "GetInvestmentData returned an unexpected (non-object) body."}
-    return payload, None
+# _get_investment_data is imported from ._helpers (shared TTL-cached implementation).
+# portfolio.py, investments.py, and tax.py all use the same cached instance so
+# a single conversation turn fires at most one GetInvestmentData HTTP request.
 
 
 async def get_asset_location_efficiency(http_session) -> dict:

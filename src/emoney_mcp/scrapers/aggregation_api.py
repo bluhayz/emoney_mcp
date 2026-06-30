@@ -44,6 +44,7 @@ _ACCOUNTS_URL = f"{BASE_URL}/ema/CS/Organizer/Accounts"
 _GETTOKEN_URL = f"{BASE_URL}/ema/CS/Aggregation/GetToken"
 
 _AGGKEY_RE = re.compile(r'aggApiKey["\']?\s*[:=]\s*["\']([A-Za-z0-9]{20,40})["\']')
+_UUID_RE   = re.compile(r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$', re.I)
 
 _log = logging.getLogger("emoney_mcp.scrapers.aggregation_api")
 
@@ -89,6 +90,8 @@ async def _get_agg_credentials(http_session):
     guid = _jwt_user_guid(token)
     if not guid:
         return None, None, None, {"error": "Could not read the aggregation user id from the token."}
+    if not _UUID_RE.match(guid):
+        return None, None, None, {"error": f"Aggregation token userId is not a valid UUID: {guid!r}"}
     return token, agg_api_key, guid, None
 
 

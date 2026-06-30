@@ -45,7 +45,7 @@ _ltcg_rate(taxable_income, filing_status)    — Long-term capital gains rate
 import time
 from datetime import datetime
 
-from ._helpers import _INV_URL
+from ._helpers import _INV_URL, _get_investment_data
 from .accounts import get_retirement_accounts, _build_account_type_map, _match_tax_bucket
 from .spending import get_income_summary
 
@@ -316,13 +316,9 @@ async def get_tax_loss_harvesting(http_session) -> dict:
     """
     type_map = await _build_account_type_map(http_session)
 
-    ts = int(time.time() * 1000)
-    http = await http_session.get_http()
-    resp = await http.get(f"{_INV_URL}/GetInvestmentData?_={ts}", timeout=30)
-    if resp.status_code != 200 or "json" not in resp.headers.get("content-type", ""):
-        return {"error": f"GetInvestmentData returned {resp.status_code}."}
-
-    data = resp.json()
+    data, err = await _get_investment_data(http_session)
+    if err:
+        return err
 
     taxable_losses   = []
     deferred_losses  = []
@@ -783,13 +779,9 @@ async def get_capital_gains_exposure(
         inc_result = await get_income_summary(http_session, days=365)
         annual_income = inc_result.get("total_income", 0) if "error" not in inc_result else 0
 
-    ts = int(time.time() * 1000)
-    http = await http_session.get_http()
-    resp = await http.get(f"{_INV_URL}/GetInvestmentData?_={ts}", timeout=30)
-    if resp.status_code != 200 or "json" not in resp.headers.get("content-type", ""):
-        return {"error": f"GetInvestmentData returned {resp.status_code}."}
-
-    data = resp.json()
+    data, err = await _get_investment_data(http_session)
+    if err:
+        return err
     fs = filing_status if filing_status in _LTCG_THRESHOLDS else "mfj"
 
     taxable_gains:   list[dict] = []

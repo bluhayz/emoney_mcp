@@ -11,7 +11,7 @@ will also pick up any runtime changes in the scrapers sub-package.
 """
 
 from .scrapers import *  # noqa: F401, F403
-from .scrapers import (   # make sure private helpers are also importable
+from .scrapers import (  # expose private helpers not visible to type-checkers via *
     BASE_URL,
     _get_card,
     _fmt_dollars,
@@ -32,84 +32,9 @@ from .scrapers import (   # make sure private helpers are also importable
     _NON_MERCHANT_CATEGORIES,
     _INCOME_CATEGORY_IDS,
     _EXCLUDE_CATEGORY_IDS,
+    _fetch_snb_account_map,
     clear_card_cache,
     clear_snb_cache,
     clear_caches,
     clear_cache,
-    # v0.7.0 additions
-    run_monte_carlo_retirement,
-    get_dynamic_withdrawal_guardrails,
-    get_social_security_optimizer,
-    get_quarterly_estimated_taxes,
-    # v0.8.x — SNB write endpoint explorer
-    explore_snb_write_endpoints,
-    # v0.8.x — site explorer
-    explore_emoney_site,
-    # v0.9.0 — transaction writes, rules, reports
-    update_transaction,
-    hide_transaction,
-    get_transaction_splits,
-    update_transaction_splits,
-    get_transaction_rules,
-    add_transaction_rule,
-    update_transaction_rule,
-    apply_transaction_rule,
-    delete_transaction_rule,
-    get_reports,
-    get_report_url,
-    # v0.9.1 — category lookup
-    get_categories,
-    # v1.0.0 — family financial planning tools
-    get_home_equity,
-    get_fire_number,
-    get_gifting_and_estate_strategy,
-    get_debt_overview,
-    get_50_30_20_analysis,
-    get_spending_by_account,
-    get_upcoming_bills,
-    get_portfolio_concentration,
-    get_net_worth_velocity,
-    get_tax_drag_analysis,
-    get_financial_independence_roadmap,
-    get_annual_tax_advantaged_summary,
-    # v1.0.2 — live endpoint discoveries
-    get_client_profile,
-    get_aggregation_status,
-    _fetch_snb_account_map,
-    # v0.8.0 additions
-    get_monthly_review,
-    get_unusual_transactions,
-    get_merchant_spending,
-    get_cash_flow_forecast,
-    get_year_end_checklist,
-    run_scenario,
-    get_insurance_gap_analysis,
-    get_available_cards,
-    # calculator wave 2 — charitable, gain harvesting, state tax, healthcare, HSA
-    get_charitable_giving_strategy,
-    get_tax_gain_harvesting,
-    get_state_tax_estimate,
-    get_healthcare_cost_projection,
-    get_hsa_optimization,
-    # calculator wave 3 — income timeline, risk metrics, sequence-of-returns
-    get_income_sources_timeline,
-    get_sequence_of_returns_stress_test,
-    get_portfolio_risk_metrics,
-    get_benchmark_comparison,
-    # calculator wave 4 — life-event scenario, estate liquidity
-    model_life_event_scenario,
-    get_estate_liquidity_analysis,
-    get_long_term_care_analysis,
-    get_real_estate_investment_analysis,
-    # data-read wave 5 — vault documents (first live data-read tool)
-    get_vault_documents,
-    # data-read wave 6 — plan goals funding (internal-api BFF)
-    get_all_goals_funding_status,
-    # data-read wave 7 — lifetime cash flow (internal-api BFF)
-    get_lifetime_cash_flow_projection,
-    # data-read wave 8 — investment depth (dividends, sector/geo)
-    get_dividend_income_analysis,
-    get_sector_geographic_allocation,
-    # ops — aggregation refresh control (aggapi)
-    refresh_account_aggregation,
 )

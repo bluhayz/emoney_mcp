@@ -228,7 +228,6 @@ async def get_fire_number(
         return accts
 
     investable_assets = _calc_investable_assets(accts)
-    accts.get("total_liabilities") or 0
 
     # 12-month spend from SNB
     annual_income, annual_spending = _sum_income_spending(txns) if snb_ok else (0.0, 0.0)
@@ -467,7 +466,6 @@ async def get_gifting_and_estate_strategy(
     gross_estate    = round(accts.get("total_assets") or 0, 2)
     total_liab      = round(accts.get("total_liabilities") or 0, 2)
     net_estate      = round(gross_estate - total_liab, 2)
-    round(accts.get("net_worth") or 0, 2)
 
     federal_exemption = _ESTATE_EXEMPTION_MFJ if is_mfj else _ESTATE_EXEMPTION_SINGLE
     taxable_estate    = round(max(0, net_estate - federal_exemption), 2)

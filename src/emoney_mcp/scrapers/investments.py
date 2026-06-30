@@ -313,17 +313,28 @@ _TX_COLS = {
 }
 
 
-async def get_transactions(http_session, days: int = 30, account_id: str | None = None) -> dict:
+async def get_transactions(
+    http_session,
+    days: int = 30,
+    account_id: str | None = None,
+    start_date: str | None = None,
+    end_date: str | None = None,
+) -> dict:
     """
     Return investment transactions for the last `days` days (default 30, max 365).
     Optionally filter by account_id (Emoney AccountID GUID).
+    Pass start_date/end_date (MM/DD/YYYY) to fetch an explicit date range instead
+    of a days-based window anchored to today.
     Source: POST /ema/CS/Investments/GetInvestmentTransactions  (requires CSRF token)
     """
-    days = min(max(days, 1), 365)
-    end_dt   = datetime.now()
-    start_dt = end_dt - timedelta(days=days)
-    start_str = start_dt.strftime("%m/%d/%Y")
-    end_str   = end_dt.strftime("%m/%d/%Y")
+    if start_date and end_date:
+        start_str, end_str = start_date, end_date
+    else:
+        days = min(max(days, 1), 365)
+        end_dt   = datetime.now()
+        start_dt = end_dt - timedelta(days=days)
+        start_str = start_dt.strftime("%m/%d/%Y")
+        end_str   = end_dt.strftime("%m/%d/%Y")
 
     token = await http_session.get_csrf_token()
     if not token:
@@ -396,9 +407,8 @@ async def get_capital_gains(http_session, year: int | None = None) -> dict:
 
     start_str = f"01/01/{year}"
     end_str   = f"12/31/{year}" if year < now.year else now.strftime("%m/%d/%Y")
-    days      = (datetime.strptime(end_str, "%m/%d/%Y") - datetime.strptime(start_str, "%m/%d/%Y")).days + 1
 
-    txns_result = await get_transactions(http_session, days=days)
+    txns_result = await get_transactions(http_session, start_date=start_str, end_date=end_str)
     if "error" in txns_result:
         return txns_result
 

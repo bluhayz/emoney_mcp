@@ -696,9 +696,20 @@ async def get_roth_conversion_analysis(
 
     if marginal > 0 and effective_rate_on_conversion > 0:
         if effective_rate_on_conversion < marginal:
-            pass
+            recommendation = (
+                f"Tax-favored: you are paying {round(effective_rate_on_conversion * 100, 1)}% "
+                f"on this conversion vs. your {int(marginal * 100)}% marginal rate. "
+                "Consider converting up to the top of your current bracket."
+            )
         else:
-            pass
+            recommendation = (
+                f"Not tax-favored at this amount: effective rate on conversion "
+                f"({round(effective_rate_on_conversion * 100, 1)}%) meets or exceeds "
+                f"your {int(marginal * 100)}% marginal rate. "
+                "Consider a smaller conversion or waiting for a lower-income year."
+            )
+    else:
+        recommendation = "Conversion analysis unavailable — insufficient tax data."
 
     retirement = await get_retirement_accounts(http_session)
     deferred_total = retirement.get("total_retirement_assets", 0) if "error" not in retirement else None
@@ -741,6 +752,7 @@ async def get_roth_conversion_analysis(
             "20_years_at_6pct":  future_value_20yr,
         },
         "conversion_favored":       effective_rate_on_conversion <= marginal,
+        "recommendation":           recommendation,
         "breakeven_note": (
             "Conversion is tax-favored when your effective rate on the converted amount "
             "is lower than your expected marginal rate at withdrawal. "
@@ -1460,7 +1472,6 @@ async def get_quarterly_estimated_taxes(
     fs = filing_status if filing_status in _BRACKETS else "mfj"
     std_ded = _STD_DEDUCTION.get(fs, 30_000)
     current_year = datetime.now().year
-    datetime.now().month
 
     # Infer income
     if annual_income_override is not None:

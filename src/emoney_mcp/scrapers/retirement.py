@@ -925,8 +925,7 @@ async def get_financial_independence_roadmap(
 
     # Years to FI at current savings (future-value iteration)
     years_to_fi = None
-    if fi_gap and fi_gap > 0 and monthly_savings > 0:
-        assert fi_number is not None  # fi_gap is non-None only when fi_number is
+    if fi_gap and fi_gap > 0 and monthly_savings > 0 and fi_number is not None:
         r = 0.07 / 12
         balance = investable
         n = 0

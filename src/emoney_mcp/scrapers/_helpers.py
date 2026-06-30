@@ -21,9 +21,13 @@ _get_card(http, card_id)  — Fetch a named CardSwitcher card; returns its Data
                             cached for _CARD_CACHE_TTL seconds so parallel tool
                             calls within one conversation turn share one HTTP
                             request per card.
+_get_investment_data(http_session) — Fetch GetInvestmentData (holdings JSON)
+                            with the same 5-minute TTL cache as cards.  Shared
+                            by investments.py, tax.py, and portfolio.py so a
+                            single conversation turn fires at most one request.
 _fmt_dollars(v)           — Format a numeric value as "$1,234.56" for display.
-clear_card_cache()        — Purge the in-memory card cache (called on session
-                            reset so stale data is never served with new creds).
+clear_card_cache()        — Purge both the card cache and investment data cache
+                            (called on session reset).
 """
 
 import time
@@ -42,29 +46,66 @@ _INV_URL  = f"{BASE_URL}/ema/CS/Investments"
 _SNB_API  = "https://api.emoneyadvisor.com/snb-api"
 
 # ---------------------------------------------------------------------------
-# In-memory TTL cache for CardSwitcher card responses
+# In-memory TTL caches for CardSwitcher cards and GetInvestmentData
 # ---------------------------------------------------------------------------
-# Format: {card_id: (fetch_unix_timestamp, data_dict_or_None)}
+# Cards:      {card_id: (fetch_unix_timestamp, data_dict_or_None)}
+# Investment: (fetch_unix_timestamp, data_dict_or_None) | None
 # The 5-minute TTL is intentionally aligned with the Anthropic prompt-cache
 # window so warm-cache conversation turns don't trigger redundant fetches.
 _card_cache: dict[int, tuple[float, dict | None]] = {}
+_inv_cache: tuple[float, dict | None] | None = None
 _CARD_CACHE_TTL: int = 300       # seconds — successful responses
 _CARD_ERROR_TTL: int = 30        # seconds — failed/None responses (shorter so transient errors don't block for 5 min)
 
 
 def clear_card_cache() -> None:
     """
-    Purge the in-memory CardSwitcher cache.
+    Purge both the CardSwitcher card cache and the GetInvestmentData cache.
 
     Called automatically by ``reset_session`` so that session resets never
     return cached data from the previous authenticated user.
     """
+    global _inv_cache
     _card_cache.clear()
+    _inv_cache = None
 
 
 # ---------------------------------------------------------------------------
 # Shared HTTP helpers
 # ---------------------------------------------------------------------------
+
+async def _get_investment_data(http_session) -> tuple[dict | None, dict | None]:
+    """
+    Fetch the Emoney GetInvestmentData endpoint and return (data, error).
+
+    On success: (data_dict, None).  On failure: (None, {"error": "..."}).
+
+    Results are cached for ``_CARD_CACHE_TTL`` seconds (5 minutes) so that
+    multiple tools within one conversation turn share a single HTTP request.
+    Failures are cached for ``_CARD_ERROR_TTL`` seconds (30 s) so a transient
+    server error doesn't block every investment tool for 5 minutes.
+    """
+    global _inv_cache
+    now = time.time()
+    if _inv_cache is not None:
+        ts, data = _inv_cache
+        ttl = _CARD_CACHE_TTL if data is not None else _CARD_ERROR_TTL
+        if now - ts < ttl:
+            if data is None:
+                return None, {"error": "GetInvestmentData unavailable (cached error). Session may have expired."}
+            return data, None
+    http = await http_session.get_http()
+    resp = await http.get(f"{_INV_URL}/GetInvestmentData?_={int(now * 1000)}", timeout=30)
+    if resp.status_code != 200 or "json" not in resp.headers.get("content-type", ""):
+        _inv_cache = (now, None)
+        return None, {"error": f"GetInvestmentData returned {resp.status_code}. Session may have expired."}
+    payload = resp.json()
+    if not isinstance(payload, dict):
+        _inv_cache = (now, None)
+        return None, {"error": "GetInvestmentData returned an unexpected (non-object) body."}
+    _inv_cache = (now, payload)
+    return payload, None
+
 
 async def _get_card(http, card_id: int) -> dict | None:
     """

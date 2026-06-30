@@ -42,7 +42,10 @@ async def get_reports(http_session) -> dict:
     families: list[dict] = []
     seen_ids: set[str] = set()
 
-    # Match JSON arrays containing ReportID keys
+    # Match JSON arrays containing ReportID keys.
+    # Collect as "Uncategorized" so these reports appear in output rather than
+    # being silently discarded (bug #138 — previously only seen_ids was updated).
+    uncategorized: list[dict] = []
     for blob in re.finditer(r'\[(\{"ReportID"[^]]{20,5000})\]', html):
         try:
             reports = json.loads("[" + blob.group(1) + "]")
@@ -52,6 +55,14 @@ async def get_reports(http_session) -> dict:
             rid = r.get("ReportID")
             if rid and rid not in seen_ids:
                 seen_ids.add(rid)
+                uncategorized.append({
+                    "report_id":   rid,
+                    "name":        r.get("Name", rid),
+                    "short_name":  r.get("ShortName", ""),
+                    "description": r.get("Description", ""),
+                })
+    if uncategorized:
+        families.append({"family": "Uncategorized", "reports": uncategorized})
 
     # Also try to find family groupings with Name + Reports sublist
     family_blobs = re.finditer(

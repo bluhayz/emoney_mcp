@@ -697,10 +697,12 @@ class EmoneyLoginSession:
 
         # This profile isn't locked by another process — read directly
         conn = sqlite3.connect(str(cookie_db))
-        rows = conn.execute(
-            "SELECT name, value, host_key FROM cookies WHERE host_key LIKE '%emaplan%'"
-        ).fetchall()
-        conn.close()
+        try:
+            rows = conn.execute(
+                "SELECT name, value, host_key FROM cookies WHERE host_key LIKE '%emaplan%'"
+            ).fetchall()
+        finally:
+            conn.close()
         return {name: value for name, value, host in rows}
 
     def stop(self) -> None:

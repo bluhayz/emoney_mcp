@@ -36,7 +36,6 @@ get_capital_gains(http_session, year=None)
 """
 
 import json
-import time
 from datetime import datetime, timedelta
 
 from ._helpers import _get_card, _get_investment_data, _INV_URL, _parse_card8_history
@@ -142,7 +141,7 @@ async def get_asset_allocation(http_session) -> dict:
             "sub_classes": sub_classes,
         })
 
-    card4 = await _get_card(http, 4)
+    card4 = await _get_card(await http_session.get_http(), 4)
     model_target = None
     if card4:
         model_target = card4.get("ModelName") or card4.get("TargetName")

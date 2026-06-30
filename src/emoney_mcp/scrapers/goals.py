@@ -224,10 +224,9 @@ async def get_financial_health_score(http_session) -> dict:
     txns, snb_ok = await _fetch_snb_data(http_session, days=90)
     monthly_spending = 0.0
     if snb_ok:
-        monthly_spending = sum(
-            t["amount"] for t in txns
-            if not t["is_income"] and not t["is_excluded"]
-        ) / 3
+        expense_txns = [t for t in txns if not t["is_income"] and not t["is_excluded"]]
+        month_count = len({t.get("date", "")[:7] for t in expense_txns if t.get("date")}) or 3
+        monthly_spending = sum(t["amount"] for t in expense_txns) / month_count
 
     # ── Scoring ────────────────────────────────────────────────────────────
 
@@ -733,10 +732,9 @@ async def get_emergency_fund_analysis(http_session, target_months: float = 6.0) 
     txns, ok = await _fetch_snb_data(http_session, days=90)
     monthly_spending = 0.0
     if ok:
-        monthly_spending = round(sum(
-            t["amount"] for t in txns
-            if not t["is_income"] and not t["is_excluded"]
-        ) / 3, 2)
+        expense_txns = [t for t in txns if not t["is_income"] and not t["is_excluded"]]
+        month_count = len({t.get("date", "")[:7] for t in expense_txns if t.get("date")}) or 3
+        monthly_spending = round(sum(t["amount"] for t in expense_txns) / month_count, 2)
 
     if monthly_spending <= 0:
         return {

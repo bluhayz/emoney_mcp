@@ -1093,10 +1093,22 @@ async def get_roth_conversion_ladder(
     total_converted = 0.0
     total_tax = 0.0
     for row in proj["projection"]:
-        base_taxable = row["taxable_income"]
-        # Grow the remaining pre-tax balance and draw that year's RMD first.
-        pretax_remaining = round(pretax_remaining * 1.06, 2) if ladder else pretax_remaining
-        pretax_remaining = max(0.0, round(pretax_remaining - row["rmd"], 2))
+        if ladder:  # year 2+: apply growth to the ladder's own balance tracker
+            pretax_remaining = round(pretax_remaining * 1.06, 2)
+
+        # Recompute RMD from the ladder's actual remaining balance each year.
+        # Using the projection's pre-computed rmd (row["rmd"]) would be incorrect
+        # because those RMDs were derived from a balance that did not account for
+        # prior-year conversions, causing divergence and overstated RMDs. (#141)
+        age = row["age"]
+        if age >= 73 and pretax_remaining > 0:
+            actual_rmd = round(pretax_remaining / _rmd_factor(age), 2)
+        else:
+            actual_rmd = 0.0
+        pretax_remaining = max(0.0, round(pretax_remaining - actual_rmd, 2))
+
+        # Adjust taxable income for the corrected RMD vs the projection's RMD
+        base_taxable = round(row["taxable_income"] - row["rmd"] + actual_rmd, 2)
 
         room = ceiling - base_taxable
         convert = max(0.0, round(min(room, pretax_remaining), 2))

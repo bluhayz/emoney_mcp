@@ -800,6 +800,7 @@ async def get_healthcare_cost_projection(
     schedule: list[dict] = []
     total_pre65 = 0.0
     total_post65 = 0.0
+    current_year = datetime.now().year
     for age in range(start_age, life_expectancy + 1):
         years_from_now = age - current_age
         inflator = (1 + health_inflation) ** max(0, years_from_now)
@@ -816,7 +817,7 @@ async def get_healthcare_cost_projection(
             total_post65 += annual
         schedule.append({
             "age":          age,
-            "year":         datetime.now().year + years_from_now,
+            "year":         current_year + years_from_now,
             "phase":        phase,
             "annual_cost":  annual,
         })
@@ -911,13 +912,14 @@ async def get_hsa_optimization(
     years = max(0, target_age - current_age) if current_age is not None else 0
     trajectory: list[dict] = []
     balance = float(current_hsa_balance)
+    current_year = datetime.now().year
     for i in range(years + 1):
         if i > 0:
             balance = round(balance * (1 + growth_rate) + contribution, 2)
         if current_age is not None:
             trajectory.append({
                 "age":     current_age + i,
-                "year":    datetime.now().year + i,
+                "year":    current_year + i,
                 "balance": round(balance, 2),
             })
     projected_balance = round(balance, 2)
@@ -1211,6 +1213,7 @@ async def get_long_term_care_analysis(
     total_cost_future = 0.0
     total_policy_future = 0.0
     schedule: list[dict] = []
+    current_year = datetime.now().year
     for i in range(full_years + (1 if fractional > 0 else 0)):
         age = care_age + i
         portion = 1.0 if i < full_years else fractional
@@ -1225,7 +1228,7 @@ async def get_long_term_care_analysis(
         total_policy_future += year_benefit
         schedule.append({
             "age":            age,
-            "year":           datetime.now().year + years_from_now,
+            "year":           current_year + years_from_now,
             "annual_cost":    round(year_cost, 2),
             "policy_benefit": round(year_benefit, 2),
             "net_cost":       round(year_cost - year_benefit, 2),

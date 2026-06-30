@@ -379,8 +379,13 @@ async def get_transaction_splits(http_session, transaction_id: str) -> dict:
 
 
 def _split_id(v):
-    """Wrap a split id as ``{"value": ...}`` — the exact (lowercase) shape the
-    web UI sends to ``updateTransactionSplits`` (captured live, #121)."""
+    """Wrap a split id as ``{"value": ...}`` (lowercase).
+
+    Intentionally different casing from ``_wrap_id`` (``{"Value": ...}`` PascalCase):
+    the ``updateTransactionSplits`` endpoint sends lowercase as captured from the
+    live web UI (#121). .NET binds case-insensitively so both forms work server-side,
+    but we mirror the exact shape the web UI sends to each endpoint.
+    """
     return {"value": str(v)} if v is not None else None
 
 

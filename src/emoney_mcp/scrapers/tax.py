@@ -318,6 +318,7 @@ async def get_tax_loss_harvesting(http_session) -> dict:
     data, err = await _get_investment_data(http_session)
     if err:
         return err
+    assert data is not None  # err is None ⇒ data is a dict
 
     taxable_losses   = []
     deferred_losses  = []
@@ -781,6 +782,7 @@ async def get_capital_gains_exposure(
     data, err = await _get_investment_data(http_session)
     if err:
         return err
+    assert data is not None  # err is None ⇒ data is a dict
     fs = filing_status if filing_status in _LTCG_THRESHOLDS else "mfj"
 
     taxable_gains:   list[dict] = []

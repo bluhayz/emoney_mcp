@@ -49,6 +49,7 @@ async def get_holdings(http_session) -> dict:
     data, err = await _get_investment_data(http_session)
     if err:
         return err
+    assert data is not None  # err is None ⇒ data is a dict
 
     portfolio_value = data.get("Holdings")   # total holdings value (excl. cash)
     portfolio_cash  = data.get("Cash")
@@ -112,6 +113,7 @@ async def get_asset_allocation(http_session) -> dict:
     data, err = await _get_investment_data(http_session)
     if err:
         return err
+    assert data is not None  # err is None ⇒ data is a dict
     total_portfolio = (data.get("Holdings") or 0) + (data.get("Cash") or 0)
 
     aa = data.get("AssetAllocation") or {}
@@ -533,6 +535,7 @@ async def get_sector_geographic_allocation(http_session) -> dict:
     data, err = await _get_investment_data(http_session)
     if err:
         return err
+    assert data is not None  # err is None ⇒ data is a dict
     aa = data.get("AssetAllocation") or {}
     asset_types = aa.get("AssetTypes") or []
     if not asset_types:

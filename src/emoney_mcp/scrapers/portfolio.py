@@ -35,10 +35,9 @@ _ASSET_EFFICIENCY
 
 import math
 import statistics
-import time
 from datetime import datetime
 
-from ._helpers import _get_card, _get_investment_data, _INV_URL, _month_offset, _parse_card8_history
+from ._helpers import _get_card, _get_investment_data, _month_offset, _parse_card8_history
 from .accounts import _build_account_type_map, _match_tax_bucket
 from .investments import get_asset_allocation
 

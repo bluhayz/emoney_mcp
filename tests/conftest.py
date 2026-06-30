@@ -11,10 +11,12 @@ sys.path.insert(0, str(Path(__file__).parent))
 
 @pytest.fixture(autouse=True)
 def clear_card_cache():
-    """Clear the card cache and investment data cache before every test to prevent cross-test pollution."""
+    """Clear the card cache, investment data cache, and in-flight futures before every test."""
     from emoney_mcp.scrapers import _helpers
     _helpers._card_cache.clear()
+    _helpers._card_futures.clear()
     _helpers._inv_cache = None
     yield
     _helpers._card_cache.clear()
+    _helpers._card_futures.clear()
     _helpers._inv_cache = None

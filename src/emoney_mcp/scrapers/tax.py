@@ -505,34 +505,28 @@ async def get_year_end_checklist(
             })
 
     # --- 4. Contribution room ---
+    # get_contribution_room returns annual_limits (dict) and current_balances.
+    # Emoney does not expose year-to-date contribution amounts, so remaining
+    # room cannot be computed — show each account type's annual limit as an
+    # opportunity item instead.
     cr = results.get("contribution") or {}
     if "error" not in cr and not isinstance(cr, Exception):
-        accounts = cr.get("accounts") or []
-        for acct in accounts:
-            remaining = acct.get("remaining_room", 0) or 0
-            if remaining > 0:
-                checklist.append({
-                    "item":     f"Max {acct.get('account_type', 'tax-advantaged')} contribution",
-                    "status":   "action_needed",
-                    "priority": "high",
-                    "detail":   (
-                        f"${remaining:,.0f} remaining contribution room "
-                        f"(limit: ${acct.get('limit', 0):,.0f}). Deadline: Dec 31."
-                    ),
-                    "amount":  round(remaining, 2),
-                })
-                # Approximate tax savings = remaining room × marginal rate
-                if current_income:
-                    rate = _marginal_rate(current_income, filing_status)
-                    estimated_savings += round(remaining * rate, 2)
-            else:
-                checklist.append({
-                    "item":     f"{acct.get('account_type', 'Account')} fully funded",
-                    "status":   "done",
-                    "priority": "low",
-                    "detail":   f"Contribution limit already reached for {acct.get('account_type', 'this account')}.",
-                    "amount":  0,
-                })
+        limits = cr.get("annual_limits") or {}
+        for acct_label, limit in limits.items():
+            if not limit:
+                continue
+            checklist.append({
+                "item":     f"Review {acct_label} contributions",
+                "status":   "opportunity",
+                "priority": "medium",
+                "detail": (
+                    f"2026 annual limit: ${limit:,.0f}. "
+                    "Compare against your YTD contributions from payroll or brokerage "
+                    "statements to determine remaining room — Emoney does not expose "
+                    "year-to-date contribution data."
+                ),
+                "amount": limit,
+            })
 
     # --- 5. RMD check ---
     rmd = results.get("rmd")
@@ -1775,7 +1769,7 @@ async def get_annual_tax_advantaged_summary(
         "account_type":          "529 Education",
         "current_balance":       round(bal_529, 2),
         "annual_limit":          None,  # no IRS annual limit; gift exclusion applies
-        "annual_exclusion_max":  _CONTRIBUTION_LIMITS.get("gift_tax_exclusion", 18_000),
+        "annual_exclusion_max":  _CONTRIBUTION_LIMITS.get("gift_tax_exclusion", 19_000),
         "note":                  "No IRS annual contribution cap; annual gift exclusion applies to avoid gift tax.",
     })
 

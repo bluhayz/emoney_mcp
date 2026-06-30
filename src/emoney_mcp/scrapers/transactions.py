@@ -616,24 +616,19 @@ async def apply_transaction_rule(
     transaction_id: str | None = None,
 ) -> dict:
     """
-    Apply an existing rule to all matching transactions.
-
-    JS signature: ApplyRule({ruleID, transactionID})
-
-    rule_id        — the rule ID (from get_transaction_rules)
-    transaction_id — optional: scope to a specific transaction
+    DEPRECATED: The ApplyRule Nexus endpoint is retired and returns HTTP 500 on
+    every call. Use add_transaction_rule or update_transaction_rule with the
+    transaction_id parameter to apply a rule to a specific transaction.
     """
-    data: dict = {"ruleID": str(rule_id)}
-    if transaction_id:
-        data["transactionID"] = transaction_id
-
-    result = await _csrf_post(http_session, "ApplyRule", data)
-    if isinstance(result, dict) and "error" in result:
-        return result
-    return _maybe_raw({
-        "success": True,
-        "rule_id": rule_id,
-    }, result)
+    return {
+        "error": (
+            "apply_transaction_rule is non-functional: the ApplyRule endpoint "
+            "was retired with the Nexus backend. "
+            "To apply a rule to a specific transaction, pass transaction_id to "
+            "add_transaction_rule or update_transaction_rule instead."
+        ),
+        "deprecated": True,
+    }
 
 
 def _rule_to_snb(r: dict) -> dict:

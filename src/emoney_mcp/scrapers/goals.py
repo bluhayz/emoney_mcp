@@ -201,7 +201,6 @@ async def get_financial_health_score(http_session) -> dict:
     if "error" in accts:
         return accts
 
-    accts.get("net_worth") or 0
     total_assets = accts.get("total_assets") or 0
     total_liab   = accts.get("total_liabilities") or 0
 

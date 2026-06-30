@@ -774,59 +774,36 @@ class TestUpdateTransactionRule:
 
 class TestApplyTransactionRule:
     """
-    apply_transaction_rule sends {ruleID, transactionID} directly to ApplyRule.
-    It does NOT look up the rule first — that is intentional (matches JS signature).
+    apply_transaction_rule is deprecated — the ApplyRule Nexus endpoint is
+    retired. Every call must immediately return a deprecation error without
+    making any HTTP request.
     """
 
     @pytest.mark.asyncio
-    async def test_apply_rule_success(self):
+    async def test_returns_deprecation_error(self):
         session = make_mock_http_session()
-        with _make_csrf_mock({"Success": True, "Updated": 7}):
-            from emoney_mcp.scrapers.transactions import apply_transaction_rule
-            result = await apply_transaction_rule(session, rule_id="10")
-        assert result["success"] is True
-        assert result["rule_id"] == "10"
+        from emoney_mcp.scrapers.transactions import apply_transaction_rule
+        result = await apply_transaction_rule(session, rule_id="10")
+        assert "error" in result
+        assert result.get("deprecated") is True
 
     @pytest.mark.asyncio
-    async def test_apply_sends_rule_id_in_payload(self):
-        """ApplyRule POST must contain ruleID (not a full rule object)."""
+    async def test_no_http_call_made(self):
+        """Deprecated function must not call the dead endpoint."""
         session = make_mock_http_session()
-        captured_data = {}
-
-        async def capture(http_session, path, data):
-            captured_data.update(data)
-            return {"Success": True}
-
-        with patch("emoney_mcp.scrapers.transactions._csrf_post", side_effect=capture):
+        with patch("emoney_mcp.scrapers.transactions._csrf_post") as mock_csrf:
             from emoney_mcp.scrapers.transactions import apply_transaction_rule
             await apply_transaction_rule(session, rule_id="10")
-
-        assert captured_data.get("ruleID") == "10"
-        assert "rule[RuleID][Value]" not in captured_data, "Must not send full rule object"
+        mock_csrf.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_apply_with_transaction_id(self):
+    async def test_deprecation_with_transaction_id(self):
+        """Deprecation applies regardless of arguments."""
         session = make_mock_http_session()
-        captured_data = {}
-
-        async def capture(http_session, path, data):
-            captured_data.update(data)
-            return {"Success": True}
-
-        with patch("emoney_mcp.scrapers.transactions._csrf_post", side_effect=capture):
-            from emoney_mcp.scrapers.transactions import apply_transaction_rule
-            await apply_transaction_rule(session, rule_id="10", transaction_id="txn-555")
-
-        assert captured_data.get("ruleID") == "10"
-        assert captured_data.get("transactionID") == "txn-555"
-
-    @pytest.mark.asyncio
-    async def test_csrf_error_propagates(self):
-        session = make_mock_http_session()
-        with _make_csrf_mock({"error": "ApplyRule returned HTTP 500", "response_body": ""}):
-            from emoney_mcp.scrapers.transactions import apply_transaction_rule
-            result = await apply_transaction_rule(session, rule_id="10")
+        from emoney_mcp.scrapers.transactions import apply_transaction_rule
+        result = await apply_transaction_rule(session, rule_id="10", transaction_id="txn-555")
         assert "error" in result
+        assert result.get("deprecated") is True
 
 
 # ===========================================================================
@@ -958,8 +935,7 @@ class TestRawGating:
     async def test_apply_rule_omits_raw_by_default(self, monkeypatch):
         monkeypatch.delenv("EMONEY_DEV", raising=False)
         session = make_mock_http_session()
-        with _make_csrf_mock({"Success": True, "Updated": 7}):
-            from emoney_mcp.scrapers.transactions import apply_transaction_rule
-            result = await apply_transaction_rule(session, rule_id="10")
-        assert "raw" not in result
-        assert result["success"] is True
+        from emoney_mcp.scrapers.transactions import apply_transaction_rule
+        result = await apply_transaction_rule(session, rule_id="10")
+        assert "error" in result
+        assert result.get("deprecated") is True

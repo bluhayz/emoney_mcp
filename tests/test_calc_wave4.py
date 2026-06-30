@@ -119,8 +119,8 @@ class TestEstateLiquidityAnalysis:
             {"bucket": "Illiquid", "value": 19_300_000, "percent": 95}]}
         with patch.object(pl, "get_net_worth_breakdown", AsyncMock(return_value=big)):
             r = await pl.get_estate_liquidity_analysis(AsyncMock(), filing_status="single")
-        # 40% × (20M − 13.61M exemption) = 2.556M estate tax
-        assert r["settlement_need"]["estate_tax"] == pytest.approx(2_556_000, abs=1)
+        # 40% × (20M − 13.99M exemption) = 2.404M estate tax (2026 exemption)
+        assert r["settlement_need"]["estate_tax"] == pytest.approx(2_404_000, abs=1)
         assert r["surplus_or_shortfall"] < 0
         assert r["forced_sale_risk"] is True
         assert r["status"] == "forced_sale_risk"

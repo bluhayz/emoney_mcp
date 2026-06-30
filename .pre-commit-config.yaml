@@ -1,0 +1,40 @@
+repos:
+  # Ruff: fast Python linter — matches CI step "ruff check src/ scripts/ tests/"
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.11.13
+    hooks:
+      - id: ruff
+        args: [--fix]
+        files: ^(src|scripts|tests)/
+
+  # Mypy: type checking — matches CI step "mypy src/emoney_mcp"
+  - repo: local
+    hooks:
+      - id: mypy
+        name: mypy
+        language: system
+        entry: mypy src/emoney_mcp
+        types: [python]
+        pass_filenames: false
+
+  # Syntax check — matches CI step "python -m py_compile ..."
+  - repo: local
+    hooks:
+      - id: py-compile-server
+        name: syntax check (server.py)
+        language: system
+        entry: python -m py_compile src/emoney_mcp/server.py
+        pass_filenames: false
+        files: ^src/emoney_mcp/server\.py$
+      - id: py-compile-scraper
+        name: syntax check (scraper.py)
+        language: system
+        entry: python -m py_compile src/emoney_mcp/scraper.py
+        pass_filenames: false
+        files: ^src/emoney_mcp/scraper\.py$
+      - id: py-compile-browser
+        name: syntax check (browser.py)
+        language: system
+        entry: python -m py_compile src/emoney_mcp/browser.py
+        pass_filenames: false
+        files: ^src/emoney_mcp/browser\.py$

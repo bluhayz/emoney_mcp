@@ -91,7 +91,7 @@ class TestEveryToolRoutes:
     @pytest.mark.asyncio
     async def test_all_tools_dispatch_without_unknown(self):
         names = await _all_tool_names()
-        assert len(names) >= 80
+        assert len(names) >= 113  # update this floor when tools are intentionally added/removed
 
         fake = _FakeScraper()
         with patch.object(server, "scraper", fake), \

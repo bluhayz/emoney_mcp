@@ -42,10 +42,9 @@ _marginal_rate(taxable_income, filing_status) — Marginal bracket rate
 _ltcg_rate(taxable_income, filing_status)    — Long-term capital gains rate
 """
 
-import time
 from datetime import datetime
 
-from ._helpers import _INV_URL, _get_investment_data
+from ._helpers import _get_investment_data
 from .accounts import get_retirement_accounts, _build_account_type_map, _match_tax_bucket
 from .spending import get_income_summary
 

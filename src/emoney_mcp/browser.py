@@ -225,7 +225,7 @@ def _decrypt_macos_cookie(enc_val: bytes, key: bytes) -> str | None:
         pad = dec[-1]
         if 1 <= pad <= 16:
             dec = dec[:-pad]
-        # Chrome 80+ prepends a 32-byte SHA256(domain) to the plaintext.
+        # Chrome AES-CBC: strip the leading prefix bytes (IV/padding) before the plaintext.
         dec = dec[32:]
         for enc in ("ascii", "utf-8"):
             try:

@@ -692,6 +692,7 @@ async def run_scenario(
     target_net_worth: float | None = None,
     retirement_age: int | None = None,
     annual_return_pct: float | None = None,
+    current_age: int | None = None,
 ) -> dict:
     """
     Run a what-if scenario alongside a baseline projection and compare results.
@@ -702,6 +703,8 @@ async def run_scenario(
     target_net_worth      : target balance to reach (defaults to retirement goal from Emoney)
     retirement_age        : override the retirement goal age
     annual_return_pct     : override the assumed annual return (e.g. 8 for 8%; default 7)
+    current_age           : your current age — used with retirement_age to compute comparison
+                            year accurately; defaults to a 20-year horizon when omitted
     """
     accts, savings_result, goals_result = await asyncio.gather(
         get_accounts(http_session),
@@ -787,7 +790,10 @@ async def run_scenario(
     if ret_goal_start:
         compare_year = ret_goal_start
     elif retirement_age:
-        compare_year = current_year + max(0, retirement_age - 40)
+        if current_age is not None:
+            compare_year = current_year + max(0, retirement_age - current_age)
+        else:
+            compare_year = current_year + 20  # default when age unknown
     else:
         compare_year = current_year + 20
 
@@ -1135,6 +1141,7 @@ async def get_retirement_income_plan(
     rows = []
     depletion_age = None
     bal = portfolio
+    current_year = datetime.now().year
     for i in range(years):
         age = retire_age + i
         ss = social_security_annual if age >= ss_claim_age else 0.0
@@ -1148,7 +1155,7 @@ async def get_retirement_income_plan(
             depletion_age = age
         rows.append({
             "age":               age,
-            "year":              datetime.now().year + i,
+            "year":              current_year + i,
             "guaranteed_income": guaranteed,
             "social_security":   round(ss, 2),
             "pension":           round(pension, 2),

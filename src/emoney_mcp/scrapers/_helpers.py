@@ -30,6 +30,7 @@ clear_card_cache()        — Purge both the card cache and investment data cach
                             (called on session reset).
 """
 
+import asyncio
 import time
 from datetime import datetime
 
@@ -53,6 +54,7 @@ _SNB_API  = "https://api.emoneyadvisor.com/snb-api"
 # The 5-minute TTL is intentionally aligned with the Anthropic prompt-cache
 # window so warm-cache conversation turns don't trigger redundant fetches.
 _card_cache: dict[int, tuple[float, dict | None]] = {}
+_card_futures: dict[int, asyncio.Future] = {}   # in-flight request deduplication
 _inv_cache: tuple[float, dict | None] | None = None
 _CARD_CACHE_TTL: int = 300       # seconds — successful responses
 _CARD_ERROR_TTL: int = 30        # seconds — failed/None responses (shorter so transient errors don't block for 5 min)
@@ -67,6 +69,7 @@ def clear_card_cache() -> None:
     """
     global _inv_cache
     _card_cache.clear()
+    _card_futures.clear()
     _inv_cache = None
 
 
@@ -143,19 +146,40 @@ async def _get_card(http, card_id: int) -> dict | None:
         if now - cached_ts < _CARD_CACHE_TTL:
             return cached_data
 
-    # Cache miss — fetch from Emoney
-    ts = int(now * 1000)
-    resp = await http.get(f"{_CARD_URL}/{card_id}?_={ts}", timeout=20)
-    if resp.status_code != 200 or "json" not in resp.headers.get("content-type", ""):
-        # Cache failures with a short TTL so a transient server error doesn't block tools for 5 minutes
-        _card_cache[card_id] = (now - _CARD_CACHE_TTL + _CARD_ERROR_TTL, None)
-        return None
-    # Some (often undocumented) cards return a JSON `null` or a non-object body.
-    # Guard against that so a probe of unknown card IDs can't crash the caller.
-    payload = resp.json()
-    data = payload.get("Data") if isinstance(payload, dict) else None
-    _card_cache[card_id] = (now, data)
-    return data
+    # Deduplicate concurrent in-flight requests: if another coroutine is already
+    # fetching this card, await its result instead of firing a duplicate request.
+    # In asyncio's single-threaded model this handles the gather() race where
+    # multiple tools start before any HTTP response arrives. (#144)
+    if card_id in _card_futures:
+        try:
+            return await _card_futures[card_id]
+        except Exception:
+            return None
+
+    fut: asyncio.Future = asyncio.get_running_loop().create_future()
+    _card_futures[card_id] = fut
+    try:
+        # Cache miss — fetch from Emoney
+        ts = int(now * 1000)
+        resp = await http.get(f"{_CARD_URL}/{card_id}?_={ts}", timeout=20)
+        if resp.status_code != 200 or "json" not in resp.headers.get("content-type", ""):
+            # Cache failures with a short TTL so a transient server error doesn't block tools for 5 minutes
+            _card_cache[card_id] = (now - _CARD_CACHE_TTL + _CARD_ERROR_TTL, None)
+            fut.set_result(None)
+            return None
+        # Some (often undocumented) cards return a JSON `null` or a non-object body.
+        # Guard against that so a probe of unknown card IDs can't crash the caller.
+        payload = resp.json()
+        data = payload.get("Data") if isinstance(payload, dict) else None
+        _card_cache[card_id] = (now, data)
+        fut.set_result(data)
+        return data
+    except Exception as exc:
+        if not fut.done():
+            fut.set_exception(exc)
+        raise
+    finally:
+        _card_futures.pop(card_id, None)
 
 
 def _fmt_dollars(v) -> str | None:

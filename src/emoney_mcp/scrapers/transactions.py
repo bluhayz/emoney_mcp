@@ -303,6 +303,8 @@ async def hide_transaction(
     })
     if "error" in result:
         return result
+    from .spending import clear_snb_cache
+    clear_snb_cache()
     return {
         "success": True,
         "transaction_id": transaction_id,
@@ -456,6 +458,8 @@ async def update_transaction_splits(
     result = await _snb_post(http_session, "updateTransactionSplits", body)
     if "error" in result:
         return result
+    from .spending import clear_snb_cache
+    clear_snb_cache()
     total = round(sum(float(s["amount"]) for s in splits), 2)
     return _maybe_raw({
         "success": True,
@@ -551,6 +555,8 @@ async def add_transaction_rule(
     result = await _snb_post(http_session, "CreateRule", payload)
     if "error" in result:
         return result
+    from .spending import clear_snb_cache
+    clear_snb_cache()
     return _maybe_raw({
         "success": True,
         "description_contains": description_contains,
@@ -604,6 +610,8 @@ async def update_transaction_rule(
     result = await _snb_post(http_session, "UpdateRule", payload)
     if "error" in result:
         return result
+    from .spending import clear_snb_cache
+    clear_snb_cache()
     return {
         "success": True,
         "rule_id": rule_id,
@@ -705,6 +713,8 @@ async def delete_transaction_rule(
     result = await _csrf_post_json(http_session, "SetRules", {"rules": keep})
     if isinstance(result, dict) and "error" in result:
         return result
+    from .spending import clear_snb_cache
+    clear_snb_cache()
     return _maybe_raw({
         "success": True,
         "rule_id": rule_id,

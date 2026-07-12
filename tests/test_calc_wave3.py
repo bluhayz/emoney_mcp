@@ -25,7 +25,7 @@ _RET = {
     "retirement_accounts": [{"name": "Traditional IRA", "type": "IRA", "balance": 800_000}],
     "retirement_breakdown": {},
 }
-_ACCTS = {"total_assets": 1_500_000, "total_liabilities": 0}
+_ACCTS = {"total_assets": 1_500_000, "total_liabilities": 0, "net_worth": 1_500_000, "account_groups": []}
 _AA = {"asset_classes": [
     {"name": "US Equity", "percent": 55},
     {"name": "International Equity", "percent": 15},
@@ -136,7 +136,7 @@ class TestSequenceOfReturnsStressTest:
     @pytest.mark.asyncio
     async def test_no_portfolio_errors(self):
         with patch.object(ret, "get_accounts",
-                          AsyncMock(return_value={"total_assets": 0, "total_liabilities": 0})):
+                          AsyncMock(return_value={"total_assets": 0, "total_liabilities": 0, "net_worth": 0, "account_groups": []})):
             r = await ret.get_sequence_of_returns_stress_test(AsyncMock(), withdrawal_rate=0.04)
         assert "error" in r
 

@@ -100,29 +100,41 @@ async def get_accounts(http_session) -> dict:
 
 
 _ILLIQUID_ACCOUNT_KEYWORDS = frozenset({"real estate", "property", "home", "house", "land"})
+_RE_LIABILITY_KEYWORDS     = frozenset({"mortgage", "home loan", "heloc", "home equity"})
 
 
 def _calc_investable_assets(accts_data: dict) -> float:
     """
     Return net worth minus illiquid real-estate equity.
 
-    Investable assets = net worth − (sum of positive-balance accounts whose
-    name or MajorType indicates real estate).  Used by FI/FIRE calculations
-    that need a deployable portfolio estimate.
+    Investable assets = net worth − net real-estate equity, where net equity =
+    (positive-balance RE accounts) − (matched mortgage/HELOC liabilities).
+    Subtracting gross property value without adding back the mortgage
+    double-counts the liability already in net_worth (#160).
+    Result is clamped to ≥ 0.
     """
-    net_worth = accts_data.get("net_worth") or 0
-    illiquid  = 0.0
+    net_worth  = accts_data.get("net_worth") or 0
+    re_assets  = 0.0
+    re_liabs   = 0.0
     for grp in accts_data.get("account_groups", []):
         for acct in grp.get("accounts", []):
-            bal       = acct.get("balance") or 0
+            bal        = acct.get("balance") or 0
             name_lower = (acct.get("name") or "").lower()
             acct_type  = acct.get("type") or ""
-            if bal > 0 and (
+            is_re = (
                 any(kw in name_lower for kw in _ILLIQUID_ACCOUNT_KEYWORDS)
                 or "RealEstate" in acct_type
-            ):
-                illiquid += bal
-    return round(net_worth - illiquid, 2)
+            )
+            is_re_liab = (
+                any(kw in name_lower for kw in _RE_LIABILITY_KEYWORDS)
+                or "Mortgage" in acct_type
+            )
+            if bal > 0 and is_re:
+                re_assets += bal
+            elif bal < 0 and is_re_liab:
+                re_liabs += abs(bal)
+    re_equity = max(0.0, re_assets - re_liabs)
+    return max(0.0, round(net_worth - re_equity, 2))
 
 
 async def get_retirement_accounts(http_session) -> dict:
@@ -136,10 +148,33 @@ async def get_retirement_accounts(http_session) -> dict:
     if "error" in result:
         return result
 
-    _RETIREMENT_KEYWORDS = {
-        "401", "ira", "roth", "annuit", "hsa", "403", "sep", "simple",
-        "pension", "retirement", "deferred comp", "529", "education",
+    # Direct MajorType → retirement: catches known eMoney types regardless of
+    # account name (name may be blank).  Word-boundary regex on camelCase strings
+    # like "TaxFreeHealthSavingsAsset" fails because "hsa" / "roth" are embedded
+    # mid-word without word boundaries — so we map MajorType directly (#169).
+    _RETIREMENT_MAJORTYPES = frozenset({
+        "AnnuityAsset", "TaxFree529SavingsAsset", "TaxFreeHealthSavingsAsset",
+        "TaxFreeRothSavingsAsset", "PreTaxSavingsAsset",
+    })
+    # Direct MajorType → sub-bucket (takes priority over keyword search).
+    _MAJORTYPE_TO_BUCKET = {
+        "TaxFreeHealthSavingsAsset": "hsa",
+        "TaxFree529SavingsAsset":    "education_529",
+        "TaxFreeRothSavingsAsset":   "ira_roth",
+        "AnnuityAsset":              "annuities",
+        # PreTaxSavingsAsset — fall through to keyword for 401/403/sep/etc.
     }
+    # Word-boundary patterns prevent false positives from incidental substrings
+    # in account NAMES (e.g. "ira" in "Admiral", "sep" in "Joseph") (#169).
+    # Applied to the name field only (not the camelCase MajorType string).
+    _RET_PATTERN = re.compile(
+        r"(?:\b401|\b403|\b529"
+        r"|\bira\b|\broth\b|\bannuit|\bhsa\b"
+        r"|\bpension\b|\bretirement\b|\bdeferred comp\b"
+        r"|\bsep ira\b|\bsimple ira\b|\bsep\b|\bsimple\b"
+        r"|\beducation\b)",
+        re.IGNORECASE,
+    )
 
     retirement_accounts = []
     taxable_accounts    = []
@@ -148,8 +183,7 @@ async def get_retirement_accounts(http_session) -> dict:
     for group in result.get("account_groups", []):
         for acct in group.get("accounts", []):
             name_lower = (acct.get("name") or "").lower()
-            type_lower = (acct.get("type") or "").lower()
-            combined   = name_lower + " " + type_lower
+            acct_type  = acct.get("type") or ""
 
             bal = acct.get("balance") or 0
             entry = {
@@ -163,7 +197,7 @@ async def get_retirement_accounts(http_session) -> dict:
 
             if bal < 0:
                 debt_accounts.append(entry)
-            elif any(kw in combined for kw in _RETIREMENT_KEYWORDS):
+            elif acct_type in _RETIREMENT_MAJORTYPES or _RET_PATTERN.search(name_lower):
                 retirement_accounts.append(entry)
             else:
                 taxable_accounts.append(entry)
@@ -173,22 +207,39 @@ async def get_retirement_accounts(http_session) -> dict:
     total_retirement = sum(a["balance"] for a in retirement_accounts)
     total_taxable    = sum(a["balance"] for a in taxable_accounts)
 
-    def _bucket(accounts, keywords):
-        return sum(a["balance"] for a in accounts
-                   if any(kw in (a.get("name") or "").lower() + " " + (a.get("type") or "").lower()
-                          for kw in keywords))
+    # First-match-wins bucket assignment: MajorType first, then keyword on name.
+    # Avoids double-counting accounts that match multiple keywords (#169).
+    _BUCKET_PRIORITY = [
+        ("401k_403b",     re.compile(r"\b401|\b403",                  re.IGNORECASE)),
+        ("ira_roth",      re.compile(r"\broth\b|\bira\b",             re.IGNORECASE)),
+        ("hsa",           re.compile(r"\bhsa\b",                      re.IGNORECASE)),
+        ("education_529", re.compile(r"\b529|\beducation\b",          re.IGNORECASE)),
+        ("annuities",     re.compile(r"\bannuit",                     re.IGNORECASE)),
+        ("other",         re.compile(r"\bpension\b|\bsep\b|\bsimple\b|\bdeferred\b|\bretirement\b",
+                                     re.IGNORECASE)),
+    ]
+
+    def _bucket_account(acct):
+        atype = acct.get("type") or ""
+        # Direct MajorType mapping takes priority over keyword search.
+        if atype in _MAJORTYPE_TO_BUCKET:
+            return _MAJORTYPE_TO_BUCKET[atype]
+        # Keyword search only on the human-readable account name.
+        name_lower = (acct.get("name") or "").lower()
+        for bucket_name, pat in _BUCKET_PRIORITY:
+            if pat.search(name_lower):
+                return bucket_name
+        return "other"
+
+    breakdown: dict[str, float] = {k: 0.0 for k, _ in _BUCKET_PRIORITY}
+    for acct in retirement_accounts:
+        bucket = _bucket_account(acct)
+        breakdown[bucket] = round(breakdown[bucket] + acct["balance"], 2)
 
     return {
         "total_retirement_assets": round(total_retirement, 2),
         "total_taxable_assets":    round(total_taxable, 2),
-        "retirement_breakdown": {
-            "401k_403b":     round(_bucket(retirement_accounts, ["401", "403"]), 2),
-            "ira_roth":      round(_bucket(retirement_accounts, ["ira", "roth"]), 2),
-            "annuities":     round(_bucket(retirement_accounts, ["annuit"]), 2),
-            "hsa":           round(_bucket(retirement_accounts, ["hsa"]), 2),
-            "education_529": round(_bucket(retirement_accounts, ["529", "education"]), 2),
-            "other":         round(_bucket(retirement_accounts, ["pension", "sep", "simple", "deferred"]), 2),
-        },
+        "retirement_breakdown": {k: round(v, 2) for k, v in breakdown.items()},
         "retirement_accounts": retirement_accounts,
         "note": (
             "Retirement assets are identified by keyword matching on account name/type. "
@@ -200,17 +251,54 @@ async def get_retirement_accounts(http_session) -> dict:
 async def get_net_worth_breakdown(http_session) -> dict:
     """
     Break down net worth by three lenses:
-      1. By person   — Drew, Lacey, Joint, or Other
+      1. By household member  — primary, spouse, joint, or other (derived from client profile)
       2. By liquidity — Liquid (cash/checking/savings), Semi-liquid (brokerage),
                         Illiquid (real estate, annuities, options/RSU)
       3. By tax treatment — Taxable, Tax-Deferred (traditional 401k/IRA/annuity),
                             Tax-Free (Roth, HSA, 529)
 
-    Source: get_accounts (CardSwitcher cards 9 + 1)
+    Source: get_accounts (CardSwitcher cards 9 + 1) + get_client_profile
     """
     accounts_result = await get_accounts(http_session)
     if "error" in accounts_result:
         return accounts_result
+
+    # Build dynamic household name map from client profile (#172: was hardcoded
+    # to 'drew'/'lacey'/'parker' which breaks for any other household).
+    profile_result = await get_client_profile(http_session)
+    _name_map: dict[str, str] = {}  # first_name_lower -> display_label
+    _primary_label = "Primary"
+    _spouse_label  = "Spouse"
+    if "error" not in profile_result:
+        primary = profile_result.get("primary")
+        spouse  = profile_result.get("spouse")
+        if primary and primary.get("name"):
+            first = primary["name"].split()[0]
+            _primary_label = first
+            _name_map[first.lower()] = first
+        if spouse and spouse.get("name"):
+            first = spouse["name"].split()[0]
+            _spouse_label = first
+            _name_map[first.lower()] = first
+        for dep in (profile_result.get("dependents") or []):
+            if dep.get("name"):
+                first = dep["name"].split()[0]
+                _name_map[first.lower()] = "Joint / Family"
+
+    def _person(name: str) -> str:
+        n = (name or "").lower()
+        if "joint" in n:
+            return "Joint / Family"
+        matched: set[str] = set()
+        for first_lower, label in _name_map.items():
+            if first_lower in n:
+                matched.add(label)
+        if len(matched) == 1:
+            val = next(iter(matched))
+            return val if val != "Joint / Family" else "Joint / Family"
+        if len(matched) > 1:
+            return "Joint / Family"
+        return "Other"
 
     net_worth    = accounts_result["net_worth"]
     total_assets = accounts_result["total_assets"]
@@ -221,20 +309,7 @@ async def get_net_worth_breakdown(http_session) -> dict:
         for acct in group["accounts"]:
             all_accts.append({**acct, "group": group["group"]})
 
-    # ── 1. By person ──────────────────────────────────────────────────────
-    def _person(name: str) -> str:
-        n = (name or "").lower()
-        has_drew  = "drew" in n
-        has_lacey = "lacey" in n
-        has_joint = "joint" in n or "parker" in n  # joint includes kid accounts
-        if has_drew and not has_lacey:
-            return "Drew"
-        if has_lacey and not has_drew:
-            return "Lacey"
-        if has_joint or (has_drew and has_lacey):
-            return "Joint / Family"
-        return "Other"
-
+    # ── 1. By household member ────────────────────────────────────────────────
     by_person: dict[str, float] = {}
     for a in all_accts:
         bal = a.get("balance") or 0
@@ -303,7 +378,8 @@ async def get_net_worth_breakdown(http_session) -> dict:
             for k, v in sorted(by_tax.items(), key=lambda x: x[1], reverse=True)
         ],
         "note": (
-            "Person attribution based on account name keywords (Drew/Lacey/Joint). "
+            "Person attribution based on first-name keyword matching in account names "
+            "(derived from client profile). "
             "Liabilities (mortgage, credit cards) excluded from asset breakdowns."
         ),
     }
@@ -409,7 +485,6 @@ async def get_debt_payoff_plan(
 
         while any(b > 0 for b in balances) and months < 600:
             months    += 1
-            freed      = 0.0
 
             # Apply interest to each active balance
             for i in range(len(balances)):
@@ -419,20 +494,20 @@ async def get_debt_payoff_plan(
                 total_interest += interest
                 balances[i]     = round(balances[i] + interest, 2)
 
-            # Pay minimums on all but the target debt
+            # Pay minimums on all but the target debt.
+            # remaining_budget starts at the full budget; paid-off debts simply
+            # don't consume any budget, so their minimums naturally accumulate
+            # for the focus debt without a separate 'freed' counter (#163).
             remaining_budget = budget
             for i in range(1, len(balances)):   # 0 = focus debt
                 if balances[i] <= 0:
-                    freed += minimums[i]
                     continue
                 pay           = min(minimums[i], balances[i])
                 balances[i]   = round(balances[i] - pay, 2)
                 remaining_budget -= pay
-                if balances[i] <= 0:
-                    freed += minimums[i]
 
             # All available budget goes to focus debt
-            focus_pay    = min(remaining_budget + freed, balances[0])
+            focus_pay    = min(remaining_budget, balances[0])
             balances[0]  = round(balances[0] - focus_pay, 2)
 
             # When focus debt is paid, shift remaining budget to next

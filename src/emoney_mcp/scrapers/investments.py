@@ -459,7 +459,10 @@ async def get_dividend_income_analysis(http_session, days: int = 365) -> dict:
     Note: the transaction feed has no account field, so a taxable-vs-sheltered
     income split is not derivable here.
     """
-    txn_result = await get_transactions(http_session, days=days)
+    # Clamp days to the transaction feed's maximum window and report the
+    # effective window so callers aren't misled about coverage (#171).
+    effective_days = min(max(days, 1), 365)
+    txn_result = await get_transactions(http_session, days=effective_days)
     if "error" in txn_result:
         return txn_result
     txns = txn_result.get("transactions", []) or []
@@ -487,25 +490,28 @@ async def get_dividend_income_analysis(http_session, days: int = 365) -> dict:
     if inv_data is not None:
         portfolio_value = (inv_data.get("Holdings") or 0) + (inv_data.get("Cash") or 0) or inv_data.get("CurrentValue")
 
-    yield_pct = round(total_income / portfolio_value * 100, 2) if portfolio_value else None
+    # Annualize income so the yield and forward estimate are always annual
+    # figures regardless of the trailing window length (#171).
+    annualized_income = round(total_income * 365 / effective_days, 2) if effective_days > 0 else total_income
+    yield_pct = round(annualized_income / portfolio_value * 100, 2) if portfolio_value else None
 
     top = sorted(by_ticker.items(), key=lambda kv: kv[1], reverse=True)
     top_income = [{"ticker": k, "income": v} for k, v in top[:10] if v > 0]
 
     return {
-        "trailing_window_days":    days,
+        "trailing_window_days":    effective_days,
         "trailing_dividends":      round(dividends, 2),
         "trailing_interest":       round(interest, 2),
         "trailing_total_income":   total_income,
         "portfolio_value":         round(portfolio_value, 2) if portfolio_value else None,
         "portfolio_yield_pct":     yield_pct,
-        "projected_forward_income": total_income,
+        "projected_forward_income": annualized_income,
         "top_income_producers":    top_income,
         "note": (
             "Income = 'Income Dividend' + 'Income Interest' cash receipts over the trailing "
             "window; 'Reinvest Dividend' lines are excluded (they reinvest the same dividends). "
-            "projected_forward_income uses trailing income as the estimate (no forward yield model). "
-            "Yield = trailing income / current portfolio value. A taxable-vs-sheltered split is not "
+            "portfolio_yield_pct and projected_forward_income are annualized (trailing income × 365/window). "
+            "Yield = annualized income / current portfolio value. A taxable-vs-sheltered split is not "
             "available — the investment transaction feed does not include the owning account."
         ),
     }

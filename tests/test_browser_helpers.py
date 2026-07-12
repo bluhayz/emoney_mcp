@@ -52,8 +52,10 @@ class TestSaveCookiesPermissions:
     directory owner-only (0o700), since session cookies are credential-equivalent.
     Skipped on platforms without POSIX permission semantics."""
 
-    @pytest.mark.skipif(not hasattr(__import__("os"), "fchmod"),
-                        reason="POSIX file permissions not enforced on this platform")
+    @pytest.mark.skipif(
+        not hasattr(__import__("os"), "fchmod") or __import__("sys").platform == "win32",
+        reason="POSIX file permissions not enforced on this platform (no fchmod or NTFS)",
+    )
     def test_new_file_is_owner_only(self, tmp_path, monkeypatch):
         import os
         import importlib
@@ -70,8 +72,10 @@ class TestSaveCookiesPermissions:
 
         importlib.reload(browser)  # restore module to default env for other tests
 
-    @pytest.mark.skipif(not hasattr(__import__("os"), "fchmod"),
-                        reason="POSIX file permissions not enforced on this platform")
+    @pytest.mark.skipif(
+        not hasattr(__import__("os"), "fchmod") or __import__("sys").platform == "win32",
+        reason="POSIX file permissions not enforced on this platform (no fchmod or NTFS)",
+    )
     def test_preexisting_loose_file_is_tightened(self, tmp_path, monkeypatch):
         import os
         import importlib

@@ -70,10 +70,9 @@ async def get_retirement_runway(
     accts = await get_accounts(http_session)
     if "error" in accts:
         return accts
-    total_assets     = accts.get("total_assets") or 0
-    total_liabilities = accts.get("total_liabilities") or 0
-
-    investable = max(0.0, total_assets - total_liabilities)
+    # Use net-of-home-equity portfolio so illiquid RE isn't treated as
+    # withdrawable (#161 — full NW includes primary home equity).
+    investable = _calc_investable_assets(accts)
 
     if annual_spending is None:
         txns, ok = await _fetch_snb_data(http_session, days=365)
@@ -162,10 +161,9 @@ async def get_withdrawal_rate_analysis(http_session) -> dict:
     goals_result = await get_goals(http_session)
     retirement_goals = goals_result.get("retirement_goals", []) if "error" not in goals_result else []
 
-    total_assets = accts.get("total_assets") or 0
-    total_liab   = accts.get("total_liabilities") or 0
-    investable   = max(0.0, total_assets - total_liab)
-
+    # Use net-of-home-equity portfolio so illiquid RE isn't treated as
+    # withdrawable (#161).
+    investable = _calc_investable_assets(accts)
     current_year = datetime.now().year
     retirement_start = None
     retirement_end   = None
@@ -404,9 +402,9 @@ async def run_monte_carlo_retirement(
     if "error" in accts:
         return accts
 
-    total_assets  = accts.get("total_assets") or 0
-    total_liab    = accts.get("total_liabilities") or 0
-    portfolio     = max(0.0, total_assets - total_liab)
+    # Use net-of-home-equity portfolio so illiquid RE isn't treated as
+    # withdrawable (#161).
+    portfolio = _calc_investable_assets(accts)
 
     if portfolio <= 0:
         return {"error": "No investable portfolio found."}
@@ -601,9 +599,9 @@ async def get_dynamic_withdrawal_guardrails(
     if "error" in accts:
         return accts
 
-    total_assets = accts.get("total_assets") or 0
-    total_liab   = accts.get("total_liabilities") or 0
-    current_portfolio = max(0.0, total_assets - total_liab)
+    # Use net-of-home-equity portfolio so illiquid RE isn't treated as
+    # withdrawable (#161).
+    current_portfolio = _calc_investable_assets(accts)
 
     if current_portfolio <= 0:
         return {"error": "No investable portfolio found."}
@@ -1419,7 +1417,9 @@ async def get_sequence_of_returns_stress_test(
     accts = await get_accounts(http_session)
     if "error" in accts:
         return accts
-    portfolio = max(0.0, (accts.get("total_assets") or 0) - (accts.get("total_liabilities") or 0))
+    # Use net-of-home-equity portfolio so illiquid RE isn't treated as
+    # withdrawable (#161).
+    portfolio = _calc_investable_assets(accts)
     if portfolio <= 0:
         return {"error": "No investable portfolio found."}
 

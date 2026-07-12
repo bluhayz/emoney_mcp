@@ -13,8 +13,14 @@ get_vault_documents(http_session)
     sharing status, plus total storage usage — for "What documents are in my
     vault?" / "How much have I uploaded?".
 
+get_vault_folder(http_session, folder_path)
+    Lists individual files within a specific Vault folder (drill-down).
+    ``folder_path`` is a slash-separated path under the Vault root, e.g.
+    ``"Tax Documents"`` or ``"Vault/Tax Documents"`` — the ``Vault/`` prefix is
+    added automatically when omitted.
+
 Discovered via live network capture (epic #106, discovery pass 2). The listing
-endpoint is ``GET /ema/api/v1/vault/<guid>/items?path=Vault&_=<ts>`` returning
+endpoint is ``GET /ema/api/v1/vault/<guid>/items?path=<path>&_=<ts>`` returning
 ``{metadata: {...}, children: [{name,type,fileCount,sizeInBytes,createdDate,
 isShared,...}]}``.
 """
@@ -61,15 +67,8 @@ def _format_item(item: dict) -> dict:
     }
 
 
-async def get_vault_documents(http_session) -> dict:
-    """
-    List the eMoney Vault's top-level folders with file counts, sizes, sharing
-    status, and total storage usage.
-
-    The Vault stores documents shared between the client and advisor (statements,
-    estate documents, tax returns, etc.). This returns the top-level folder
-    inventory — not the individual files — plus aggregate usage.
-    """
+async def _vault_items(http_session, path: str) -> dict:
+    """Shared fetch-and-parse for any vault path; returns raw response dict."""
     base, err = await _vault_api_base(http_session)
     if err:
         return err
@@ -78,7 +77,7 @@ async def get_vault_documents(http_session) -> dict:
     url = f"{BASE_URL}{base}/items"
     resp = await http.get(
         url,
-        params={"path": "Vault", "_": int(time.time() * 1000)},
+        params={"path": path, "_": int(time.time() * 1000)},
         headers={"X-Requested-With": "XMLHttpRequest", "Accept": "application/json"},
         allow_redirects=True,
         timeout=20,
@@ -89,8 +88,24 @@ async def get_vault_documents(http_session) -> dict:
     data = resp.json()
     if not isinstance(data, dict):
         return {"error": "Vault items endpoint returned an unexpected (non-object) body."}
+    return data
 
-    meta = data.get("metadata") or {}
+
+async def get_vault_documents(http_session) -> dict:
+    """
+    List the eMoney Vault's top-level folders with file counts, sizes, sharing
+    status, and total storage usage.
+
+    The Vault stores documents shared between the client and advisor (statements,
+    estate documents, tax returns, etc.). This returns the top-level folder
+    inventory — not the individual files inside them. Use get_vault_folder to
+    drill into a specific folder.
+    """
+    data = await _vault_items(http_session, "Vault")
+    if "error" in data:
+        return data
+
+    meta     = data.get("metadata") or {}
     children = data.get("children") or []
 
     folders = [_format_item(c) for c in children if c.get("type") == "folder"]
@@ -109,9 +124,55 @@ async def get_vault_documents(http_session) -> dict:
         "folders":            folders,
         "root_files":         files,
         "note": (
-            "Top-level Vault folders only (not individual files within them); "
-            "file_count and size are per-folder aggregates. The Vault holds "
-            "documents shared between you and your advisor. Source: "
-            "/ema/api/v1/vault/<client>/items."
+            "Top-level Vault folders only. Use get_vault_folder to list the "
+            "individual files inside a folder. The Vault holds documents shared "
+            "between you and your advisor. Source: /ema/api/v1/vault/<client>/items."
+        ),
+    }
+
+
+async def get_vault_folder(http_session, folder_path: str = "Vault") -> dict:
+    """
+    List individual files (and sub-folders) within a specific Vault folder.
+
+    ``folder_path`` is the path to the folder, e.g. ``"Tax Documents"`` or the
+    full ``"Vault/Tax Documents"``. The ``Vault/`` prefix is added automatically
+    when omitted. Returns each item's name, size, creation date, and sharing
+    status — "What tax returns are in my vault?" or "List my estate docs".
+
+    Parameters
+    ----------
+    folder_path : path to the folder (default: "Vault" = top-level listing)
+    """
+    path = folder_path.strip()
+    if not path.lower().startswith("vault"):
+        path = "Vault/" + path
+
+    data = await _vault_items(http_session, path)
+    if "error" in data:
+        return data
+
+    meta     = data.get("metadata") or {}
+    children = data.get("children") or []
+
+    folders = [_format_item(c) for c in children if c.get("type") == "folder"]
+    files   = [_format_item(c) for c in children if c.get("type") != "folder"]
+    folders.sort(key=lambda f: (f.get("name") or "").lower())
+    files.sort(key=lambda f: (f.get("created_date") or ""), reverse=True)
+
+    folder_bytes = meta.get("sizeInBytes") or 0
+
+    return {
+        "path":         path,
+        "folder_name":  meta.get("name"),
+        "total_files":  meta.get("fileCount") or len(files),
+        "total_bytes":  folder_bytes,
+        "total_mb":     round(folder_bytes / 1_048_576, 2),
+        "sub_folders":  folders,
+        "files":        files,
+        "note": (
+            f"Contents of vault path '{path}'. Files are sorted newest-first; "
+            "sub-folders are sorted alphabetically. Use get_vault_documents for "
+            "the top-level folder inventory."
         ),
     }

@@ -1901,10 +1901,31 @@ async def list_tools() -> list[Tool]:
                 "Lists the eMoney Vault's top-level document folders — each with file count, size, "
                 "creation date, and sharing status — plus total storage usage. The Vault holds "
                 "documents shared between you and your advisor (statements, estate documents, tax "
-                "returns, etc.). Returns the folder inventory, not individual files. No parameters. "
+                "returns, etc.). Returns the folder inventory, not individual files. "
+                "Use get_vault_folder to list files within a folder. No parameters. "
                 "Useful for 'What's in my vault?' or 'How much have I uploaded?'"
             ),
             inputSchema={"type": "object", "properties": {}, "required": []},
+        ),
+        Tool(
+            name="get_vault_folder",
+            description=(
+                "Lists individual files (and sub-folders) within a specific eMoney Vault folder. "
+                "Pass folder_path as the folder name, e.g. 'Tax Documents' or 'Vault/Tax Documents' "
+                "(the Vault/ prefix is added automatically). Returns each file's name, size, "
+                "creation date, and sharing status. Default lists the root vault contents. "
+                "Useful for 'What tax returns are in my vault?' or 'List my estate planning documents'."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "folder_path": {
+                        "type": "string",
+                        "description": "Vault folder path, e.g. 'Tax Documents' or 'Vault/Tax Documents'. Default: Vault root.",
+                    },
+                },
+                "required": [],
+            },
         ),
         # ── Ops (#103 — aggregation refresh control) ──────────────────────
         Tool(
@@ -1961,6 +1982,42 @@ async def list_tools() -> list[Tool]:
                 },
                 "required": [],
             },
+        ),
+        # ── Data reads (#178, #179 — plan assumptions, expenses, official MC) ──
+        Tool(
+            name="get_plan_assumptions",
+            description=(
+                "Returns the advisor's plan-level modelling assumptions: inflation rate, expected "
+                "portfolio return rates (equity, bond, cash, pre/post-retirement blends), retirement "
+                "ages, plan horizon, life expectancy, and Social Security start ages. No parameters. "
+                "Useful for 'What return rate does my plan assume?' or 'What inflation rate is my "
+                "advisor using?' or comparing plan assumptions to your own estimates."
+            ),
+            inputSchema={"type": "object", "properties": {}, "required": []},
+        ),
+        Tool(
+            name="get_plan_expenses",
+            description=(
+                "Returns the goal-level expense definitions from the advisor's financial plan: "
+                "regular living expenses, education-funding goals, and other spending goals — "
+                "each with its name, annual amount, start/end years, and total projected cost. "
+                "No parameters. Useful for 'What goals did my advisor model?' or 'How much is "
+                "budgeted for college?' or aligning your own projections with the official plan."
+            ),
+            inputSchema={"type": "object", "properties": {}, "required": []},
+        ),
+        Tool(
+            name="get_official_plan_projection",
+            description=(
+                "Returns eMoney's own Monte Carlo plan projection: the overall probability of "
+                "success (share of scenarios where all goals are funded) and the asset-spread "
+                "percentile bands (10th/25th/50th/75th/90th portfolio values by year) from the "
+                "advisor's plan engine. Complement to run_monte_carlo_retirement (which uses "
+                "simplified local assumptions). No parameters. "
+                "Useful for 'What does my official plan say about success probability?' or "
+                "'Show me the fan chart for my portfolio over time'."
+            ),
+            inputSchema={"type": "object", "properties": {}, "required": []},
         ),
         # ── Data reads (#92, #93 — investment depth) ──────────────────────
         Tool(
@@ -2415,6 +2472,8 @@ _DISPATCH = {
                                                _A("cash_invested", float, optional=True),
                                                _A("annual_appreciation", float, 0.03)),
     "get_vault_documents":           _passthru("get_vault_documents"),
+    "get_vault_folder":              _passthru("get_vault_folder",
+                                               _A("folder_path", str, "Vault")),
     "refresh_account_aggregation":   _passthru("refresh_account_aggregation",
                                                _A("institution", str, optional=True),
                                                _A("connection_id", str, optional=True)),
@@ -2422,6 +2481,9 @@ _DISPATCH = {
     "get_lifetime_cash_flow_projection": _passthru("get_lifetime_cash_flow_projection",
                                                _A("start_year", int, optional=True),
                                                _A("end_year", int, optional=True)),
+    "get_plan_assumptions":          _passthru("get_plan_assumptions"),
+    "get_plan_expenses":             _passthru("get_plan_expenses"),
+    "get_official_plan_projection":  _passthru("get_official_plan_projection"),
     "get_dividend_income_analysis":  _passthru("get_dividend_income_analysis",
                                                _A("days", int, 365)),
     "get_sector_geographic_allocation": _passthru("get_sector_geographic_allocation"),

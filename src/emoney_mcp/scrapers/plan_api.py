@@ -20,11 +20,27 @@ get_lifetime_cash_flow_projection(http_session, start_year, end_year)
     cash flow, portfolio value, net worth, growth, and withdrawals, plus summary
     stats (peak portfolio, ending net worth, first shortfall/depletion year).
 
+get_plan_assumptions(http_session)
+    The advisor's plan-level assumptions: inflation, expected return rates,
+    retirement ages, plan horizon, and other modelling parameters.
+
+get_plan_expenses(http_session)
+    Goal-level expense definitions from the plan: regular living expenses,
+    education funding goals, and other spending goals with their amounts and years.
+
+get_official_plan_projection(http_session)
+    eMoney's Monte Carlo probability-of-success and asset-spread percentile bands
+    (10th/25th/50th/75th/90th portfolio values by year) from the advisor's plan.
+
 Discovered via live network capture (epic #106, discovery pass 2 / token flow).
 Endpoints used:
   GET .../plans/<plan>/projection/montecarlo/goals        (per-goal success)
   GET .../plans/<plan>/projection/goalfunding/retirement  (retirement $ funding)
   GET .../plans/<plan>/projection/linear/cashflow/details (lifetime cash flow)
+  GET .../plans/<plan>/assumptions                        (plan assumptions)
+  GET .../plans/<plan>/expenses                           (plan expenses)
+  GET .../plans/<plan>/projection/montecarlo/probabilityofsuccess
+  GET .../plans/<plan>/projection/montecarlo/assetspread
 """
 
 import re
@@ -287,3 +303,340 @@ async def get_lifetime_cash_flow_projection(
             "market values. For probability-of-success see get_all_goals_funding_status."
         ),
     }
+
+
+# ---------------------------------------------------------------------------
+# Shared BFF auth helper
+# ---------------------------------------------------------------------------
+
+async def _bff_setup(http_session):
+    """Return (http, base_url, headers, None) or (None, None, None, error_dict)."""
+    client_id, plan_id, err = await _get_plan_ids(http_session)
+    if err:
+        return None, None, None, err
+    jwt, apikey = await _get_snb_credentials(http_session)
+    if not jwt or not apikey:
+        return None, None, None, {
+            "error": "Could not retrieve plan API credentials (Spending page). "
+                     "Session may have expired — call sync_chrome_session."
+        }
+    http    = await http_session.get_http()
+    base    = f"{_INTERNAL_API}/clients/{client_id}/plans/{plan_id}"
+    headers = _snb_headers(jwt, apikey)
+    return http, base, headers, None
+
+
+async def _bff_get(http, base, headers, path, timeout=30):
+    """GET a BFF sub-path; returns (data_dict_or_list, None) or (None, error_str)."""
+    try:
+        r = await http.get(f"{base}{path}", headers=headers, timeout=timeout)
+    except Exception as e:
+        return None, f"{type(e).__name__}"
+    if r.status_code != 200 or "json" not in r.headers.get("content-type", ""):
+        return None, f"HTTP {r.status_code}"
+    return r.json(), None
+
+
+# ---------------------------------------------------------------------------
+# #178 — get_plan_assumptions
+# ---------------------------------------------------------------------------
+
+async def get_plan_assumptions(http_session) -> dict:
+    """
+    Return the advisor's plan-level modelling assumptions.
+
+    Surfaces the inputs the advisor configured in the eMoney financial plan:
+    inflation rate, expected portfolio return rates, retirement ages, plan
+    horizon, and any other modelling parameters embedded in the assumptions
+    endpoint. Useful for understanding how the projections were derived and
+    for comparing against your own expectations.
+
+    Note: the exact fields returned depend on how the advisor configured the
+    plan; not all fields are present in every plan.
+    """
+    http, base, headers, err = await _bff_setup(http_session)
+    if err:
+        return err
+
+    data, fetch_err = await _bff_get(http, base, headers, "/assumptions")
+    if fetch_err:
+        return {"error": f"Plan assumptions endpoint unavailable ({fetch_err}). "
+                         "The plan may not be fully configured."}
+
+    if not isinstance(data, dict):
+        return {"error": "Plan assumptions returned an unexpected response format."}
+
+    # Surface common known fields with normalised names; pass through any extras.
+    def _rate(v):
+        return round(v * 100, 3) if isinstance(v, float) and v < 1 else _num(v)
+
+    result: dict = {}
+
+    # Inflation
+    inf_rate = data.get("inflationRate") or data.get("inflation")
+    if inf_rate is not None:
+        result["inflation_rate_pct"] = _rate(inf_rate)
+
+    # Investment return assumptions
+    for src_key, dst_key in [
+        ("equityReturn",        "equity_return_pct"),
+        ("bondReturn",          "bond_return_pct"),
+        ("cashReturn",          "cash_return_pct"),
+        ("preRetirementReturn", "pre_retirement_return_pct"),
+        ("retirementReturn",    "retirement_return_pct"),
+        ("portfolioReturn",     "portfolio_return_pct"),
+    ]:
+        v = data.get(src_key)
+        if v is not None:
+            result[dst_key] = _rate(v)
+
+    # Retirement ages
+    for src_key, dst_key in [
+        ("primaryRetirementAge",  "primary_retirement_age"),
+        ("spouseRetirementAge",   "spouse_retirement_age"),
+        ("retirementAge",         "retirement_age"),
+    ]:
+        v = data.get(src_key)
+        if v is not None:
+            result[dst_key] = v
+
+    # Plan horizon / life expectancy
+    for src_key, dst_key in [
+        ("planHorizon",       "plan_horizon_years"),
+        ("lifeExpectancy",    "life_expectancy"),
+        ("planEndYear",       "plan_end_year"),
+        ("planStartYear",     "plan_start_year"),
+    ]:
+        v = data.get(src_key)
+        if v is not None:
+            result[dst_key] = v
+
+    # Social Security
+    for src_key, dst_key in [
+        ("primarySocialSecurityAge",  "primary_ss_start_age"),
+        ("spouseSocialSecurityAge",   "spouse_ss_start_age"),
+    ]:
+        v = data.get(src_key)
+        if v is not None:
+            result[dst_key] = v
+
+    # Pass through any remaining top-level fields we haven't mapped
+    mapped = {
+        "inflationRate", "inflation",
+        "equityReturn", "bondReturn", "cashReturn",
+        "preRetirementReturn", "retirementReturn", "portfolioReturn",
+        "primaryRetirementAge", "spouseRetirementAge", "retirementAge",
+        "planHorizon", "lifeExpectancy", "planEndYear", "planStartYear",
+        "primarySocialSecurityAge", "spouseSocialSecurityAge",
+    }
+    extra = {k: v for k, v in data.items() if k not in mapped}
+    if extra:
+        result["additional_assumptions"] = extra
+
+    result["note"] = (
+        "Plan assumptions from the advisor's eMoney financial plan. "
+        "Return rates shown as percentages (already converted from 0–1 fractions). "
+        "Fields present vary by plan configuration."
+    )
+    return result
+
+
+# ---------------------------------------------------------------------------
+# #178 — get_plan_expenses
+# ---------------------------------------------------------------------------
+
+def _parse_expense(e: dict) -> dict:
+    """Normalise a single expense/goal record from the BFF."""
+    return {
+        "name":         e.get("name") or e.get("description"),
+        "type":         e.get("type") or e.get("goalType"),
+        "annual_amount": _num(e.get("annualAmount") or e.get("amount")),
+        "start_year":   e.get("startYear") or e.get("startDate"),
+        "end_year":     e.get("endYear") or e.get("endDate"),
+        "total_cost":   _num(e.get("totalCost") or e.get("totalExpense")),
+        "is_funded":    e.get("isFunded"),
+    }
+
+
+async def get_plan_expenses(http_session) -> dict:
+    """
+    Return the goal-level expense definitions from the advisor's financial plan.
+
+    Combines three sub-endpoints:
+    - ``/expenses``             : all plan expenses (regular living costs + goals)
+    - ``/expenses/education``   : education-specific goal details
+    - ``/expenses/spending``    : regular spending goal details
+
+    Useful for understanding what goals the advisor modelled (college funding,
+    retirement spending, one-time purchases) and their expected costs and timing.
+
+    Note: the exact structure varies by plan; not all sub-endpoints are populated
+    in every plan.
+    """
+    http, base, headers, err = await _bff_setup(http_session)
+    if err:
+        return err
+
+    import asyncio
+    (expenses_raw, exp_err), (edu_raw, edu_err), (spend_raw, spend_err) = \
+        await asyncio.gather(
+            _bff_get(http, base, headers, "/expenses"),
+            _bff_get(http, base, headers, "/expenses/education"),
+            _bff_get(http, base, headers, "/expenses/spending"),
+            return_exceptions=False,
+        )
+
+    if exp_err and edu_err and spend_err:
+        return {"error": f"All plan expense endpoints unavailable "
+                         f"(expenses: {exp_err}, education: {edu_err}, spending: {spend_err}). "
+                         "The plan may not be fully configured."}
+
+    result: dict = {}
+
+    # Top-level expenses
+    if isinstance(expenses_raw, (dict, list)):
+        items = expenses_raw if isinstance(expenses_raw, list) else \
+                expenses_raw.get("expenses") or expenses_raw.get("items") or \
+                list(expenses_raw.values()) if isinstance(expenses_raw, dict) else []
+        if isinstance(items, list):
+            result["expenses"] = [_parse_expense(e) for e in items if isinstance(e, dict)]
+
+    # Education goals
+    if isinstance(edu_raw, (dict, list)):
+        items = edu_raw if isinstance(edu_raw, list) else \
+                edu_raw.get("educationGoals") or edu_raw.get("goals") or \
+                edu_raw.get("items") or []
+        if isinstance(items, list):
+            result["education_goals"] = [_parse_expense(e) for e in items if isinstance(e, dict)]
+
+    # Spending goals
+    if isinstance(spend_raw, (dict, list)):
+        items = spend_raw if isinstance(spend_raw, list) else \
+                spend_raw.get("spendingGoals") or spend_raw.get("goals") or \
+                spend_raw.get("items") or []
+        if isinstance(items, list):
+            result["spending_goals"] = [_parse_expense(e) for e in items if isinstance(e, dict)]
+
+    if not result:
+        return {"error": "No expense data returned from the plan. "
+                         "The plan may not have any goals configured."}
+
+    result["note"] = (
+        "Goal and expense definitions from the advisor's eMoney financial plan. "
+        "annual_amount values are in today's dollars (before inflation). "
+        "Not all fields are populated in every plan."
+    )
+    return result
+
+
+# ---------------------------------------------------------------------------
+# #179 — get_official_plan_projection
+# ---------------------------------------------------------------------------
+
+def _parse_asset_spread_year(y: dict) -> dict:
+    """Extract the portfolio percentile bands for a single projection year."""
+    row: dict = {"year": y.get("year")}
+    # Try common field shapes: {p10, p25, p50, p75, p90} or {percentiles: {}}
+    pct = y.get("percentiles") or {}
+    for p_key, out_key in [
+        ("p10", "p10"),  ("percentile10", "p10"),  ("10", "p10"),
+        ("p25", "p25"),  ("percentile25", "p25"),  ("25", "p25"),
+        ("p50", "p50"),  ("percentile50", "p50"),  ("50", "p50"),  ("median", "p50"),
+        ("p75", "p75"),  ("percentile75", "p75"),  ("75", "p75"),
+        ("p90", "p90"),  ("percentile90", "p90"),  ("90", "p90"),
+    ]:
+        v = pct.get(p_key) or y.get(p_key)
+        if v is not None and out_key not in row:
+            row[out_key] = _num(v)
+    return row
+
+
+async def get_official_plan_projection(http_session) -> dict:
+    """
+    Return eMoney's own Monte Carlo plan projection: overall probability of
+    success and the asset-spread percentile bands (10th/25th/50th/75th/90th
+    portfolio values by year).
+
+    This is the advisor-grade projection that powers the eMoney My Plan view —
+    it uses the advisor's return assumptions, goal set, and Monte Carlo engine,
+    not the simplified local ``run_monte_carlo_retirement`` calculator. Compare
+    the two to sanity-check your local projection against the official plan.
+
+    Returns:
+    - ``probability_of_success_pct`` : overall plan success probability
+    - ``asset_spread`` : per-year portfolio percentile bands
+    - ``retirement_projection`` : retirement-specific projection data (if available)
+    """
+    http, base, headers, err = await _bff_setup(http_session)
+    if err:
+        return err
+
+    import asyncio
+    (pos_raw, pos_err), (spread_raw, spread_err), (ret_raw, ret_err) = \
+        await asyncio.gather(
+            _bff_get(http, base, headers, "/projection/montecarlo/probabilityofsuccess"),
+            _bff_get(http, base, headers, "/projection/montecarlo/assetspread"),
+            _bff_get(http, base, headers, "/projection/retirement"),
+            return_exceptions=False,
+        )
+
+    result: dict = {}
+
+    # Overall probability of success
+    if isinstance(pos_raw, dict):
+        pos = (
+            pos_raw.get("probabilityOfSuccess")
+            or pos_raw.get("probability")
+            or pos_raw.get("value")
+        )
+        result["probability_of_success_pct"] = _pct(pos)
+        result["probability_status"] = _status_from_prob(pos if isinstance(pos, float) and pos <= 1 else (pos or 0) / 100)
+    elif pos_err:
+        result["probability_of_success_pct"] = None
+        result["probability_note"] = f"Unavailable ({pos_err})"
+
+    # Asset spread / percentile bands
+    if isinstance(spread_raw, (dict, list)):
+        years_raw = (
+            spread_raw if isinstance(spread_raw, list)
+            else spread_raw.get("years") or spread_raw.get("data") or []
+        )
+        if isinstance(years_raw, list):
+            result["asset_spread"] = [
+                _parse_asset_spread_year(y) for y in years_raw
+                if isinstance(y, dict)
+            ]
+    if spread_err and "asset_spread" not in result:
+        result["asset_spread_note"] = f"Asset spread unavailable ({spread_err})"
+
+    # Retirement projection details
+    if isinstance(ret_raw, dict):
+        result["retirement_projection"] = {
+            "probability_of_success_pct": _pct(
+                ret_raw.get("probabilityOfSuccess") or ret_raw.get("probability")
+            ),
+            "has_shortfall":       ret_raw.get("hasShortfall"),
+            "first_shortfall_year": ret_raw.get("firstShortfallYear"),
+            "mean_surplus":        _num(ret_raw.get("meanSurplus")),
+            "raw":                 ret_raw,  # pass through full response
+        }
+    elif ret_err:
+        result["retirement_projection_note"] = f"Unavailable ({ret_err})"
+
+    if not result or (
+        result.get("probability_of_success_pct") is None
+        and "asset_spread" not in result
+        and "retirement_projection" not in result
+    ):
+        return {"error": f"Official plan projection unavailable. "
+                         f"pos: {pos_err}, spread: {spread_err}, ret: {ret_err}. "
+                         "The plan's Monte Carlo data may not be calculated yet."}
+
+    result["note"] = (
+        "Official eMoney Monte Carlo plan projection using the advisor's assumptions "
+        "and full goal set. probability_of_success_pct is the share of simulated "
+        "scenarios in which all goals are fully funded. asset_spread shows the "
+        "portfolio-value distribution (10th–90th percentile) by year. "
+        "Compare with run_monte_carlo_retirement for a quick local sanity-check."
+    )
+    return result

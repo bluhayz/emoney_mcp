@@ -182,11 +182,15 @@ from .planning import (
 
 from .vault import (
     get_vault_documents,
+    get_vault_folder,
 )
 
 from .plan_api import (
     get_all_goals_funding_status,
     get_lifetime_cash_flow_projection,
+    get_plan_assumptions,
+    get_plan_expenses,
+    get_official_plan_projection,
 )
 
 from .aggregation_api import (
@@ -318,9 +322,13 @@ __all__ = [
     "get_real_estate_investment_analysis",
     # vault
     "get_vault_documents",
+    "get_vault_folder",
     # plan_api (internal-api BFF)
     "get_all_goals_funding_status",
     "get_lifetime_cash_flow_projection",
+    "get_plan_assumptions",
+    "get_plan_expenses",
+    "get_official_plan_projection",
     # aggregation_api (aggapi — refresh control)
     "refresh_account_aggregation",
     # explore

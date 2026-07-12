@@ -28,9 +28,12 @@ _get_investment_data(http_session) — Fetch GetInvestmentData (holdings JSON)
 _fmt_dollars(v)           — Format a numeric value as "$1,234.56" for display.
 clear_card_cache()        — Purge both the card cache and investment data cache
                             (called on session reset).
+_is_compact()             — Return True when EMONEY_COMPACT=1 is set; controls
+                            whether large per-row arrays are truncated to summaries.
 """
 
 import asyncio
+import os
 import time
 from datetime import datetime
 
@@ -228,3 +231,17 @@ def _parse_card8_history(card8, months: int, now=None) -> list[dict]:
         dt = _month_offset(now, months_ago)
         points.append({"month": dt.strftime("%Y-%m"), "net_worth": val})
     return points
+
+
+# ---------------------------------------------------------------------------
+# Compact response mode
+# ---------------------------------------------------------------------------
+
+def _is_compact() -> bool:
+    """Return True when the caller has set EMONEY_COMPACT=1 (or 'true'/'yes').
+
+    When compact mode is active, large per-row arrays (plan years, MC
+    percentile bands, spending categories) are truncated to summaries.
+    The default (unset) is verbose — full arrays, backward-compatible.
+    """
+    return os.environ.get("EMONEY_COMPACT", "").strip().lower() in ("1", "true", "yes")

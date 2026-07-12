@@ -45,7 +45,7 @@ Endpoints used:
 
 import re
 
-from ._helpers import BASE_URL
+from ._helpers import BASE_URL, _is_compact
 from .spending import _get_snb_credentials, _snb_headers
 
 _INTERNAL_API = "https://api.emoneyadvisor.com/internal-api/api"
@@ -280,13 +280,39 @@ async def get_lifetime_cash_flow_projection(
     depletion_year = next((r["year"] for r in rows if (r["portfolio_value"] or 0) <= 0), None)
     ending = rows[-1]
 
+    # Compact mode: keep only key years to reduce payload size (#182).
+    years_total = len(rows)
+    if _is_compact() and years_total > 10:
+        key_years: set[int] = set()
+        if rows[0]["year"] is not None:
+            key_years.add(rows[0]["year"])
+        if ending["year"] is not None:
+            key_years.add(ending["year"])
+        if peak["year"] is not None:
+            key_years.add(peak["year"])
+        if first_negative:
+            key_years.add(first_negative)
+        if depletion_year:
+            key_years.add(depletion_year)
+        for r in rows:
+            if r["year"] is not None and r["year"] % 5 == 0:
+                key_years.add(r["year"])
+        rows = [r for r in rows if r["year"] in key_years]
+        compact_meta: dict = {
+            "output_mode":  "compact",
+            "years_total":  years_total,
+            "years_shown":  len(rows),
+        }
+    else:
+        compact_meta = {}
+
     return {
-        "horizon_years":   len(rows),
-        "first_year":      rows[0]["year"],
+        "horizon_years":   years_total,
+        "first_year":      rows[0]["year"] if rows else None,
         "last_year":       ending["year"],
         "scenario":        "linear (average-return plan assumptions)",
         "summary": {
-            "starting_portfolio_value": rows[0]["portfolio_value"],
+            "starting_portfolio_value": rows[0]["portfolio_value"] if rows else None,
             "ending_portfolio_value":   ending["portfolio_value"],
             "ending_net_worth":         ending["net_worth"],
             "peak_portfolio_value":     peak["portfolio_value"],
@@ -295,12 +321,15 @@ async def get_lifetime_cash_flow_projection(
             "portfolio_depletion_year": depletion_year,
         },
         "years": rows,
+        **compact_meta,
         "note": (
             "Year-by-year lifetime cash flow from the plan's 'linear' projection (average-return "
             "assumptions, not Monte Carlo ranges). net_cash_flow turning negative is normal in "
             "retirement (portfolio funds the gap); portfolio_depletion_year is null when the plan "
             "never runs out. Figures use the advisor's plan assumptions and inflation, not live "
             "market values. For probability-of-success see get_all_goals_funding_status."
+            + (" Set EMONEY_COMPACT= to see all years." if compact_meta else
+               " Set EMONEY_COMPACT=1 to truncate to key years only.")
         ),
     }
 
@@ -602,10 +631,20 @@ async def get_official_plan_projection(http_session) -> dict:
             else spread_raw.get("years") or spread_raw.get("data") or []
         )
         if isinstance(years_raw, list):
-            result["asset_spread"] = [
+            all_spread = [
                 _parse_asset_spread_year(y) for y in years_raw
                 if isinstance(y, dict)
             ]
+            # Compact mode: downsample to every-5th year (#182).
+            spread_total = len(all_spread)
+            if _is_compact() and spread_total > 10:
+                spread_out = all_spread[::5] or all_spread
+                result["asset_spread"] = spread_out
+                result["output_mode"] = "compact"
+                result["asset_spread_total"] = spread_total
+                result["asset_spread_shown"] = len(spread_out)
+            else:
+                result["asset_spread"] = all_spread
     if spread_err and "asset_spread" not in result:
         result["asset_spread_note"] = f"Asset spread unavailable ({spread_err})"
 
@@ -638,5 +677,8 @@ async def get_official_plan_projection(http_session) -> dict:
         "scenarios in which all goals are fully funded. asset_spread shows the "
         "portfolio-value distribution (10th–90th percentile) by year. "
         "Compare with run_monte_carlo_retirement for a quick local sanity-check."
+        + (" Set EMONEY_COMPACT= to see full asset spread."
+           if result.get("output_mode") == "compact" else
+           " Set EMONEY_COMPACT=1 to downsample asset_spread to every-5th year.")
     )
     return result

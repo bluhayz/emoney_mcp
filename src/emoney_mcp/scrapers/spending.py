@@ -84,7 +84,7 @@ import re
 import time
 from datetime import datetime, timedelta
 
-from ._helpers import BASE_URL, _SNB_API, _get_card, _month_offset
+from ._helpers import BASE_URL, _SNB_API, _get_card, _month_offset, _is_compact
 
 _log = logging.getLogger("emoney_mcp.scrapers.spending")
 
@@ -1298,6 +1298,11 @@ async def get_budget_vs_actual(http_session, months_avg: int = 3) -> dict:
             "on_track":                  actual_total <= configured_budget,
         }
 
+    # Compact mode: keep only the top 10 categories by absolute variance (#182).
+    cats_total = len(category_comparison)
+    _compact_mode = _is_compact() and cats_total > 10
+    cats_out = category_comparison[:10] if _compact_mode else category_comparison
+
     return {
         "as_of":               now.strftime("%Y-%m-%d"),
         "this_month":          this_month,
@@ -1308,7 +1313,10 @@ async def get_budget_vs_actual(http_session, months_avg: int = 3) -> dict:
         "total_avg":           avg_total_spend,
         "total_variance":      total_variance,
         "configured_budget":   budget_status,
-        "categories":          category_comparison,
+        "categories":          cats_out,
+        **({"output_mode": "compact",
+            "categories_total": cats_total,
+            "categories_shown": 10} if _compact_mode else {}),
         "over_budget_count":   len(over_budget_cats),
         "under_budget_count":  len(under_budget_cats),
         "top_overspend":       over_budget_cats[:5],
@@ -1319,6 +1327,9 @@ async def get_budget_vs_actual(http_session, months_avg: int = 3) -> dict:
             f"this_month_actual and pace_projected_total reflect "
             f"{now.day} of {days_in_month} days elapsed ({round(month_progress*100,1)}% of month); "
             "compare pace_projected_total against rolling_avg for an apples-to-apples pace view."
+            + (f" Showing top 10 of {cats_total} categories (EMONEY_COMPACT=1)."
+               if _compact_mode else
+               " Set EMONEY_COMPACT=1 to truncate to top-10 categories.")
         ),
     }
 

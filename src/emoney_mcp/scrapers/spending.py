@@ -78,6 +78,7 @@ clear_snb_cache()                — Purges the SNB in-memory cache.
 """
 
 import asyncio
+import calendar
 import logging
 import re
 import time
@@ -637,7 +638,7 @@ async def get_spending(http_session, months: int = 1) -> dict:
     net      = cf.get("Net")
 
     savings_rate = None
-    if income and expenses and income > 0:
+    if income and income > 0 and expenses is not None:
         savings_rate = round((income - abs(expenses)) / income * 100, 1)
 
     return {
@@ -907,11 +908,15 @@ async def get_income_summary(http_session, days: int = 90) -> dict:
     source_list.sort(key=lambda x: x["total"], reverse=True)
 
     now = datetime.now()
-    months_back = max(1, days // 30)
-    month_labels = []
-    for i in range(months_back - 1, -1, -1):
-        dt = _month_offset(now, i)
-        month_labels.append(dt.strftime("%Y-%m"))
+    # Derive month labels from actual transaction span so the series never
+    # drops the partial oldest calendar month (#156: days//30 can undercount).
+    months_seen: set[str] = {t["date"][:7] for t in income_txns}
+    if months_seen:
+        month_labels = sorted(months_seen)
+    else:
+        months_back = max(1, days // 30)
+        month_labels = [_month_offset(now, i).strftime("%Y-%m")
+                        for i in range(months_back - 1, -1, -1)]
 
     monthly: dict[str, float] = {m: 0.0 for m in month_labels}
     month_set = set(month_labels)
@@ -919,6 +924,9 @@ async def get_income_summary(http_session, days: int = 90) -> dict:
         m = t["date"][:7]
         if m in month_set:
             monthly[m] = round(monthly[m] + t["amount"], 2)
+
+    # Recompute total from labeled buckets so sum(monthly) == total_income.
+    total_income = round(sum(monthly.values()), 2)
 
     return {
         "period_days":    days,
@@ -1209,6 +1217,10 @@ async def get_budget_vs_actual(http_session, months_avg: int = 3) -> dict:
     now        = datetime.now()
     this_month = now.strftime("%Y-%m")
 
+    # Partial-month progress — used to add pace fields to the comparison (#158).
+    days_in_month   = calendar.monthrange(now.year, now.month)[1]
+    month_progress  = round(now.day / days_in_month, 4)  # fraction elapsed (0 < x <= 1)
+
     # Build month labels: [oldest avg month … one month ago] + [this_month]
     avg_months = []
     for i in range(months_avg, 0, -1):
@@ -1254,9 +1266,12 @@ async def get_budget_vs_actual(http_session, months_avg: int = 3) -> dict:
         else:
             status = "new_category" if actual > 0 else "no_activity"
 
+        pace_projected = round(actual / month_progress, 2) if month_progress > 0 else None
+
         category_comparison.append({
             "category":            cat,
             "this_month_actual":   actual,
+            "pace_projected_total": pace_projected,
             "rolling_avg":         avg_spend,
             "variance":            variance,
             "variance_pct":        pct_var,
@@ -1286,8 +1301,10 @@ async def get_budget_vs_actual(http_session, months_avg: int = 3) -> dict:
     return {
         "as_of":               now.strftime("%Y-%m-%d"),
         "this_month":          this_month,
+        "month_progress_pct":  round(month_progress * 100, 1),
         "benchmark_months":    avg_months,
         "total_this_month":    actual_total,
+        "pace_projected_total": round(actual_total / month_progress, 2) if month_progress > 0 else None,
         "total_avg":           avg_total_spend,
         "total_variance":      total_variance,
         "configured_budget":   budget_status,
@@ -1298,7 +1315,10 @@ async def get_budget_vs_actual(http_session, months_avg: int = 3) -> dict:
         "note": (
             f"Benchmark is the {months_avg}-month rolling average (prior months only). "
             "Over/under defined as >15% variance from the benchmark. "
-            "Excludes transfers and credit card payments as internal flows."
+            "Excludes transfers and credit card payments as internal flows. "
+            f"this_month_actual and pace_projected_total reflect "
+            f"{now.day} of {days_in_month} days elapsed ({round(month_progress*100,1)}% of month); "
+            "compare pace_projected_total against rolling_avg for an apples-to-apples pace view."
         ),
     }
 

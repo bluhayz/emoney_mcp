@@ -17,9 +17,9 @@ from .browser import (
     get_last_login_error,
     MANUAL_LOGIN_REQUIRED,
     COOKIE_FILE,
-    _http_session,
     extract_chrome_emaplan_cookies,
 )
+from . import browser as _bmod
 from . import scraper
 
 load_dotenv()
@@ -237,10 +237,11 @@ async def list_tools() -> list[Tool]:
         Tool(
             name="get_net_worth_breakdown",
             description=(
-                "Breaks down net worth by three lenses: (1) by person — Drew, Lacey, Joint/Family; "
+                "Breaks down net worth by three lenses: (1) by household member — primary, spouse, Joint/Family "
+                "(names derived dynamically from the client profile); "
                 "(2) by liquidity — Liquid, Semi-liquid, Illiquid; "
                 "(3) by tax treatment — Taxable, Tax-Deferred, Tax-Free. "
-                "Useful for 'How much of our wealth is Lacey's?' or 'How much is in tax-advantaged accounts?'"
+                "Useful for 'How much of our wealth is in each person's name?' or 'How much is in tax-advantaged accounts?'"
             ),
             inputSchema={"type": "object", "properties": {}, "required": []},
         ),
@@ -2561,7 +2562,10 @@ async def _get_session_or_err():
     if now - _last_health_ts >= _HEALTH_CHECK_INTERVAL:
         _last_health_ts = now
         try:
-            logged_in = await _http_session.is_logged_in()
+            # Use retries=1 to absorb the Akamai first-hit bot challenge (#166);
+            # access _bmod dynamically so the check runs on the current singleton
+            # even after reset_session (#165).
+            logged_in = await _bmod._http_session.is_logged_in(retries=1)
             if not logged_in:
                 return None, {
                     "session_warning": True,
@@ -2955,11 +2959,11 @@ async def _sync_chrome_session() -> dict:
                 "Make sure you are logged in to Emoney in Chrome, then try again."
             ),
         }
-    _http_session.save_cookies(cookies)
+    _bmod._http_session.save_cookies(cookies)
     # Verify they actually work. Retry the probe — the first request right after
     # extracting fresh cookies frequently trips an Akamai bot challenge that
     # 302s to SignIn even though the cookies are valid (issue #57).
-    if await _http_session.is_logged_in(retries=2):
+    if await _bmod._http_session.is_logged_in(retries=2):
         return {
             "success": True,
             "cookie_count": len(cookies),
@@ -2980,6 +2984,16 @@ async def _reset() -> dict:
     import emoney_mcp.browser as bmod
     from .browser import EmoneyHttpSession, EmoneyLoginSession
     try:
+        # Close the underlying curl_cffi session before discarding the singleton
+        # to avoid connection-handle leaks (#165).
+        old_session = bmod._http_session
+        if old_session is not None:
+            try:
+                http = getattr(old_session, "_session", None)
+                if http is not None:
+                    http.close()
+            except Exception:
+                pass
         if COOKIE_FILE.exists():
             COOKIE_FILE.unlink()
         bmod._http_session = EmoneyHttpSession()

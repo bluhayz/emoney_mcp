@@ -42,7 +42,7 @@ _marginal_rate(taxable_income, filing_status) — Marginal bracket rate
 _ltcg_rate(taxable_income, filing_status)    — Long-term capital gains rate
 """
 
-from datetime import datetime
+from datetime import datetime, date as _date
 
 from ._helpers import _get_investment_data
 from .accounts import get_retirement_accounts, _build_account_type_map, _match_tax_bucket
@@ -432,7 +432,7 @@ async def get_year_end_checklist(
 
     # --- 1. Tax bracket headroom ---
     bh = results.get("bracket_headroom") or {}
-    if "error" not in bh and not isinstance(bh, Exception):
+    if not isinstance(bh, Exception) and "error" not in bh:
         ordinary = bh.get("ordinary_income_headroom") or {}
         ltcg     = bh.get("ltcg_headroom") or {}
         room_ord  = ordinary.get("headroom_to_next_bracket", 0) or 0
@@ -462,7 +462,7 @@ async def get_year_end_checklist(
 
     # --- 2. Tax-loss harvesting ---
     tlh = results.get("tlh") or {}
-    if "error" not in tlh and not isinstance(tlh, Exception):
+    if not isinstance(tlh, Exception) and "error" not in tlh:
         summary = tlh.get("summary") or {}
         total_loss = abs(summary.get("harvestable_loss_total", 0) or 0)
         savings_20 = summary.get("potential_tax_savings_20pct", 0) or 0
@@ -489,7 +489,7 @@ async def get_year_end_checklist(
 
     # --- 3. Capital gains exposure ---
     cge = results.get("cap_gains") or {}
-    if "error" not in cge and not isinstance(cge, Exception):
+    if not isinstance(cge, Exception) and "error" not in cge:
         total_gain = cge.get("total_unrealized_gain_taxable", 0) or 0
         total_tax  = cge.get("estimated_total_tax", 0) or 0
         if total_gain > 0:
@@ -510,7 +510,7 @@ async def get_year_end_checklist(
     # room cannot be computed — show each account type's annual limit as an
     # opportunity item instead.
     cr = results.get("contribution") or {}
-    if "error" not in cr and not isinstance(cr, Exception):
+    if not isinstance(cr, Exception) and "error" not in cr:
         limits = cr.get("annual_limits") or {}
         for acct_label, limit in limits.items():
             if not limit:
@@ -530,7 +530,7 @@ async def get_year_end_checklist(
 
     # --- 5. RMD check ---
     rmd = results.get("rmd")
-    if rmd and "error" not in rmd and not isinstance(rmd, Exception):
+    if rmd and not isinstance(rmd, Exception) and "error" not in rmd:
         current_rmd = rmd.get("current_year_rmd")
         rmd_required = rmd.get("rmd_required", False)
         if rmd_required:
@@ -1328,7 +1328,6 @@ async def get_social_security_optimizer(
         return round(monthly * months, 2)
 
     lifetime_62 = _lifetime(monthly_62, 62, life_expectancy)
-    _lifetime(monthly_67, 67, life_expectancy)
     lifetime_70 = _lifetime(monthly_70, 70, life_expectancy)
 
     # Breakeven: age where claiming later surpasses claiming earlier
@@ -1363,8 +1362,7 @@ async def get_social_security_optimizer(
                      "More years of benefits paid"],
             "cons": ["Permanently reduced monthly benefit", f"Receives {round((1-factor_62)*100,1)}% less per month than FRA"],
         },
-        {
-            "claim_age":          round(fra),
+        {"claim_age":          round(fra),
             "monthly_benefit":    round(fra_monthly * _ss_factor(fra, fra), 2),
             "annual_benefit":     round(fra_monthly * _ss_factor(fra, fra) * 12, 2),
             "pct_of_fra":         100.0,
@@ -1392,14 +1390,34 @@ async def get_social_security_optimizer(
     spousal = None
     if spouse_birth_year and spouse_benefit_at_67:
         sp_age   = current_year - spouse_birth_year
-        sp_fra70 = spouse_benefit_at_67 / _ss_factor(67, 67)  # approximate
-        sp_m62   = round(sp_fra70 * _ss_factor(62, 67), 2)
+        # Derive spouse FRA from birth year (same congressional schedule as primary)
+        if spouse_birth_year <= 1937:
+            sp_fra = 65.0
+        elif spouse_birth_year <= 1954:
+            sp_fra = 66.0
+        elif spouse_birth_year == 1955:
+            sp_fra = 66.17
+        elif spouse_birth_year == 1956:
+            sp_fra = 66.33
+        elif spouse_birth_year == 1957:
+            sp_fra = 66.5
+        elif spouse_birth_year == 1958:
+            sp_fra = 66.67
+        elif spouse_birth_year == 1959:
+            sp_fra = 66.83
+        else:
+            sp_fra = 67.0  # born 1960+
+        sp_pia   = spouse_benefit_at_67 / _ss_factor(67, sp_fra)
+        sp_m62   = round(sp_pia * _ss_factor(62, sp_fra), 2)
         sp_m67   = round(spouse_benefit_at_67, 2)
-        sp_m70   = round(sp_fra70 * _ss_factor(70, 67), 2)
-        spousal_benefit = round(monthly_70 * 0.50, 2)
+        sp_m70   = round(sp_pia * _ss_factor(70, sp_fra), 2)
+        # Spousal benefit = up to 50% of PRIMARY worker's PIA (fra_monthly).
+        # Delayed retirement credits do NOT increase spousal benefits (#162).
+        spousal_benefit = round(fra_monthly * 0.50, 2)
         spousal = {
             "spouse_birth_year":     spouse_birth_year,
             "spouse_current_age":    sp_age,
+            "spouse_fra":            sp_fra,
             "spouse_monthly_at_62":  sp_m62,
             "spouse_monthly_at_67":  sp_m67,
             "spouse_monthly_at_70":  sp_m70,
@@ -1493,12 +1511,22 @@ async def get_quarterly_estimated_taxes(
     safe_harbor_annual = round((prior_year_tax or estimated_annual_tax) * safe_harbor_multiplier, 2)
     safe_harbor_annual_net = max(0.0, safe_harbor_annual - withholding)
 
-    # IRS quarterly due dates
+    # IRS quarterly due dates — statutory dates rolled forward to next business
+    # day when they fall on a weekend (#170: June 16 was correct for 2025 only;
+    # for 2026 June 15 is a Monday, so the correct date is June 15, 2026).
+    # Federal holiday shifts are not modeled.
+    def _nbd(year: int, month: int, day: int) -> str:
+        from datetime import timedelta as _td
+        d = _date(year, month, day)
+        while d.weekday() >= 5:  # 5=Sat, 6=Sun
+            d += _td(days=1)
+        return d.strftime("%B %d, %Y")
+
     due_dates = [
-        {"quarter": "Q1", "period": "Jan 1 – Mar 31",    "due": f"April 15, {current_year}"},
-        {"quarter": "Q2", "period": "Apr 1 – May 31",    "due": f"June 16, {current_year}"},
-        {"quarter": "Q3", "period": "Jun 1 – Aug 31",    "due": f"September 15, {current_year}"},
-        {"quarter": "Q4", "period": "Sep 1 – Dec 31",    "due": f"January 15, {current_year + 1}"},
+        {"quarter": "Q1", "period": "Jan 1 – Mar 31",    "due": _nbd(current_year,     4, 15)},
+        {"quarter": "Q2", "period": "Apr 1 – May 31",    "due": _nbd(current_year,     6, 15)},
+        {"quarter": "Q3", "period": "Jun 1 – Aug 31",    "due": _nbd(current_year,     9, 15)},
+        {"quarter": "Q4", "period": "Sep 1 – Dec 31",    "due": _nbd(current_year + 1, 1, 15)},
     ]
 
     # IRS unequal installment fractions: 25% each

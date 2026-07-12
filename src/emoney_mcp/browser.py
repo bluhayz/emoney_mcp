@@ -573,35 +573,37 @@ class EmoneyLoginSession:
         log("on login page")
 
         # Poll ALL open tabs until one leaves the signin/OAuth flow (up to 10 min)
-        for i in range(300):
-            await asyncio.sleep(2)
-            try:
-                for t in list(browser.tabs):
-                    try:
-                        url = str(await t.evaluate("window.location.href") or "")
-                    except Exception:
-                        continue
-                    log(f"[{i}] tab url={url[:80]}")
-                    if url and not _is_signin_url(url) and "emaplan.com" in url:
-                        log("login detected! extracting cookies...")
-                        cookies = await self._extract_cookies(browser, t)
-                        log(f"extracted {len(cookies)} cookies: {list(cookies.keys())[:10]}")
-                        if cookies:
-                            _http_session.save_cookies(cookies)
-                            self._done_event.set()
-                            log("cookies saved!")
-                        else:
-                            log("WARNING: no cookies extracted")
-                        return
-            except Exception as exc:
-                log(f"[{i}] poll error: {exc}")
-
         try:
-            browser.stop()
-        except Exception:
-            pass
-        self._waiting = False
-        log("thread done")
+            for i in range(300):
+                await asyncio.sleep(2)
+                try:
+                    for t in list(browser.tabs):
+                        try:
+                            url = str(await t.evaluate("window.location.href") or "")
+                        except Exception:
+                            continue
+                        log(f"[{i}] tab url={url[:80]}")
+                        if url and not _is_signin_url(url) and "emaplan.com" in url:
+                            log("login detected! extracting cookies...")
+                            cookies = await self._extract_cookies(browser, t)
+                            log(f"extracted {len(cookies)} cookies: {list(cookies.keys())[:10]}")
+                            if cookies:
+                                _http_session.save_cookies(cookies)
+                                self._done_event.set()
+                                log("cookies saved!")
+                            else:
+                                log("WARNING: no cookies extracted")
+                            return  # fall through to finally → browser.stop()
+                except Exception as exc:
+                    log(f"[{i}] poll error: {exc}")
+
+            self._waiting = False
+            log("thread done (timeout)")
+        finally:
+            try:
+                browser.stop()
+            except Exception:
+                pass
 
     async def _extract_cookies(self, browser, tab) -> dict:
         """Extract emaplan.com cookies from the browser via multiple methods."""
@@ -703,7 +705,7 @@ class EmoneyLoginSession:
             ).fetchall()
         finally:
             conn.close()
-        return {name: value for name, value, host in rows}
+        return {name: value for name, value, host in rows if value}  # skip empty encrypted_value rows
 
     def stop(self) -> None:
         self._waiting = False

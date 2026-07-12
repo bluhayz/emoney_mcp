@@ -42,7 +42,7 @@ clear_caches()          — purges both card and SNB caches (called on session r
 clear_cache(module)     — purge a specific cache: 'cards', 'spending', or 'all'.
 """
 
-from ._helpers import BASE_URL, _get_card, _fmt_dollars, clear_card_cache
+from ._helpers import BASE_URL, _get_card, _fmt_dollars, clear_card_cache, _is_compact
 
 from .accounts import (
     get_accounts,
@@ -262,7 +262,7 @@ def clear_cache(module: str = "all") -> dict:
 
 __all__ = [
     # helpers
-    "BASE_URL", "_get_card", "_fmt_dollars", "clear_card_cache",
+    "BASE_URL", "_get_card", "_fmt_dollars", "clear_card_cache", "_is_compact",
     "clear_caches", "clear_cache",
     # accounts
     "get_accounts", "get_retirement_accounts", "get_net_worth_breakdown",

@@ -338,6 +338,7 @@ async def list_tools() -> list[Tool]:
                 "by category. Flags categories that are tracking >15% above their average ('over_budget'). "
                 "Also compares to any total monthly budget configured in Emoney. "
                 "Optional: months_avg (default 3). "
+                "Set EMONEY_COMPACT=1 to truncate to the top-10 categories by variance. "
                 "Useful for 'Am I over budget this month?' or 'Which categories are overspending?'"
             ),
             inputSchema={
@@ -1060,6 +1061,7 @@ async def list_tools() -> list[Tool]:
                 "a given retirement horizon. Returns probability of success, median/10th/90th percentile "
                 "ending balances, worst-case depletion year, and a year-by-year percentile table. "
                 "Also finds the safe withdrawal rate at 90% success. "
+                "Set EMONEY_COMPACT=1 to omit the per-year percentile table (saves ~60 rows). "
                 "Optional: simulations (default 1000), years (default 30), annual_spending (inferred if omitted), "
                 "mean_return (default 0.07), std_dev (default 0.15), inflation_mean (default 0.03), "
                 "inflation_std (default 0.01), social_security_annual (default 0), withdrawal_rate. "
@@ -1972,6 +1974,7 @@ async def list_tools() -> list[Tool]:
                 "flow year, and portfolio depletion year if any). Uses the plan's 'linear' average-"
                 "return assumptions (not Monte Carlo ranges or live markets). "
                 "Optional: start_year, end_year to limit the range. "
+                "Set EMONEY_COMPACT=1 to keep only key years (first, peak, 5-year steps, depletion, last). "
                 "Useful for 'Show my lifetime cash flow' or 'Does my money last / when does it peak?'"
             ),
             inputSchema={
@@ -2014,6 +2017,7 @@ async def list_tools() -> list[Tool]:
                 "percentile bands (10th/25th/50th/75th/90th portfolio values by year) from the "
                 "advisor's plan engine. Complement to run_monte_carlo_retirement (which uses "
                 "simplified local assumptions). No parameters. "
+                "Set EMONEY_COMPACT=1 to downsample asset_spread to every-5th year. "
                 "Useful for 'What does my official plan say about success probability?' or "
                 "'Show me the fan chart for my portfolio over time'."
             ),
@@ -2992,6 +2996,19 @@ def _get_features() -> dict:
         "categorized_tools": len(listed & registered),
         "uncategorized_tools": sorted(registered - listed),
         "categories": categories,
+        "environment_variables": {
+            "EMONEY_SUBDOMAIN": "Subdomain prefix for emaplan.com (default: 'wealth')",
+            "EMONEY_SESSION_FILE": "Cookie persistence path (default: ~/.emoney_mcp/session.json)",
+            "EMONEY_DEV": "Set to '1' for hot-reload on every tool call (dev only)",
+            "EMONEY_COMPACT": (
+                "Set to '1' to truncate large arrays in high-volume tools: "
+                "get_lifetime_cash_flow_projection (key years only), "
+                "run_monte_carlo_retirement (omits per-year percentile table), "
+                "get_budget_vs_actual (top-10 categories), "
+                "get_official_plan_projection (every-5th-year asset spread). "
+                "Default: unset = full verbose output."
+            ),
+        },
     }
 
 

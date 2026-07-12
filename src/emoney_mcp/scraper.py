@@ -37,4 +37,5 @@ from .scrapers import (  # expose private helpers not visible to type-checkers v
     clear_snb_cache,
     clear_caches,
     clear_cache,
+    _is_compact,
 )

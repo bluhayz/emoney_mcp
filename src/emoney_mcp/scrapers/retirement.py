@@ -41,6 +41,7 @@ import random
 import statistics
 from datetime import datetime
 
+from ._helpers import _is_compact
 from .accounts import (
     get_accounts, _calc_investable_assets, get_net_worth_breakdown,
     get_retirement_accounts,
@@ -502,7 +503,7 @@ async def run_monte_carlo_retirement(
             safe_swr = candidate_rate
             break
 
-    return {
+    out = {
         "portfolio_value":              round(portfolio, 2),
         "annual_spending":              round(annual_spending, 2),
         "social_security_annual":       round(social_security_annual, 2),
@@ -558,8 +559,19 @@ async def run_monte_carlo_retirement(
             "Social Security reduces the net withdrawal each year, significantly improving success rates. "
             "This is a statistical model — actual outcomes depend on sequence of returns, fees, taxes, "
             "and spending flexibility."
+            " Set EMONEY_COMPACT=1 to omit the per-year percentile table."
         ),
     }
+
+    # Compact mode: drop the large per-year percentile table (#182).
+    if _is_compact():
+        out.pop("year_by_year_percentiles", None)
+        out["output_mode"] = "compact"
+        out["year_by_year_percentiles_note"] = (
+            f"Omitted in compact mode ({len(year_summary)} year rows). "
+            "Unset EMONEY_COMPACT to see the full per-year table."
+        )
+    return out
 
 
 # ---------------------------------------------------------------------------

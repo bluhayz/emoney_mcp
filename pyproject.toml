@@ -4,12 +4,12 @@ build-backend = "hatchling.build"
 
 [project]
 name = "emoney-mcp"
-version = "1.2.1"
+version = "1.2.2"
 description = "MCP server for Emoney Advisor financial planning"
 readme = "README_PYPI.md"
 requires-python = ">=3.11"
 dependencies = [
-    "mcp>=1.0.0",
+    "mcp>=1.0.0,<2.0.0",
     "python-dotenv>=1.0.0",
     "curl_cffi>=0.7",
     "beautifulsoup4>=4.12",
